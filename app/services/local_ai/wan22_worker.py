@@ -22,6 +22,9 @@ _REQUIRED_MODULES = (
     "ftfy",
     "transformers",
     "diffusers",
+    "numpy",
+    "einops",
+    "regex",
 )
 
 
@@ -86,6 +89,25 @@ def _preflight(repo: Path, device_id: int) -> dict[str, Any]:
             "ok": False,
             "error_type": "torch_import_error",
             "message": f"Wan 2.2 worker could not import torch ({type(exc).__name__})",
+        }
+
+    try:
+        import numpy as np
+        numpy_major = int(str(np.__version__).split(".", 1)[0])
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error_type": "numpy_import_error",
+            "message": f"Wan 2.2 worker could not validate NumPy ({type(exc).__name__})",
+        }
+    if numpy_major >= 2:
+        return {
+            "ok": False,
+            "error_type": "numpy_version_incompatible",
+            "message": (
+                "Official Wan2.2 currently requires NumPy < 2; use a dedicated "
+                "Wan worker environment instead of the MoneyPrinterTurbo environment"
+            ),
         }
 
     if not torch.cuda.is_available():
