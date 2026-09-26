@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import importlib.machinery
 import importlib.util
 import json
 import math
@@ -57,9 +58,17 @@ def _install_wan_package(repo: Path) -> None:
     # unrelated to TI2V and may pull extra dependencies. Seed a package shell so
     # importing wan.textimage2video loads only the TI2V dependency graph.
     package = types.ModuleType("wan")
-    package.__path__ = [str(repo / "wan")]
+    package_path = str(repo / "wan")
+    package.__path__ = [package_path]
     package.__package__ = "wan"
     package.__file__ = str(repo / "wan" / "__init__.py")
+    package_spec = importlib.machinery.ModuleSpec(
+        "wan",
+        loader=None,
+        is_package=True,
+    )
+    package_spec.submodule_search_locations = [package_path]
+    package.__spec__ = package_spec
     sys.modules["wan"] = package
 
 
