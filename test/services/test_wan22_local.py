@@ -6,7 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app.services import generation_manifest, scene_planner
+from app.models.schema import VideoParams
+from app.services import generation_manifest, scene_planner, task
 from app.services.local_ai.base import SceneSpec
 from app.services.local_ai.runtime import LocalAIRuntimeManager
 from app.services.local_ai.wan22 import (
@@ -239,6 +240,135 @@ class TestWan22Runtime(Wan22TestCase):
         t1.join(timeout=2)
         t2.join(timeout=2)
         self.assertEqual(entered, ["first", "second"])
+
+
+class TestWan22TaskIntegration(Wan22TestCase):
+    def test_pipeline_preflight_fails_before_script_when_wan_is_not_ready(self):
+        params = VideoParams(
+            video_subject="test",
+            video_script="Prepared script",
+            video_source=WAN22_SOURCE_ID,
+            subtitle_enabled=False,
+            bgm_type="",
+        )
+
+        with (
+            patch.object(task.sm.state, "update_task"),
+            patch.object(
+                task.local_ai,
+                "preflight_source",
+                side_effect=Wan22ConfigurationError("checkpoint missing"),
+            ),
+            patch.object(task, "_mark_task_failed", return_value={"state": -1}) as failed,
+            patch.object(task, "generate_script") as generate_script,
+        ):
+            result = task._run_pipeline("wan-preflight", params)
+
+        self.assertEqual(result, {"state": -1})
+        generate_script.assert_not_called()
+        self.assertEqual(failed.call_args.args[1], "preflight")
+        self.assertIn("Wan22ConfigurationError", failed.call_args.args[2])
+
+    def test_task_material_path_uses_wan_scene_cap_seed_and_no_remote_download(self):
+        class FakeWanProvider:
+            provider_id = WAN22_SOURCE_ID
+            model_fingerprint = "wan-test:v1"
+            max_scene_duration = 5.0
+            base_seed = 77
+
+            def safe_metadata(self):
+                return {"model": "Wan2.2-TI2V-5B", "output_audio": "none"}
+
+            def preflight(self):
+                return None
+
+            def load_runtime(self):
+                return None
+
+            def generate(self, scene, output_path):
+                if scene.aspect == "9:16":
+                    size = "180x320"
+                elif scene.aspect == "16:9":
+                    size = "320x180"
+                else:
+                    size = "240x240"
+                command = [
+                    utils.get_ffmpeg_binary(),
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    (
+                        f"color=c=black:s={size}:r=24:"
+                        f"d={float(scene.target_duration) + 0.08:.3f}"
+                    ),
+                    "-an",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    str(output_path),
+                ]
+                completed = subprocess.run(
+                    command,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                if completed.returncode != 0:
+                    raise RuntimeError(completed.stderr)
+
+            def validate_output(self, output_path, scene):
+                from app.services.local_ai.base import GenerationResult
+                from app.services.local_ai.media import validate_video_clip
+
+                probe = validate_video_clip(output_path, scene)
+                return GenerationResult(
+                    output_path=Path(output_path),
+                    actual_duration=probe.duration,
+                    width=probe.width,
+                    height=probe.height,
+                    provider_id=self.provider_id,
+                    model_fingerprint=self.model_fingerprint,
+                )
+
+            def unload(self):
+                return None
+
+        params = VideoParams(
+            video_subject="test",
+            video_script="A prepared narration for a longer local Wan task.",
+            video_source=WAN22_SOURCE_ID,
+            video_aspect="9:16",
+            video_clip_duration=10,
+            subtitle_enabled=False,
+            bgm_type="",
+        )
+
+        with (
+            patch.object(task.local_ai, "create_provider", return_value=FakeWanProvider()),
+            patch.object(task.material, "download_videos") as remote_download,
+            patch.object(task.sm.state, "update_task"),
+            patch.object(utils, "task_dir", return_value=str(self.root / "task")),
+        ):
+            materials = task.get_video_materials(
+                "wan-materials",
+                params,
+                [],
+                11.0,
+                video_script=params.video_script,
+            )
+
+        remote_download.assert_not_called()
+        self.assertEqual(len(materials), 3)
+        manifest = generation_manifest.load_manifest("wan-materials")
+        self.assertEqual(
+            [scene["seed"] for scene in manifest["scenes"]],
+            [77, 78, 79],
+        )
+        self.assertTrue(
+            all(scene["target_duration"] <= 5.0 for scene in manifest["scenes"])
+        )
 
 
 class TestWan22Manifest(Wan22TestCase):
