@@ -57,6 +57,22 @@ class TestScenePlan(LocalAITestCase):
         self.assertTrue(all(scene.target_duration <= 2.0 for scene in scenes))
         self.assertTrue(all(scene.prompt for scene in scenes))
 
+    def test_scene_plan_does_not_repeat_full_script_when_scenes_outnumber_sentences(self):
+        script = "First point. Second point."
+        scenes = scene_planner.plan_scenes(
+            script,
+            audio_duration=4.0,
+            max_scene_duration=1.0,
+            aspect="9:16",
+        )
+
+        self.assertEqual(len(scenes), 4)
+        self.assertTrue(all(scene.narration_segment != script for scene in scenes))
+        self.assertEqual(
+            " ".join(scene.narration_segment for scene in scenes),
+            "First point. Second point.",
+        )
+
 
 class TestLocalAIGenerationManifest(LocalAITestCase):
     def test_multiple_scenes_share_one_runtime_load_and_cached_run_skips_runtime(self):

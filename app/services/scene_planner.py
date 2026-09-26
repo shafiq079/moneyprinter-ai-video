@@ -15,17 +15,20 @@ def _split_narration(text: str, count: int) -> list[str]:
         return ["Visual scene"] * count
 
     sentences = [part.strip() for part in _SENTENCE_RE.findall(cleaned) if part.strip()]
-    if len(sentences) > 1:
+    words = cleaned.split()
+    # Prefer sentence-sized beats only when there are enough of them to populate
+    # the requested scene count. Otherwise fall back to words so empty buckets do
+    # not repeat the complete script as several different scene prompts.
+    if len(sentences) >= count:
         units = sentences
         separator = " "
+    elif len(words) >= count:
+        units = words
+        separator = " "
     else:
-        words = cleaned.split()
-        if len(words) > 1:
-            units = words
-            separator = " "
-        else:
-            units = list(cleaned)
-            separator = ""
+        characters = [char for char in cleaned if not char.isspace()]
+        units = characters if characters else [cleaned]
+        separator = ""
 
     buckets: list[list[str]] = [[] for _ in range(count)]
     for index, unit in enumerate(units):
