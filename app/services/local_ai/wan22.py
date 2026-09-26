@@ -385,6 +385,12 @@ class _WanWorkerClient:
                 self._process = None
                 self._ready = False
                 self._loaded = False
+                for stream in (process.stdin, process.stdout):
+                    try:
+                        if stream is not None:
+                            stream.close()
+                    except Exception:
+                        pass
                 raise Wan22WorkerError(
                     "Wan 2.2 worker exited unexpectedly"
                     + (f" (status {return_code})" if return_code is not None else ""),
