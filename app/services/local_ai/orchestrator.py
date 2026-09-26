@@ -16,7 +16,9 @@ def generate_scene_materials(
     *,
     provider: LocalVideoProvider,
     scenes: list[SceneSpec],
-    progress_callback: Callable[[int, int, SceneSpec, bool], None] | None = None,
+    progress_callback: (
+        Callable[[int, int, SceneSpec, str, bool], None] | None
+    ) = None,
 ) -> list[str]:
     """Generate/reuse ordered scene clips and persist progress after every scene."""
 
@@ -52,6 +54,14 @@ def generate_scene_materials(
                 f"local AI scene {scene_index}/{total_scenes}: "
                 f"provider={provider.provider_id}, scene_id={scene.scene_id}"
             )
+            if progress_callback is not None:
+                progress_callback(
+                    scene_index,
+                    total_scenes,
+                    scene,
+                    "checking",
+                    False,
+                )
             record = generation_manifest.scene_record(manifest, scene.scene_id)
             active_asset = record.get("active_asset")
             if (
@@ -77,7 +87,13 @@ def generate_scene_materials(
                     record["error_code"] = None
                     outputs.append(str(cached_path))
                     if progress_callback is not None:
-                        progress_callback(scene_index, total_scenes, scene, True)
+                        progress_callback(
+                            scene_index,
+                            total_scenes,
+                            scene,
+                            "ready",
+                            True,
+                        )
                     continue
 
             if not runtime_loaded:
@@ -98,6 +114,14 @@ def generate_scene_materials(
             record["error_type"] = None
             record["error_code"] = None
             generation_manifest.save_manifest(task_id, manifest)
+            if progress_callback is not None:
+                progress_callback(
+                    scene_index,
+                    total_scenes,
+                    scene,
+                    "generating",
+                    False,
+                )
 
             try:
                 provider.generate(scene, partial_path)
@@ -135,6 +159,12 @@ def generate_scene_materials(
             generation_manifest.save_manifest(task_id, manifest)
             outputs.append(str(final_path))
             if progress_callback is not None:
-                progress_callback(scene_index, total_scenes, scene, False)
+                progress_callback(
+                    scene_index,
+                    total_scenes,
+                    scene,
+                    "ready",
+                    False,
+                )
 
     return outputs

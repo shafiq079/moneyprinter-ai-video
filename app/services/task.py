@@ -672,11 +672,13 @@ def get_video_materials(
             )
 
             def report_scene_progress(
-                completed: int,
+                current: int,
                 total: int,
                 scene,
+                status: str,
                 reused: bool,
             ) -> None:
+                completed = current if status == "ready" else max(0, current - 1)
                 progress = min(49, 40 + int((completed / max(1, total)) * 9))
                 sm.state.update_task(
                     task_id,
@@ -685,9 +687,10 @@ def get_video_materials(
                     current_stage="local_ai_video",
                     local_ai_provider=provider.provider_id,
                     scene_progress={
-                        "current": completed,
+                        "current": current,
                         "total": total,
                         "scene_id": scene.scene_id,
+                        "status": status,
                         "reused": reused,
                     },
                 )
