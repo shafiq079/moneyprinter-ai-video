@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
-from contextlib import nullcontext
+from contextlib import ExitStack
 
 from loguru import logger
 
@@ -37,16 +37,16 @@ def generate_scene_materials(
     runtime_loaded = False
     outputs: list[str] = []
 
-    # Heavy local providers may expose a task-level generation session. Holding
-    # it across all missing scenes prevents concurrent tasks using different
-    # model families from repeatedly evicting/reloading each other between scenes.
+    # Heavy local providers may expose a task-level generation session. Enter it
+    # lazily only when a scene actually needs generation: a fully cached retry
+    # should not take the GPU lock or evict another model family just to validate
+    # already-persisted clips. Once entered, keep it for the rest of the scene
+    # batch so different provider families cannot thrash each other per scene.
     session_factory = getattr(provider, "generation_session", None)
-    generation_session = (
-        session_factory() if callable(session_factory) else nullcontext()
-    )
+    generation_session_entered = False
 
     total_scenes = len(scenes)
-    with generation_session:
+    with ExitStack() as stack:
         for scene_index, scene in enumerate(scenes, start=1):
             logger.info(
                 f"local AI scene {scene_index}/{total_scenes}: "
@@ -79,6 +79,9 @@ def generate_scene_materials(
                     continue
 
             if not runtime_loaded:
+                if callable(session_factory) and not generation_session_entered:
+                    stack.enter_context(session_factory())
+                    generation_session_entered = True
                 provider.preflight()
                 provider.load_runtime()
                 runtime_loaded = True
