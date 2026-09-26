@@ -393,10 +393,10 @@ class TestWan22TaskIntegration(Wan22TestCase):
                 11.0,
                 video_script=params.video_script,
             )
+            manifest = generation_manifest.load_manifest("wan-materials")
 
         remote_download.assert_not_called()
         self.assertEqual(len(materials), 3)
-        manifest = generation_manifest.load_manifest("wan-materials")
         self.assertEqual(
             [scene["seed"] for scene in manifest["scenes"]],
             [77, 78, 79],
