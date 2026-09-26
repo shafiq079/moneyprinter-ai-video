@@ -2,6 +2,7 @@ import json
 import subprocess
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -99,6 +100,36 @@ class TestLocalAIGenerationManifest(LocalAITestCase):
         self.assertEqual(second_paths, first_paths)
         self.assertEqual(cached_provider.runtime_load_count, 0)
         self.assertEqual(cached_provider.generated_scene_ids, [])
+
+    def test_fully_cached_retry_does_not_enter_provider_generation_session(self):
+        class SessionFakeProvider(FakeLocalVideoProvider):
+            def __init__(self):
+                super().__init__()
+                self.session_entries = 0
+
+            @contextmanager
+            def generation_session(self):
+                self.session_entries += 1
+                yield
+
+        scenes = self.make_scenes()
+        first = SessionFakeProvider()
+        generate_scene_materials(
+            "cached-session",
+            provider=first,
+            scenes=scenes,
+        )
+        self.assertEqual(first.session_entries, 1)
+
+        cached = SessionFakeProvider()
+        generate_scene_materials(
+            "cached-session",
+            provider=cached,
+            scenes=scenes,
+        )
+        self.assertEqual(cached.session_entries, 0)
+        self.assertEqual(cached.runtime_load_count, 0)
+        self.assertEqual(cached.generated_scene_ids, [])
 
     def test_failure_preserves_ready_scene_and_retry_only_generates_missing_scene(self):
         scenes = self.make_scenes()
