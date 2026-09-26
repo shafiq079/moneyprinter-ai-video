@@ -503,6 +503,9 @@ class Wan22LocalProvider:
             cls._worker_key = None
         LOCAL_AI_RUNTIME.clear_active_family(cls.family_id)
 
+    def generation_session(self):
+        return LOCAL_AI_RUNTIME.generation_slot(self.family_id)
+
     def load_runtime(self) -> None:
         with LOCAL_AI_RUNTIME.generation_slot(self.family_id):
             logger.info(

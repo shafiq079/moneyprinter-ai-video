@@ -213,6 +213,41 @@ class TestWan22Runtime(Wan22TestCase):
 
         self.assertEqual(calls, ["release-wan"])
 
+    def test_task_generation_session_blocks_family_switch_until_all_scenes_finish(self):
+        manager = LocalAIRuntimeManager()
+        events = []
+        first_inside = threading.Event()
+        allow_first_to_finish = threading.Event()
+
+        manager.register_family("wan22", lambda: events.append("release-wan"))
+
+        def wan_task():
+            with manager.generation_slot("wan22"):
+                events.append("wan-start")
+                first_inside.set()
+                allow_first_to_finish.wait(timeout=2)
+                events.append("wan-end")
+
+        def other_family():
+            first_inside.wait(timeout=2)
+            with manager.generation_slot("ltx25"):
+                events.append("ltx-start")
+
+        first_thread = threading.Thread(target=wan_task)
+        second_thread = threading.Thread(target=other_family)
+        first_thread.start()
+        second_thread.start()
+        first_inside.wait(timeout=2)
+        self.assertEqual(events, ["wan-start"])
+        allow_first_to_finish.set()
+        first_thread.join(timeout=2)
+        second_thread.join(timeout=2)
+
+        self.assertEqual(
+            events,
+            ["wan-start", "wan-end", "release-wan", "ltx-start"],
+        )
+
     def test_runtime_manager_serializes_same_family_generation(self):
         manager = LocalAIRuntimeManager()
         entered = []
