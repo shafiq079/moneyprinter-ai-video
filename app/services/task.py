@@ -1419,6 +1419,17 @@ def _run_pipeline(
 
     if (
         stop_at in {"materials", "video"}
+        and local_ai.is_local_ai_source(params.video_source)
+        and not local_ai.is_source_enabled(params.video_source)
+    ):
+        return _mark_task_failed(
+            task_id,
+            "preflight",
+            "the fake local AI video source is test-only and disabled by default",
+        )
+
+    if (
+        stop_at in {"materials", "video"}
         and params.video_source == "volcengine_seedance"
         and not volcengine_seedance.is_enabled()
     ):

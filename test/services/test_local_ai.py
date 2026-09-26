@@ -178,6 +178,13 @@ class TestLocalAIGenerationManifest(LocalAITestCase):
 
 
 class TestLocalAITaskIntegration(LocalAITestCase):
+    def test_fake_source_is_disabled_outside_explicit_test_mode(self):
+        from app.services import local_ai
+
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "test-only"):
+                local_ai.create_provider(FAKE_SOURCE_ID)
+
     def test_local_ai_material_path_does_not_call_remote_material_download(self):
         params = VideoParams(
             video_subject="test",
@@ -189,7 +196,13 @@ class TestLocalAITaskIntegration(LocalAITestCase):
             bgm_type="",
         )
 
-        with patch.object(task.material, "download_videos") as remote_download:
+        with (
+            patch.dict(
+                "os.environ",
+                {"MPT_ENABLE_LOCAL_AI_FAKE_PROVIDER": "1"},
+            ),
+            patch.object(task.material, "download_videos") as remote_download,
+        ):
             materials = task.get_video_materials(
                 "task-materials",
                 params,
