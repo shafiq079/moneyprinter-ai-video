@@ -291,7 +291,7 @@ class TestWan22TaskIntegration(Wan22TestCase):
             patch.object(task.sm.state, "update_task"),
             patch.object(
                 task.local_ai,
-                "preflight_source",
+                "prepare_provider",
                 side_effect=Wan22ConfigurationError("checkpoint missing"),
             ),
             patch.object(task, "_mark_task_failed", return_value={"state": -1}) as failed,

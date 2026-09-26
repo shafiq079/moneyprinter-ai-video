@@ -441,6 +441,7 @@ class Wan22LocalProvider:
         self.settings = settings or Wan22Settings.from_config()
         self.model_fingerprint = _model_fingerprint(self.settings)
         self.base_seed = self.settings.base_seed
+        self._preflight_complete = False
 
     def safe_metadata(self) -> dict[str, Any]:
         return {
@@ -453,6 +454,9 @@ class Wan22LocalProvider:
         }
 
     def preflight(self) -> None:
+        if self._preflight_complete:
+            return
+
         _validate_model_files(self.settings)
         if not utils.check_ffmpeg_ready():
             raise Wan22ConfigurationError("Wan 2.2 requires a working FFmpeg executable")
@@ -482,6 +486,8 @@ class Wan22LocalProvider:
             )
         if completed.returncode not in (0, None):
             raise Wan22ConfigurationError("Wan 2.2 worker preflight failed")
+
+        self._preflight_complete = True
 
     @classmethod
     def _worker_for(cls, settings: Wan22Settings) -> _WanWorkerClient:

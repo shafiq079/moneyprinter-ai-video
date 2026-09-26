@@ -653,12 +653,13 @@ def get_video_materials(
     audio_duration,
     loomloom_video_request: loomloom.LoomLoomConfirmedVideoRequest | None = None,
     video_script: str = "",
+    local_ai_provider=None,
 ):
     if local_ai.is_local_ai_source(params.video_source):
         logger.info("\n\n## generating local AI video materials")
         aspect = getattr(params.video_aspect, "value", params.video_aspect)
         try:
-            provider = local_ai.create_provider(params.video_source)
+            provider = local_ai_provider or local_ai.create_provider(params.video_source)
             scenes = scene_planner.plan_scenes(
                 video_script,
                 audio_duration=audio_duration,
@@ -1444,12 +1445,15 @@ def _run_pipeline(
     logger.info(f"start task: {task_id}, stop_at: {stop_at}")
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=5)
 
+    prepared_local_ai_provider = None
     if (
         stop_at in {"materials", "video"}
         and local_ai.is_local_ai_source(params.video_source)
     ):
         try:
-            local_ai.preflight_source(params.video_source)
+            prepared_local_ai_provider = local_ai.prepare_provider(
+                params.video_source
+            )
         except Exception as exc:
             return _mark_task_failed(
                 task_id,
@@ -1667,6 +1671,7 @@ def _run_pipeline(
         audio_duration,
         loomloom_video_request=loomloom_video_request,
         video_script=video_script,
+        local_ai_provider=prepared_local_ai_provider,
     )
     if not downloaded_videos:
         return _mark_task_failed(

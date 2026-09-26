@@ -38,9 +38,14 @@ def create_provider(source: str) -> LocalVideoProvider:
     raise ValueError(f"unknown local AI video source: {source}")
 
 
-def preflight_source(source: str) -> None:
+def prepare_provider(source: str) -> LocalVideoProvider:
     provider = create_provider(source)
     provider.preflight()
+    return provider
+
+
+def preflight_source(source: str) -> None:
+    prepare_provider(source)
 
 
 def scene_duration_limit(provider: LocalVideoProvider, requested: float) -> float:
@@ -66,6 +71,7 @@ __all__ = [
     "is_local_ai_source",
     "is_source_enabled",
     "preflight_source",
+    "prepare_provider",
     "provider_base_seed",
     "scene_duration_limit",
 ]
