@@ -229,25 +229,51 @@ def _validate_model_files(settings: Wan22Settings) -> list[Path]:
     return _checkpoint_shards(checkpoint)
 
 
+def _file_stat_fingerprint(path: Path) -> tuple[int, int]:
+    stat = path.stat()
+    return stat.st_size, stat.st_mtime_ns
+
+
 def _model_fingerprint(settings: Wan22Settings) -> str:
     shards = _validate_model_files(settings)
     repo = settings.repo_path
     checkpoint = settings.checkpoint_path
+
+    # Hash the lightweight code/config files that control TI2V inference. Large
+    # model tensors use size + nanosecond mtime so provider construction stays
+    # fast while an in-place checkpoint replacement still invalidates the cache
+    # and persistent worker key.
+    code_files = {
+        "textimage2video": repo / "wan" / "textimage2video.py",
+        "ti2v_config": repo / "wan" / "configs" / "wan_ti2v_5B.py",
+        "model": repo / "wan" / "modules" / "model.py",
+        "vae": repo / "wan" / "modules" / "vae2_2.py",
+        "attention": repo / "wan" / "modules" / "attention.py",
+        "t5": repo / "wan" / "modules" / "t5.py",
+        "tokenizers": repo / "wan" / "modules" / "tokenizers.py",
+        "utils": repo / "wan" / "utils" / "utils.py",
+    }
     payload = {
         "adapter": _ADAPTER_VERSION,
         "model": WAN22_MODEL_NAME,
         "repo_code": {
-            "textimage2video": _sha256_file(repo / "wan" / "textimage2video.py"),
-            "ti2v_config": _sha256_file(repo / "wan" / "configs" / "wan_ti2v_5B.py"),
+            name: _sha256_file(path)
+            for name, path in code_files.items()
+            if path.is_file()
         },
         "checkpoint": {
             "config": _sha256_file(checkpoint / "config.json"),
             "index": _sha256_file(
                 checkpoint / "diffusion_pytorch_model.safetensors.index.json"
             ),
-            "t5_size": (checkpoint / "models_t5_umt5-xxl-enc-bf16.pth").stat().st_size,
-            "vae_size": (checkpoint / "Wan2.2_VAE.pth").stat().st_size,
-            "shards": [(item.name, item.stat().st_size) for item in shards],
+            "t5": _file_stat_fingerprint(
+                checkpoint / "models_t5_umt5-xxl-enc-bf16.pth"
+            ),
+            "vae": _file_stat_fingerprint(checkpoint / "Wan2.2_VAE.pth"),
+            "shards": [
+                (item.name, *_file_stat_fingerprint(item))
+                for item in shards
+            ],
         },
         "generation": {
             "offload_model": settings.offload_model,
@@ -490,8 +516,12 @@ class Wan22LocalProvider:
         self._preflight_complete = True
 
     @classmethod
-    def _worker_for(cls, settings: Wan22Settings) -> _WanWorkerClient:
-        key = settings.runtime_key()
+    def _worker_for(
+        cls,
+        settings: Wan22Settings,
+        model_fingerprint: str,
+    ) -> _WanWorkerClient:
+        key = settings.runtime_key() + (model_fingerprint,)
         with cls._worker_lock:
             if cls._worker is None or cls._worker_key != key:
                 if cls._worker is not None:
@@ -518,7 +548,7 @@ class Wan22LocalProvider:
                 "loading/reusing Wan 2.2 local runtime "
                 f"on CUDA device {self.settings.device_id}"
             )
-            self._worker_for(self.settings).load()
+            self._worker_for(self.settings, self.model_fingerprint).load()
 
     def generate(self, scene: SceneSpec, output_path: Path) -> None:
         if scene.target_duration > self.max_scene_duration + 1e-6:
@@ -530,7 +560,7 @@ class Wan22LocalProvider:
         output.parent.mkdir(parents=True, exist_ok=True)
 
         with LOCAL_AI_RUNTIME.generation_slot(self.family_id):
-            worker = self._worker_for(self.settings)
+            worker = self._worker_for(self.settings, self.model_fingerprint)
             try:
                 worker.load()
                 worker.request(
