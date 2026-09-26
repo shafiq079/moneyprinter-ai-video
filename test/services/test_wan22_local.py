@@ -187,6 +187,26 @@ class TestWan22Runtime(Wan22TestCase):
         first.validate_output(first_output, scene_one)
         second.validate_output(second_output, scene_two)
 
+    def test_model_change_replaces_persistent_worker_at_same_paths(self):
+        with patch.object(Wan22LocalProvider, "_worker_factory", _FakeWorker):
+            first = Wan22LocalProvider(settings=self.settings)
+            first.load_runtime()
+            first_worker = _FakeWorker.instances[0]
+
+            (self.checkpoint / "config.json").write_text(
+                '{"revision": 2}',
+                encoding="utf-8",
+            )
+            second = Wan22LocalProvider(settings=self.settings)
+            self.assertNotEqual(
+                first.model_fingerprint,
+                second.model_fingerprint,
+            )
+            second.load_runtime()
+
+        self.assertTrue(first_worker.closed)
+        self.assertEqual(len(_FakeWorker.instances), 2)
+
     def test_provider_caps_scene_duration_at_five_seconds(self):
         provider = Wan22LocalProvider(settings=self.settings)
         scenes = scene_planner.plan_scenes(
