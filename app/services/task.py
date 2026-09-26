@@ -16,6 +16,7 @@ from app.config import config
 from app.models import const
 from app.models.schema import VideoConcatMode, VideoParams
 from app.services import bgm as bgm_service
+from app.services import local_ai, scene_planner
 from app.services import (
     elevenlabs_music,
     llm,
@@ -651,7 +652,32 @@ def get_video_materials(
     video_terms,
     audio_duration,
     loomloom_video_request: loomloom.LoomLoomConfirmedVideoRequest | None = None,
+    video_script: str = "",
 ):
+    if local_ai.is_local_ai_source(params.video_source):
+        logger.info("\n\n## generating local AI video materials")
+        aspect = getattr(params.video_aspect, "value", params.video_aspect)
+        try:
+            scenes = scene_planner.plan_scenes(
+                video_script,
+                audio_duration=audio_duration,
+                max_scene_duration=params.video_clip_duration,
+                aspect=str(aspect),
+            )
+            provider = local_ai.create_provider(params.video_source)
+            return local_ai.generate_scene_materials(
+                task_id,
+                provider=provider,
+                scenes=scenes,
+            )
+        except Exception as exc:
+            _mark_task_failed(
+                task_id,
+                "materials",
+                f"local AI generation failed: {type(exc).__name__}: {exc}",
+            )
+            return None
+
     if params.video_source == "local":
         logger.info("\n\n## preprocess local materials")
         materials = video.preprocess_video(
@@ -903,7 +929,11 @@ def generate_final_videos(
         and bgm_service.should_use_bgm(params.bgm_type, params.bgm_volume)
     )
     # Matching preserves keyword order; batch allocation varies each keyword's candidates.
-    if params.match_materials_to_script:
+    if local_ai.is_local_ai_source(params.video_source):
+        # Local AI clips are generated against an ordered scene plan. Shuffling them
+        # would detach visuals from the narration beats they were created for.
+        video_concat_mode = VideoConcatMode.sequential
+    elif params.match_materials_to_script:
         video_concat_mode = VideoConcatMode.sequential
     elif params.video_count == 1:
         video_concat_mode = params.video_concat_mode
@@ -1516,8 +1546,11 @@ def _run_pipeline(
         return {"script": video_script}
 
     # 2. Generate terms
-    video_terms = ""
-    if params.video_source != "local":
+    # Local AI scene prompts are planned after narration duration is known. Do not
+    # spend an extra LLM call on stock-search keywords for that path.
+    is_local_ai_source = local_ai.is_local_ai_source(params.video_source)
+    video_terms = [] if is_local_ai_source else ""
+    if params.video_source != "local" and not is_local_ai_source:
         video_terms = generate_terms(task_id, params, video_script)
         if not video_terms:
             return _mark_task_failed(
@@ -1593,6 +1626,7 @@ def _run_pipeline(
         video_terms,
         audio_duration,
         loomloom_video_request=loomloom_video_request,
+        video_script=video_script,
     )
     if not downloaded_videos:
         return _mark_task_failed(
