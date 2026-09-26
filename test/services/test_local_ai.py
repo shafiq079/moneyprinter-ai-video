@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from app.models.schema import VideoConcatMode, VideoParams
 from app.services import generation_manifest, scene_planner, task, video
-from app.services.local_ai import FAKE_SOURCE_ID
+from app.services.local_ai import FAKE_SOURCE_ID, LocalAISceneGenerationError
 from app.services.local_ai.fake import FakeLocalVideoProvider
 from app.services.local_ai.orchestrator import generate_scene_materials
 from app.utils import utils
@@ -104,12 +104,16 @@ class TestLocalAIGenerationManifest(LocalAITestCase):
         scenes = self.make_scenes()
         failing = FakeLocalVideoProvider(fail_scene_ids={2})
 
-        with self.assertRaisesRegex(RuntimeError, "intentional fake failure"):
+        with self.assertRaises(LocalAISceneGenerationError) as failure:
             generate_scene_materials(
                 "retry-scenes",
                 provider=failing,
                 scenes=scenes,
             )
+
+        self.assertEqual(failure.exception.provider_id, FAKE_SOURCE_ID)
+        self.assertEqual(failure.exception.scene_id, 2)
+        self.assertEqual(failure.exception.cause_type, "RuntimeError")
 
         failed_manifest = generation_manifest.load_manifest("retry-scenes")
         self.assertEqual(failed_manifest["scenes"][0]["status"], "ready")

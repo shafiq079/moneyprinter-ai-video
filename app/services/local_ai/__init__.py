@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import os
 
-from .base import GenerationResult, LocalVideoProvider, SceneSpec
+from .base import (
+    GenerationResult,
+    LocalAISceneGenerationError,
+    LocalVideoProvider,
+    SceneSpec,
+)
 from .fake import FakeLocalVideoProvider
 from .orchestrator import generate_scene_materials
 from .wan22 import WAN22_SOURCE_ID, Wan22LocalProvider
@@ -62,6 +67,7 @@ def provider_base_seed(provider: LocalVideoProvider, default: int = 42) -> int:
 __all__ = [
     "FAKE_SOURCE_ID",
     "GenerationResult",
+    "LocalAISceneGenerationError",
     "WAN22_SOURCE_ID",
     "Wan22LocalProvider",
     "LocalVideoProvider",

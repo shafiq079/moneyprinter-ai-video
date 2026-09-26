@@ -98,6 +98,7 @@ def prepare_manifest(
             "actual_duration": old.get("actual_duration") if unchanged else None,
             "versions": versions,
             "error_type": old.get("error_type") if unchanged else None,
+            "error_code": old.get("error_code") if unchanged else None,
         }
         records.append(record)
 

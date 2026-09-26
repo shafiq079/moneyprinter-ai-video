@@ -699,10 +699,18 @@ def get_video_materials(
                 progress_callback=report_scene_progress,
             )
         except Exception as exc:
+            details = None
+            if isinstance(exc, local_ai.LocalAISceneGenerationError):
+                details = {
+                    "local_ai_provider": exc.provider_id,
+                    "scene_id": exc.scene_id,
+                    "local_ai_error_code": exc.error_code,
+                }
             _mark_task_failed(
                 task_id,
                 "materials",
                 f"local AI generation failed: {type(exc).__name__}: {exc}",
+                details=details,
             )
             return None
 

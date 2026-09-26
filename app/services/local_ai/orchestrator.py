@@ -8,7 +8,7 @@ from loguru import logger
 
 from app.services import generation_manifest
 
-from .base import LocalVideoProvider, SceneSpec
+from .base import LocalAISceneGenerationError, LocalVideoProvider, SceneSpec
 
 
 def generate_scene_materials(
@@ -109,8 +109,16 @@ def generate_scene_materials(
                 # Persist only an exception type. Detailed provider errors stay in logs
                 # so manifests cannot accidentally capture model paths/tokens/host data.
                 record["error_type"] = type(exc).__name__
+                record["error_code"] = str(
+                    getattr(exc, "code", type(exc).__name__)
+                )
                 generation_manifest.save_manifest(task_id, manifest)
-                raise
+                raise LocalAISceneGenerationError(
+                    provider_id=provider.provider_id,
+                    scene_id=scene.scene_id,
+                    cause_type=type(exc).__name__,
+                    error_code=record["error_code"],
+                ) from exc
 
             versions = list(record.get("versions") or [])
             if relative not in versions:

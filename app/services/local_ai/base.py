@@ -48,6 +48,27 @@ class GenerationResult:
     model_fingerprint: str
 
 
+class LocalAISceneGenerationError(RuntimeError):
+    """Safe scene-scoped failure suitable for task state and API responses."""
+
+    def __init__(
+        self,
+        *,
+        provider_id: str,
+        scene_id: int,
+        cause_type: str,
+        error_code: str,
+    ) -> None:
+        self.provider_id = str(provider_id)
+        self.scene_id = int(scene_id)
+        self.cause_type = str(cause_type)
+        self.error_code = str(error_code)
+        super().__init__(
+            f"provider={self.provider_id}, scene_id={self.scene_id}, "
+            f"error_code={self.error_code}, cause={self.cause_type}"
+        )
+
+
 class LocalVideoProvider(Protocol):
     """Minimal model-provider contract. Orchestration owns retries and persistence."""
 
