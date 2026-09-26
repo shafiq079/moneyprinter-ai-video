@@ -13,7 +13,7 @@ from app.utils import utils
 
 SCHEMA_VERSION = 1
 _MANIFEST_NAME = "generation_manifest.json"
-_VERSION_RE = re.compile(r"^v(\\d+)\\.mp4$")
+_VERSION_RE = re.compile(r"^v(\d+)\.mp4$")
 
 
 def manifest_path(task_id: str) -> Path:
