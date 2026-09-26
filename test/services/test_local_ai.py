@@ -101,6 +101,29 @@ class TestLocalAIGenerationManifest(LocalAITestCase):
         self.assertEqual(cached_provider.runtime_load_count, 0)
         self.assertEqual(cached_provider.generated_scene_ids, [])
 
+    def test_progress_callback_reports_scene_before_and_after_generation(self):
+        scenes = self.make_scenes(duration=1.0)
+        provider = FakeLocalVideoProvider()
+        events = []
+
+        generate_scene_materials(
+            "scene-progress",
+            provider=provider,
+            scenes=scenes,
+            progress_callback=lambda current, total, scene, status, reused: events.append(
+                (current, total, scene.scene_id, status, reused)
+            ),
+        )
+
+        self.assertEqual(
+            events,
+            [
+                (1, 1, 1, "checking", False),
+                (1, 1, 1, "generating", False),
+                (1, 1, 1, "ready", False),
+            ],
+        )
+
     def test_fully_cached_retry_does_not_enter_provider_generation_session(self):
         class SessionFakeProvider(FakeLocalVideoProvider):
             def __init__(self):
