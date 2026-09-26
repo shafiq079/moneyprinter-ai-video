@@ -518,6 +518,32 @@ compute_type = "int8"
 # initial_prompt = ""
 
 # =============================================================================
+# Local AI Video - Wan 2.2 TI2V-5B
+# =============================================================================
+#
+# Use a dedicated Python environment created from the official Wan2.2
+# requirements. MoneyPrinterTurbo intentionally launches Wan in a persistent
+# local worker process so Wan's GPU/Python dependencies do not replace the
+# application's locked dependencies (notably NumPy).
+#
+# Example:
+#   repo_path = "/opt/models/Wan2.2"
+#   checkpoint_path = "/opt/models/Wan2.2-TI2V-5B"
+#   python_executable = "/opt/venvs/wan22/bin/python"
+#
+# The generation task never downloads model weights. The operator must prepare
+# the official repository, checkpoint directory and worker environment first.
+[wan22_local]
+repo_path = ""
+checkpoint_path = ""
+python_executable = ""
+device = 0
+seed = 42
+offload_model = true
+t5_cpu = true
+convert_model_dtype = true
+
+# =============================================================================
 # Material Request Proxy / 素材请求代理
 # =============================================================================
 

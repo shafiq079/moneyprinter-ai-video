@@ -658,17 +658,44 @@ def get_video_materials(
         logger.info("\n\n## generating local AI video materials")
         aspect = getattr(params.video_aspect, "value", params.video_aspect)
         try:
+            provider = local_ai.create_provider(params.video_source)
             scenes = scene_planner.plan_scenes(
                 video_script,
                 audio_duration=audio_duration,
-                max_scene_duration=params.video_clip_duration,
+                max_scene_duration=local_ai.scene_duration_limit(
+                    provider,
+                    params.video_clip_duration,
+                ),
                 aspect=str(aspect),
+                base_seed=local_ai.provider_base_seed(provider),
             )
-            provider = local_ai.create_provider(params.video_source)
+
+            def report_scene_progress(
+                completed: int,
+                total: int,
+                scene,
+                reused: bool,
+            ) -> None:
+                progress = min(49, 40 + int((completed / max(1, total)) * 9))
+                sm.state.update_task(
+                    task_id,
+                    state=const.TASK_STATE_PROCESSING,
+                    progress=progress,
+                    current_stage="local_ai_video",
+                    local_ai_provider=provider.provider_id,
+                    scene_progress={
+                        "current": completed,
+                        "total": total,
+                        "scene_id": scene.scene_id,
+                        "reused": reused,
+                    },
+                )
+
             return local_ai.generate_scene_materials(
                 task_id,
                 provider=provider,
                 scenes=scenes,
+                progress_callback=report_scene_progress,
             )
         except Exception as exc:
             _mark_task_failed(
@@ -1420,13 +1447,15 @@ def _run_pipeline(
     if (
         stop_at in {"materials", "video"}
         and local_ai.is_local_ai_source(params.video_source)
-        and not local_ai.is_source_enabled(params.video_source)
     ):
-        return _mark_task_failed(
-            task_id,
-            "preflight",
-            "the fake local AI video source is test-only and disabled by default",
-        )
+        try:
+            local_ai.preflight_source(params.video_source)
+        except Exception as exc:
+            return _mark_task_failed(
+                task_id,
+                "preflight",
+                f"local AI preflight failed: {type(exc).__name__}: {exc}",
+            )
 
     if (
         stop_at in {"materials", "video"}

@@ -67,6 +67,7 @@ def prepare_manifest(
     provider_id: str,
     model_fingerprint: str,
     scenes: list[SceneSpec],
+    provider_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     previous = load_manifest(task_id) or {}
     previous_by_id = {
@@ -105,6 +106,7 @@ def prepare_manifest(
         "task_id": str(task_id),
         "provider_id": str(provider_id),
         "model_fingerprint": str(model_fingerprint),
+        "provider_metadata": dict(provider_metadata or {}),
         "scenes": records,
     }
     save_manifest(task_id, manifest)

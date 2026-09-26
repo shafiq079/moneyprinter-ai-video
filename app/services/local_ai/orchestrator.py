@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
+
+from loguru import logger
 
 from app.services import generation_manifest
 
@@ -12,6 +15,7 @@ def generate_scene_materials(
     *,
     provider: LocalVideoProvider,
     scenes: list[SceneSpec],
+    progress_callback: Callable[[int, int, SceneSpec, bool], None] | None = None,
 ) -> list[str]:
     """Generate/reuse ordered scene clips and persist progress after every scene."""
 
@@ -23,11 +27,21 @@ def generate_scene_materials(
         provider_id=provider.provider_id,
         model_fingerprint=provider.model_fingerprint,
         scenes=scenes,
+        provider_metadata=(
+            provider.safe_metadata()
+            if callable(getattr(provider, "safe_metadata", None))
+            else None
+        ),
     )
     runtime_loaded = False
     outputs: list[str] = []
 
-    for scene in scenes:
+    total_scenes = len(scenes)
+    for scene_index, scene in enumerate(scenes, start=1):
+        logger.info(
+            f"local AI scene {scene_index}/{total_scenes}: "
+            f"provider={provider.provider_id}, scene_id={scene.scene_id}"
+        )
         record = generation_manifest.scene_record(manifest, scene.scene_id)
         active_asset = record.get("active_asset")
         if (
@@ -48,6 +62,8 @@ def generate_scene_materials(
                 record["actual_duration"] = validated.actual_duration
                 record["error_type"] = None
                 outputs.append(str(cached_path))
+                if progress_callback is not None:
+                    progress_callback(scene_index, total_scenes, scene, True)
                 continue
 
         if not runtime_loaded:
@@ -91,5 +107,7 @@ def generate_scene_materials(
         record["error_type"] = None
         generation_manifest.save_manifest(task_id, manifest)
         outputs.append(str(final_path))
+        if progress_callback is not None:
+            progress_callback(scene_index, total_scenes, scene, False)
 
     return outputs
