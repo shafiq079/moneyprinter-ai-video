@@ -69,10 +69,12 @@ def generate_scene_materials(
                     record["active_asset"] = None
                     record["actual_duration"] = None
                     record["error_type"] = type(exc).__name__
+                    record["error_code"] = type(exc).__name__
                     generation_manifest.save_manifest(task_id, manifest)
                 else:
                     record["actual_duration"] = validated.actual_duration
                     record["error_type"] = None
+                    record["error_code"] = None
                     outputs.append(str(cached_path))
                     if progress_callback is not None:
                         progress_callback(scene_index, total_scenes, scene, True)
@@ -94,6 +96,7 @@ def generate_scene_materials(
             partial_path.unlink(missing_ok=True)
             record["status"] = "generating"
             record["error_type"] = None
+            record["error_code"] = None
             generation_manifest.save_manifest(task_id, manifest)
 
             try:
@@ -128,6 +131,7 @@ def generate_scene_materials(
             record["actual_duration"] = validated.actual_duration
             record["status"] = "ready"
             record["error_type"] = None
+            record["error_code"] = None
             generation_manifest.save_manifest(task_id, manifest)
             outputs.append(str(final_path))
             if progress_callback is not None:
