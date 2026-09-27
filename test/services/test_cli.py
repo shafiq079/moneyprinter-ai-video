@@ -801,6 +801,25 @@ class TestCli(unittest.TestCase):
                 os.remove(test_filepath)
 
 
+    def test_local_ai_visual_style_reaches_video_params(self):
+        args = cli.parse_args(
+            [
+                "--video-subject",
+                "test",
+                "--video-source",
+                "ltx25_local",
+                "--local-ai-visual-style",
+                "warm 35mm documentary",
+                "--stop-at",
+                "script",
+            ]
+        )
+        params = cli.build_video_params(args)
+        self.assertEqual(
+            params.local_ai_visual_style,
+            "warm 35mm documentary",
+        )
+
     def test_ltx25_local_is_registered_as_a_cli_video_source(self):
         args = cli.parse_args(
             [

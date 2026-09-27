@@ -761,6 +761,7 @@ def get_video_materials(
                     else local_ai.provider_base_seed(provider)
                 ),
                 provider_settings=local_ai.provider_generation_settings(provider),
+                visual_style=params.local_ai_visual_style,
                 # The fake provider is a CPU/CI transport test. Keep it independent
                 # from configured LLM/network availability.
                 use_llm=provider.provider_id != local_ai.FAKE_SOURCE_ID,

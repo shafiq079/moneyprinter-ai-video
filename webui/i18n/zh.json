@@ -300,6 +300,8 @@
     "LTX Quality DFR": "质量 / DFR",
     "Local AI Seed": "本地 AI 随机种子",
     "Local AI Seed Help": "用于可重复场景生成的基础随机种子。后续场景会依次递增。",
+    "Local AI Visual Style": "视觉风格 / 导演方向",
+    "Local AI Visual Style Help": "可选的场景创意方向，例如温暖的 35mm 纪录片、产品微距摄影或黏土定格动画。它不能覆盖旁白准确性或禁止文字/Logo 的约束。",
     "Upload Local Files": "上传本地文件",
     "Please Upload Local Materials First": "请先上传至少一个本地素材文件。",
     "Unsupported Upload File Type": "上传的文件类型不受支持。",

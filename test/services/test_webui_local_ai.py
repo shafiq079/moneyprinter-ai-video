@@ -63,6 +63,12 @@ def test_ltx25_selection_shows_readiness_control_without_running_preflight():
         ]
         assert len(generation_modes) == 1
         assert generation_modes[0].value == "fast"
+        visual_style_inputs = [
+            item
+            for item in app.text_area
+            if getattr(item, "label", "") == "Visual style / direction"
+        ]
+        assert len(visual_style_inputs) == 1
         assert not app.exception
         preflight_status.assert_not_called()
 

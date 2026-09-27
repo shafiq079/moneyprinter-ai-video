@@ -371,6 +371,14 @@ Batch manifests:
         help="optional deterministic base seed for local AI scenes",
     )
     material_group.add_argument(
+        "--local-ai-visual-style",
+        default=None,
+        help=(
+            "optional visual style/direction for local AI scenes, such as "
+            "'warm 35mm documentary' or 'clean clay stop-motion'"
+        ),
+    )
+    material_group.add_argument(
         "--video-materials",
         default="",
         metavar="PATH[,PATH...]",
@@ -972,6 +980,7 @@ def build_video_params(args: argparse.Namespace) -> VideoParams:
         "video_language",
         "local_ai_generation_mode",
         "local_ai_seed",
+        "local_ai_visual_style",
         "paragraph_number",
         "video_script_prompt",
         "custom_system_prompt",

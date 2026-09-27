@@ -103,6 +103,76 @@ class TestScenePlan(LocalAITestCase):
         self.assertTrue(all(scene.continuity for scene in scenes))
         self.assertTrue(all("No titles" in scene.prompt for scene in scenes))
 
+    def test_visual_style_is_visible_and_changes_plan_fingerprint(self):
+        first = scene_planner.get_or_create_scene_plan(
+            "visual-style-plan",
+            "A person crosses a quiet street.",
+            video_subject="Night walk",
+            audio_duration=2.0,
+            max_scene_duration=2.0,
+            aspect="9:16",
+            base_seed=42,
+            visual_style="warm 35mm documentary with soft film grain",
+            use_llm=False,
+        )
+
+        self.assertIn(
+            "warm 35mm documentary with soft film grain",
+            first.visual_bible,
+        )
+        self.assertIn(
+            "warm 35mm documentary with soft film grain",
+            first.scenes[0].prompt,
+        )
+        first_fingerprint = first.input_fingerprint
+
+        second = scene_planner.get_or_create_scene_plan(
+            "visual-style-plan",
+            "A person crosses a quiet street.",
+            video_subject="Night walk",
+            audio_duration=2.0,
+            max_scene_duration=2.0,
+            aspect="9:16",
+            base_seed=42,
+            visual_style="minimal monochrome architectural photography",
+            use_llm=False,
+        )
+
+        self.assertNotEqual(
+            second.input_fingerprint,
+            first_fingerprint,
+        )
+        self.assertIn(
+            "minimal monochrome architectural photography",
+            second.scenes[0].prompt,
+        )
+
+    def test_director_prompt_receives_user_visual_direction(self):
+        fallback = scene_planner.get_or_create_scene_plan(
+            "director-style-prompt",
+            "A ceramic cup sits on a table.",
+            video_subject="Ceramic cup",
+            audio_duration=2.0,
+            max_scene_duration=2.0,
+            aspect="16:9",
+            visual_style="handmade clay stop-motion",
+            use_llm=False,
+        )
+        prompt = scene_planner.build_director_prompt(
+            video_subject="Ceramic cup",
+            fallback_plan=fallback,
+            visual_style="handmade clay stop-motion",
+        )
+
+        self.assertIn(
+            "User visual direction: handmade clay stop-motion",
+            prompt,
+        )
+        self.assertIn(
+            "must not override fixed",
+            prompt.lower(),
+        )
+
     def test_persisted_director_plan_is_reused_without_second_llm_call(self):
         director_payload = {
             "idea": "A focused coffee story",

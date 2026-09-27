@@ -300,6 +300,8 @@
     "LTX Quality DFR": "Quality / DFR",
     "Local AI Seed": "Local AI seed",
     "Local AI Seed Help": "Base seed for deterministic scene generation. Each later scene increments this seed.",
+    "Local AI Visual Style": "Visual style / direction",
+    "Local AI Visual Style Help": "Optional creative direction for scene prompts, for example warm 35mm documentary, product macro photography, or clay stop-motion. It cannot override narration accuracy or no-text/logo constraints.",
     "Upload Local Files": "Upload Local Files",
     "Please Upload Local Materials First": "Please upload at least one local material file first.",
     "Unsupported Upload File Type": "The uploaded file type is not supported.",

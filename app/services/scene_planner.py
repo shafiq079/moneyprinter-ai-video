@@ -220,6 +220,7 @@ def _planning_fingerprint(
     aspect: str,
     base_seed: int,
     provider_settings: dict[str, object] | None = None,
+    visual_style: str = "",
 ) -> str:
     payload = {
         "schema_version": SCENE_PLAN_SCHEMA_VERSION,
@@ -233,6 +234,9 @@ def _planning_fingerprint(
     }
     if provider_settings:
         payload["provider_settings"] = dict(provider_settings)
+    cleaned_style = _clean_text(visual_style, 2000)
+    if cleaned_style:
+        payload["visual_style"] = cleaned_style
     encoded = json.dumps(
         payload,
         ensure_ascii=False,
@@ -242,17 +246,31 @@ def _planning_fingerprint(
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
-def _fallback_visual_bible(subject: str, aspect: str) -> str:
+def _fallback_visual_bible(
+    subject: str,
+    aspect: str,
+    visual_style: str = "",
+) -> str:
     subject_rule = (
         f"Keep the appearance and visual identity of {subject} consistent "
         "across scenes."
         if subject
         else "Keep recurring subjects visually consistent across scenes."
     )
+    style = _clean_text(visual_style, 1200)
+    style_rule = (
+        " User visual direction: "
+        + style
+        + ". Apply it only when compatible with narration accuracy, continuity, "
+        "and the no-text/logo rules."
+        if style
+        else ""
+    )
     return (
         "Cinematic realism with coherent natural lighting, one stable color "
         f"palette, and {_aspect_direction(aspect)}. {subject_rule} "
         "Use clean imagery without embedded text, captions, logos, or watermarks."
+        f"{style_rule}"
     )
 
 
@@ -267,6 +285,7 @@ def _fallback_plan(
     input_fingerprint: str,
     source: str,
     provider_settings: dict[str, object] | None = None,
+    visual_style: str = "",
 ) -> ScenePlan:
     scene_count = max(1, math.ceil(audio_duration / max_scene_duration))
     durations = _normalize_durations(
@@ -276,7 +295,11 @@ def _fallback_plan(
     )
     narration_segments = _split_narration(video_script, scene_count)
     subject = _clean_text(video_subject, 240)
-    visual_bible = _fallback_visual_bible(subject, aspect)
+    visual_bible = _fallback_visual_bible(
+        subject,
+        aspect,
+        visual_style,
+    )
     scenes: list[SceneSpec] = []
 
     for index, (segment, duration) in enumerate(
@@ -344,6 +367,7 @@ def build_director_prompt(
     *,
     video_subject: str,
     fallback_plan: ScenePlan,
+    visual_style: str = "",
 ) -> str:
     fixed_scenes = [
         {
@@ -357,11 +381,13 @@ def build_director_prompt(
     fixed_json = json.dumps(fixed_scenes, ensure_ascii=False, indent=2)
     aspect = fallback_plan.scenes[0].aspect if fallback_plan.scenes else "9:16"
     subject = _clean_text(video_subject, 500) or "(use the supplied narration)"
+    style = _clean_text(visual_style, 2000) or "(no additional user visual direction)"
     return f"""
 Act as a senior short-form video director. Direct visuals for an already-recorded narration.
 
 Video subject: {subject}
 Aspect: {aspect}
+User visual direction: {style}
 
 The narration is already generated and timed. You MUST NOT rewrite, summarize,
 reorder, merge, split, or add narration. The scene IDs, narration segments, and
@@ -395,7 +421,9 @@ Rules:
    or claims that are not present in the fixed narration.
 6. Prompts must be readable and concise rather than keyword dumps or inflated jargon.
 7. Output prompts in English where practical, while preserving named entities accurately.
-8. Return JSON only. Do not include Markdown fences or commentary.
+8. User visual direction is creative guidance only. It must not override fixed
+   narration, factual constraints, continuity, or the no-text/logo rules above.
+9. Return JSON only. Do not include Markdown fences or commentary.
 """.strip()
 
 
@@ -654,6 +682,7 @@ def get_or_create_scene_plan(
     aspect: str,
     base_seed: int = 42,
     provider_settings: dict[str, object] | None = None,
+    visual_style: str = "",
     use_llm: bool = True,
 ) -> ScenePlan:
     """Reuse a matching plan or create visual direction exactly once."""
@@ -673,6 +702,7 @@ def get_or_create_scene_plan(
         aspect=aspect,
         base_seed=base_seed,
         provider_settings=provider_settings,
+        visual_style=visual_style,
     )
     try:
         existing = load_scene_plan(task_id)
@@ -697,6 +727,7 @@ def get_or_create_scene_plan(
         input_fingerprint=fingerprint,
         source="deterministic",
         provider_settings=provider_settings,
+        visual_style=visual_style,
     )
     plan = fallback
     if use_llm:
@@ -705,6 +736,7 @@ def get_or_create_scene_plan(
                 build_director_prompt(
                     video_subject=video_subject,
                     fallback_plan=fallback,
+                    visual_style=visual_style,
                 )
             )
             plan = _normalize_director_payload(
@@ -754,6 +786,7 @@ def plan_scenes(
         aspect=aspect,
         base_seed=base_seed,
         provider_settings=None,
+        visual_style="",
     )
     return list(
         _fallback_plan(
@@ -766,5 +799,6 @@ def plan_scenes(
             input_fingerprint=fingerprint,
             source="deterministic",
             provider_settings=None,
+            visual_style="",
         ).scenes
     )

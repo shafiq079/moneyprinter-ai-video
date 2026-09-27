@@ -1748,6 +1748,9 @@ def _apply_restored_params(params):
     )
     if params.get("local_ai_seed") is not None:
         st.session_state["local_ai_seed_input"] = int(params["local_ai_seed"])
+    st.session_state["local_ai_visual_style_input"] = (
+        params.get("local_ai_visual_style") or ""
+    )
     _set_stable_widget_value(
         "video_concat_mode_select", params.get("video_concat_mode") or "random"
     )
@@ -5543,6 +5546,22 @@ def _render_video_settings(panel, params):
                     "ui",
                     "local_ai_seed",
                     params.local_ai_seed,
+                )
+                params.local_ai_visual_style = st.text_area(
+                    tr("Local AI Visual Style"),
+                    value=_saved_ui_text(
+                        "local_ai_visual_style",
+                        max_length=2000,
+                    ),
+                    key="local_ai_visual_style_input",
+                    max_chars=2000,
+                    height=90,
+                    help=tr("Local AI Visual Style Help"),
+                ).strip()
+                _set_runtime_config(
+                    "ui",
+                    "local_ai_visual_style",
+                    params.local_ai_visual_style,
                 )
             if params.video_source == "local":
                 # Streamlit 的文件类型校验对扩展名大小写敏感，这里同时放行大小写两种形式。

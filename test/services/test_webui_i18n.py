@@ -58,6 +58,8 @@ ENGLISH_FALLBACK_KEYS = frozenset(
         "LTX Quality DFR",
         "Local AI Seed",
         "Local AI Seed Help",
+        "Local AI Visual Style",
+        "Local AI Visual Style Help",
         "Scene",
         "Scenes",
         "Scene Editor",
