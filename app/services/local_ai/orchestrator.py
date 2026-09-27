@@ -8,7 +8,12 @@ from loguru import logger
 
 from app.services import generation_manifest
 
-from .base import LocalAISceneGenerationError, LocalVideoProvider, SceneSpec
+from .base import (
+    LocalAISceneGenerationError,
+    LocalVideoProvider,
+    SceneSpec,
+    scene_fingerprint,
+)
 
 
 def generate_scene_materials(
@@ -168,3 +173,98 @@ def generate_scene_materials(
                 )
 
     return outputs
+
+
+def regenerate_scene_material(
+    task_id: str,
+    *,
+    provider: LocalVideoProvider,
+    scene: SceneSpec,
+) -> str:
+    """Generate one new scene version while keeping the previous active clip safe."""
+
+    manifest = generation_manifest.load_manifest(task_id)
+    if manifest is None:
+        raise ValueError("local AI generation manifest is missing")
+    if manifest.get("provider_id") != provider.provider_id:
+        raise ValueError("scene provider does not match the task manifest")
+
+    record = generation_manifest.scene_record(manifest, scene.scene_id)
+    old_active = record.get("active_asset")
+    old_status = record.get("status")
+    old_actual_duration = record.get("actual_duration")
+    old_fingerprint = record.get("fingerprint")
+
+    relative, final_path, partial_path = generation_manifest.next_scene_version(
+        task_id,
+        scene.scene_id,
+        list(record.get("versions") or []),
+    )
+    partial_path.unlink(missing_ok=True)
+
+    # Regeneration state is additive. Do not clear the current active asset before
+    # the replacement validates, so a failed variation never destroys a good task.
+    record["regeneration_status"] = "generating"
+    record["regeneration_error_type"] = None
+    record["regeneration_error_code"] = None
+    generation_manifest.save_manifest(task_id, manifest)
+
+    session_factory = getattr(provider, "generation_session", None)
+    try:
+        with ExitStack() as stack:
+            if callable(session_factory):
+                stack.enter_context(session_factory())
+            provider.preflight()
+            provider.load_runtime()
+            provider.generate(scene, partial_path)
+            provider.validate_output(partial_path, scene)
+            os.replace(partial_path, final_path)
+            validated = provider.validate_output(final_path, scene)
+    except Exception as exc:
+        partial_path.unlink(missing_ok=True)
+        record["regeneration_status"] = "failed"
+        record["regeneration_error_type"] = type(exc).__name__
+        record["regeneration_error_code"] = str(
+            getattr(exc, "code", type(exc).__name__)
+        )
+        record["active_asset"] = old_active
+        record["status"] = old_status
+        record["actual_duration"] = old_actual_duration
+        record["fingerprint"] = old_fingerprint
+        generation_manifest.save_manifest(task_id, manifest)
+        raise LocalAISceneGenerationError(
+            provider_id=provider.provider_id,
+            scene_id=scene.scene_id,
+            cause_type=type(exc).__name__,
+            error_code=record["regeneration_error_code"],
+        ) from exc
+
+    versions = list(record.get("versions") or [])
+    if relative not in versions:
+        versions.append(relative)
+
+    record.update(scene.to_dict())
+    record["provider_id"] = provider.provider_id
+    record["model_fingerprint"] = provider.model_fingerprint
+    record["provider_metadata"] = (
+        provider.safe_metadata()
+        if callable(getattr(provider, "safe_metadata", None))
+        else {}
+    )
+    record["fingerprint"] = scene_fingerprint(
+        scene,
+        provider_id=provider.provider_id,
+        model_fingerprint=provider.model_fingerprint,
+    )
+    record["versions"] = versions
+    record["active_asset"] = relative
+    record["actual_duration"] = validated.actual_duration
+    record["status"] = "ready"
+    record["error_type"] = None
+    record["error_code"] = None
+    record["regeneration_status"] = "ready"
+    record["regeneration_error_type"] = None
+    record["regeneration_error_code"] = None
+    generation_manifest.save_manifest(task_id, manifest)
+    return str(final_path)
+

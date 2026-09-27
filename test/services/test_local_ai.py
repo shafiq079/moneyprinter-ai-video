@@ -40,6 +40,32 @@ class LocalAITestCase(unittest.TestCase):
         )
 
 
+    def make_audio(self, task_id: str, duration: float = 2.0) -> Path:
+        audio_path = self.task_root / task_id / "audio.mp3"
+        audio_path.parent.mkdir(parents=True, exist_ok=True)
+        command = [
+            utils.get_ffmpeg_binary(),
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=channel_layout=stereo:sample_rate=44100",
+            "-t",
+            str(duration),
+            "-c:a",
+            "libmp3lame",
+            str(audio_path),
+        ]
+        completed = subprocess.run(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return audio_path
+
+
 class TestScenePlan(LocalAITestCase):
     def test_scene_plan_is_ordered_and_covers_audio_duration(self):
         scenes = scene_planner.plan_scenes(
@@ -350,6 +376,124 @@ class TestLocalAIGenerationManifest(LocalAITestCase):
             str(self.task_root),
             manifest_file.read_text(encoding="utf-8"),
         )
+
+
+class TestLocalAISceneRegeneration(LocalAITestCase):
+    def _prepare_task(self, task_id: str):
+        params = VideoParams(
+            video_subject="test",
+            video_script="A first idea. A second idea.",
+            video_source=FAKE_SOURCE_ID,
+            video_aspect="9:16",
+            video_concat_mode=VideoConcatMode.sequential,
+            video_clip_duration=1,
+            subtitle_enabled=False,
+            bgm_type="",
+            bgm_volume=0,
+            n_threads=1,
+        )
+        plan = scene_planner.get_or_create_scene_plan(
+            task_id,
+            params.video_script,
+            video_subject=params.video_subject,
+            audio_duration=2.0,
+            max_scene_duration=1.0,
+            aspect="9:16",
+            base_seed=42,
+            use_llm=False,
+        )
+        provider = FakeLocalVideoProvider()
+        generate_scene_materials(
+            task_id,
+            provider=provider,
+            scenes=list(plan.scenes),
+        )
+        task.save_script_data(task_id, params.video_script, [], params)
+        self.make_audio(task_id, 2.0)
+        return params, plan
+
+    def test_single_scene_edit_creates_only_one_new_version_and_rerenders(self):
+        task_id = "scene-edit-success"
+        _, original_plan = self._prepare_task(task_id)
+        replacement = FakeLocalVideoProvider()
+
+        with (
+            patch.object(task.local_ai, "is_public_source", return_value=True),
+            patch.object(
+                task.local_ai,
+                "prepare_provider",
+                return_value=replacement,
+            ),
+        ):
+            result = task.regenerate_local_ai_scene(
+                task_id,
+                1,
+                prompt="A new close-up visual for only the first scene.",
+                seed=99,
+            )
+
+        self.assertEqual(replacement.generated_scene_ids, [1])
+        self.assertTrue(Path(result["videos"][0]).is_file())
+        manifest = generation_manifest.load_manifest(task_id)
+        first = generation_manifest.scene_record(manifest, 1)
+        second = generation_manifest.scene_record(manifest, 2)
+        self.assertEqual(
+            first["versions"],
+            [
+                "generated_ai/scene-001/v001.mp4",
+                "generated_ai/scene-001/v002.mp4",
+            ],
+        )
+        self.assertEqual(first["active_asset"], "generated_ai/scene-001/v002.mp4")
+        self.assertEqual(second["versions"], ["generated_ai/scene-002/v001.mp4"])
+        self.assertEqual(second["active_asset"], "generated_ai/scene-002/v001.mp4")
+
+        revised = scene_planner.load_scene_plan(task_id)
+        self.assertEqual(revised.source, "manual_edit")
+        self.assertEqual(revised.scenes[0].seed, 99)
+        self.assertNotEqual(
+            revised.scenes[0].prompt,
+            original_plan.scenes[0].prompt,
+        )
+        self.assertEqual(
+            revised.scenes[1].prompt,
+            original_plan.scenes[1].prompt,
+        )
+
+    def test_failed_scene_edit_preserves_previous_active_asset_and_plan(self):
+        task_id = "scene-edit-failure"
+        _, original_plan = self._prepare_task(task_id)
+        before = generation_manifest.load_manifest(task_id)
+        before_active = generation_manifest.scene_record(before, 1)["active_asset"]
+        replacement = FakeLocalVideoProvider(fail_scene_ids={1})
+
+        with (
+            patch.object(task.local_ai, "is_public_source", return_value=True),
+            patch.object(
+                task.local_ai,
+                "prepare_provider",
+                return_value=replacement,
+            ),
+            self.assertRaises(LocalAISceneGenerationError),
+        ):
+            task.regenerate_local_ai_scene(
+                task_id,
+                1,
+                prompt="This variation intentionally fails.",
+                seed=100,
+            )
+
+        after = generation_manifest.load_manifest(task_id)
+        first = generation_manifest.scene_record(after, 1)
+        self.assertEqual(first["active_asset"], before_active)
+        self.assertEqual(first["status"], "ready")
+        self.assertEqual(first["regeneration_status"], "failed")
+        self.assertEqual(
+            first["versions"],
+            ["generated_ai/scene-001/v001.mp4"],
+        )
+        persisted = scene_planner.load_scene_plan(task_id)
+        self.assertEqual(persisted.scenes[0], original_plan.scenes[0])
 
 
 class TestLocalAITaskIntegration(LocalAITestCase):

@@ -92,6 +92,9 @@ def prepare_manifest(
         unchanged = old.get("fingerprint") == fingerprint
         record = {
             **scene.to_dict(),
+            "provider_id": str(provider_id),
+            "model_fingerprint": str(model_fingerprint),
+            "provider_metadata": dict(provider_metadata or {}),
             "fingerprint": fingerprint,
             "status": old.get("status", "pending") if unchanged else "pending",
             "active_asset": old.get("active_asset") if unchanged else None,
@@ -157,3 +160,33 @@ def next_scene_version(
     final_path.parent.mkdir(parents=True, exist_ok=True)
     partial_path = final_path.with_name(f".{final_path.stem}.partial.mp4")
     return relative.as_posix(), final_path, partial_path
+
+
+def active_scene_paths(task_id: str) -> list[str]:
+    """Return validated task-local active scene paths in scene order."""
+
+    manifest = load_manifest(task_id)
+    if manifest is None:
+        raise ValueError("local AI generation manifest is missing")
+
+    records = sorted(
+        manifest.get("scenes", []),
+        key=lambda item: int(item.get("scene_id", 0)),
+    )
+    if not records:
+        raise ValueError("local AI generation manifest contains no scenes")
+
+    paths: list[str] = []
+    for record in records:
+        if record.get("status") != "ready" or not record.get("active_asset"):
+            raise ValueError(
+                f"scene {record.get('scene_id')} does not have an active ready asset"
+            )
+        candidate = resolve_asset(task_id, record["active_asset"])
+        if not candidate.is_file():
+            raise ValueError(
+                f"scene {record.get('scene_id')} active asset is missing"
+            )
+        paths.append(str(candidate))
+    return paths
+

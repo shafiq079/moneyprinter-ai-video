@@ -125,6 +125,121 @@ def _run_generation(
                 )
 
 
+def _run_scene_regeneration(
+    task_id: str,
+    scene_id: int,
+    prompt: str,
+    seed: int,
+    capture_logs: bool,
+) -> dict:
+    """Run one scene replacement through the same serialized WebUI worker."""
+
+    log_handler_id = None
+    worker_thread_id = threading.get_ident()
+    try:
+        if capture_logs:
+            log_handler_id = logger.add(
+                lambda message: _append_task_log(task_id, str(message)),
+                level="DEBUG",
+                format=format_log_record,
+                colorize=False,
+                filter=lambda record: record["thread"].id == worker_thread_id,
+            )
+        with config.runtime_config_lock():
+            return tm.regenerate_local_ai_scene(
+                task_id,
+                scene_id,
+                prompt=prompt,
+                seed=seed,
+            )
+    except Exception as exc:
+        logger.exception(
+            "scene regeneration worker failed: "
+            f"task_id={task_id}, scene_id={scene_id}, error={exc}"
+        )
+        try:
+            snapshot = sm.state.get_task(task_id) or {}
+        except Exception:
+            snapshot = {}
+        # The task service preserves an existing good final video on ordinary
+        # regeneration failures. Only use failed state if no usable task remains.
+        if snapshot.get("state") not in {
+            const.TASK_STATE_COMPLETE,
+            const.TASK_STATE_FAILED,
+        }:
+            sm.state.update_task(
+                task_id,
+                state=const.TASK_STATE_FAILED,
+                progress=0,
+                current_stage=None,
+                scene_regeneration_error=f"{type(exc).__name__}: {exc}",
+                scene_regeneration_scene_id=scene_id,
+            )
+        return {
+            "task_id": task_id,
+            "scene_id": scene_id,
+            "state": (sm.state.get_task(task_id) or {}).get("state"),
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    finally:
+        if log_handler_id is not None:
+            try:
+                logger.remove(log_handler_id)
+            except ValueError:
+                logger.debug(
+                    f"scene regeneration log handler already removed: task_id={task_id}"
+                )
+
+
+def submit_scene_regeneration(
+    task_id: str,
+    scene_id: int,
+    *,
+    prompt: str,
+    seed: int,
+    capture_logs: bool = True,
+) -> None:
+    """Queue a single-scene local-AI variation without blocking Streamlit."""
+
+    clean_prompt = str(prompt or "").strip()
+    if not clean_prompt:
+        raise ValueError("scene prompt must not be empty")
+    if int(seed) < 0:
+        raise ValueError("scene seed must be >= 0")
+
+    previous = sm.state.get_task(task_id) or {}
+    if tm.is_task_busy(previous):
+        raise RuntimeError("task is already busy")
+
+    sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_PROCESSING,
+        progress=40,
+        current_stage="scene_regeneration_queued",
+        scene_regeneration_scene_id=int(scene_id),
+        scene_regeneration_error=None,
+    )
+    try:
+        _task_manager.add_task(
+            _run_scene_regeneration,
+            task_id=task_id,
+            scene_id=int(scene_id),
+            prompt=clean_prompt,
+            seed=int(seed),
+            capture_logs=capture_logs,
+        )
+    except Exception:
+        sm.state.update_task(
+            task_id,
+            state=previous.get("state", const.TASK_STATE_FAILED),
+            progress=previous.get("progress", 100 if previous.get("videos") else 0),
+            current_stage=None,
+            scene_regeneration_error="scene regeneration could not be scheduled",
+            scene_regeneration_scene_id=int(scene_id),
+        )
+        raise
+
+
 def submit_generation(
     task_id: str,
     params: VideoParams,

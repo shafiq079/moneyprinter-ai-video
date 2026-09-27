@@ -46,6 +46,7 @@ from app.models.schema import (
 from app.services import bgm as bgm_service
 from app.services import (
     cache_manager,
+    generation_manifest,
     llm,
     local_ai,
     loomloom,
@@ -1188,9 +1189,154 @@ def _build_video_download_name(subject, index, total):
     return f"{safe_subject}{suffix}.mp4"
 
 
+def _select_scene_editor_task(task_id: str) -> None:
+    st.session_state["scene_editor_task_id"] = str(task_id)
+
+
+def _render_scene_editor() -> None:
+    task_id = str(st.session_state.get("scene_editor_task_id") or "")
+    if not task_id:
+        return
+
+    tasks_root = os.path.realpath(utils.task_dir())
+    task_path = os.path.realpath(os.path.join(tasks_root, task_id))
+    try:
+        if os.path.commonpath([tasks_root, task_path]) != tasks_root:
+            raise ValueError("scene editor task is outside task directory")
+    except ValueError:
+        st.session_state.pop("scene_editor_task_id", None)
+        return
+
+    try:
+        plan = scene_planner.load_scene_plan(task_id)
+        manifest = generation_manifest.load_manifest(task_id)
+    except ValueError as exc:
+        st.warning(str(exc))
+        return
+    if plan is None or manifest is None:
+        st.info(tr("No Scene Plan"))
+        return
+
+    try:
+        task_state = sm.state.get_task(task_id) or {}
+    except Exception:
+        task_state = {}
+    is_busy = tm.is_task_busy(task_state)
+
+    st.divider()
+    title_cols = st.columns([5, 1], vertical_alignment="center")
+    title_cols[0].subheader(tr("Scene Editor"))
+    if title_cols[1].button(
+        tr("Close"),
+        key=f"close_scene_editor_{task_id}",
+        use_container_width=True,
+    ):
+        st.session_state.pop("scene_editor_task_id", None)
+        return
+
+    regeneration_error = str(
+        task_state.get("scene_regeneration_error") or ""
+    ).strip()
+    if regeneration_error:
+        st.warning(
+            f"{tr('Scene Regeneration Failed')}: {regeneration_error}"
+        )
+
+    for scene in plan.scenes:
+        try:
+            record = generation_manifest.scene_record(
+                manifest,
+                scene.scene_id,
+            )
+        except KeyError:
+            continue
+
+        versions = [
+            item
+            for item in record.get("versions", [])
+            if isinstance(item, str) and item
+        ]
+        active_asset = str(record.get("active_asset") or "")
+        label = (
+            f"{tr('Scene')} {scene.scene_id} · {scene.beat} · "
+            f"{scene.target_duration:.1f}s"
+        )
+        with st.expander(label, expanded=False):
+            if scene.narration_segment:
+                st.caption(scene.narration_segment)
+
+            if versions:
+                default_index = (
+                    versions.index(active_asset)
+                    if active_asset in versions
+                    else len(versions) - 1
+                )
+                selected_version = st.selectbox(
+                    tr("Scene Versions"),
+                    options=versions,
+                    index=default_index,
+                    format_func=lambda value: (
+                        f"{os.path.basename(value)}"
+                        + (
+                            f" · {tr('Current Version')}"
+                            if value == active_asset
+                            else ""
+                        )
+                    ),
+                    key=f"scene_version_{task_id}_{scene.scene_id}",
+                )
+                try:
+                    preview_path = generation_manifest.resolve_asset(
+                        task_id,
+                        selected_version,
+                    )
+                except ValueError:
+                    preview_path = None
+                if preview_path is not None and preview_path.is_file():
+                    st.video(str(preview_path))
+
+            prompt_value = st.text_area(
+                tr("Scene Prompt"),
+                value=scene.prompt,
+                key=f"scene_prompt_{task_id}_{scene.scene_id}",
+                height=140,
+            )
+            seed_value = int(
+                st.number_input(
+                    tr("Scene Seed"),
+                    min_value=0,
+                    value=max(0, int(scene.seed)),
+                    step=1,
+                    key=f"scene_seed_{task_id}_{scene.scene_id}",
+                )
+            )
+
+            if st.button(
+                tr("Regenerate Scene"),
+                key=f"regenerate_scene_{task_id}_{scene.scene_id}",
+                use_container_width=True,
+                icon=":material/refresh:",
+                disabled=is_busy,
+            ):
+                try:
+                    webui_task.submit_scene_regeneration(
+                        task_id,
+                        scene.scene_id,
+                        prompt=prompt_value,
+                        seed=seed_value,
+                    )
+                except Exception as exc:
+                    st.error(
+                        f"{tr('Scene Regeneration Failed')}: {exc}"
+                    )
+                else:
+                    st.toast(tr("Scene Regeneration Queued"))
+                    st.rerun(scope="fragment")
+
+
 def _render_task_table(filtered_tasks, key_prefix):
     with st.container(key=f"task_table_header_{key_prefix}"):
-        header_cols = st.columns([1.1, 1.7, 3.0, 0.8, 1.6], vertical_alignment="center")
+        header_cols = st.columns([1.1, 1.7, 3.0, 0.8, 2.0], vertical_alignment="center")
         header_cols[0].caption(tr("Task Status"))
         header_cols[1].caption(tr("Task Updated At"))
         header_cols[2].caption(tr("Task Subject"))
@@ -1212,6 +1358,9 @@ def _render_task_table(filtered_tasks, key_prefix):
             has_restore_data = os.path.isfile(
                 os.path.join(task["task_path"], "script.json")
             )
+            has_scene_plan = os.path.isfile(
+                os.path.join(task["task_path"], "scene_plan.json")
+            )
             safe_task_key = "".join(ch if ch.isalnum() else "_" for ch in task_id)[:40]
 
             # 使用 Streamlit 原生 bordered container + columns 保留每行操作。
@@ -1221,7 +1370,7 @@ def _render_task_table(filtered_tasks, key_prefix):
                 key=f"task_row_{key_prefix}_{safe_task_key}", border=True
             ):
                 row_cols = st.columns(
-                    [1.1, 1.7, 3.0, 0.8, 1.6],
+                    [1.1, 1.7, 3.0, 0.8, 2.0],
                     vertical_alignment="center",
                 )
                 row_cols[0].write(_task_state_label(task["state"], has_video))
@@ -1230,7 +1379,7 @@ def _render_task_table(filtered_tasks, key_prefix):
                 row_cols[3].write(f"{task['progress']}%")
 
                 action_cols = row_cols[4].columns(
-                    4,
+                    5,
                     vertical_alignment="center",
                     gap="small",
                 )
@@ -1270,6 +1419,18 @@ def _render_task_table(filtered_tasks, key_prefix):
                         _queue_task_restore(task_id)
 
                 with action_cols[3]:
+                    scenes_label = tr("Scenes")
+                    if st.button(
+                        scenes_label,
+                        key=f"scenes_task_{key_prefix}_{task_id}",
+                        use_container_width=True,
+                        icon=":material/view_list:",
+                        help=scenes_label,
+                        disabled=is_processing or not has_scene_plan,
+                    ):
+                        _select_scene_editor_task(task_id)
+
+                with action_cols[4]:
                     delete_label = tr("Delete Task")
                     delete_help = (
                         f"{delete_label} ({tr('Task Status Processing')})"
@@ -1320,6 +1481,8 @@ def _render_task_manager_panel(tasks=None):
                 if status_key == "all" or _task_state_filter_key(task) == status_key
             ]
             _render_task_table(filtered_tasks, status_key)
+
+    _render_scene_editor()
 
     _render_task_video_preview()
 

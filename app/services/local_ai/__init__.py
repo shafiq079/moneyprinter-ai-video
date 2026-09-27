@@ -9,7 +9,7 @@ from .base import (
     SceneSpec,
 )
 from .fake import FakeLocalVideoProvider
-from .orchestrator import generate_scene_materials
+from .orchestrator import generate_scene_materials, regenerate_scene_material
 from .ltx25 import (
     LTX25_SOURCE_ID,
     LTX25ConfigurationError,
@@ -169,6 +169,7 @@ __all__ = [
     "SceneSpec",
     "create_provider",
     "generate_scene_materials",
+    "regenerate_scene_material",
     "is_local_ai_source",
     "is_public_source",
     "is_source_enabled",

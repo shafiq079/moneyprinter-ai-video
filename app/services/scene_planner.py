@@ -6,7 +6,7 @@ import math
 import os
 import re
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -562,6 +562,56 @@ def load_scene_plan(task_id: str) -> ScenePlan | None:
 
 def save_scene_plan(task_id: str, plan: ScenePlan) -> None:
     _atomic_write_json(scene_plan_path(task_id), plan.to_dict())
+
+
+def revise_scene_plan(
+    plan: ScenePlan,
+    scene_id: int,
+    *,
+    prompt: str | None = None,
+    seed: int | None = None,
+) -> tuple[ScenePlan, SceneSpec]:
+    """Return a manual scene revision without changing narration/timing."""
+
+    revised: list[SceneSpec] = []
+    target: SceneSpec | None = None
+    for scene in plan.scenes:
+        if scene.scene_id != int(scene_id):
+            revised.append(scene)
+            continue
+
+        next_prompt = (
+            _clean_text(prompt, _PROMPT_LIMIT)
+            if prompt is not None
+            else scene.prompt
+        )
+        if not next_prompt:
+            raise ValueError("scene prompt must not be empty")
+        next_seed = scene.seed if seed is None else int(seed)
+        if next_seed < 0:
+            raise ValueError("scene seed must be >= 0")
+
+        target = replace(
+            scene,
+            prompt=next_prompt,
+            seed=next_seed,
+        )
+        revised.append(target)
+
+    if target is None:
+        raise KeyError(f"scene {scene_id} is missing from scene plan")
+
+    return (
+        ScenePlan(
+            idea=plan.idea,
+            story_arc=plan.story_arc,
+            visual_bible=plan.visual_bible,
+            source="manual_edit",
+            input_fingerprint=plan.input_fingerprint,
+            scenes=tuple(revised),
+        ),
+        target,
+    )
 
 
 def get_or_create_scene_plan(

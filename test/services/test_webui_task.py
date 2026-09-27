@@ -259,6 +259,68 @@ def test_completed_task_renders_subject_named_video_download(
         open_task_folder.assert_called_once_with("download-test")
 
 
+def test_submit_scene_regeneration_queues_background_work():
+    task_id = "scene-regeneration-submit"
+    webui_task.sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_COMPLETE,
+        progress=100,
+        videos=["/tmp/final-1.mp4"],
+    )
+    try:
+        with patch.object(webui_task._task_manager, "add_task") as add_task:
+            webui_task.submit_scene_regeneration(
+                task_id,
+                2,
+                prompt="A revised scene prompt",
+                seed=77,
+                capture_logs=False,
+            )
+
+        add_task.assert_called_once()
+        self_kwargs = add_task.call_args.kwargs
+        assert self_kwargs["task_id"] == task_id
+        assert self_kwargs["scene_id"] == 2
+        assert self_kwargs["prompt"] == "A revised scene prompt"
+        assert self_kwargs["seed"] == 77
+        state = webui_task.sm.state.get_task(task_id)
+        assert state["state"] == const.TASK_STATE_PROCESSING
+        assert state["current_stage"] == "scene_regeneration_queued"
+    finally:
+        webui_task.sm.state.delete_task(task_id)
+
+
+def test_scene_regeneration_worker_uses_runtime_config_lock():
+    with (
+        patch.object(
+            webui_task.tm,
+            "regenerate_local_ai_scene",
+            return_value={"scene_id": 1},
+        ) as regenerate,
+        patch.object(
+            webui_task.config,
+            "runtime_config_lock",
+            return_value=nullcontext(),
+        ) as runtime_lock,
+    ):
+        result = webui_task._run_scene_regeneration(
+            "scene-worker",
+            1,
+            "Prompt",
+            42,
+            capture_logs=False,
+        )
+
+    assert result == {"scene_id": 1}
+    runtime_lock.assert_called_once_with()
+    regenerate.assert_called_once_with(
+        "scene-worker",
+        1,
+        prompt="Prompt",
+        seed=42,
+    )
+
+
 def test_submit_generation_returns_while_pipeline_is_still_running():
     """后台流水线未结束时，提交函数必须已经返回，让 Streamlit 完成本次渲染。"""
     task_id = "background-submit-test"

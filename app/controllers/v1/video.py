@@ -2,7 +2,7 @@ import glob
 import os
 import pathlib
 import shutil
-from typing import Union
+from typing import Annotated, Union
 
 from fastapi import BackgroundTasks, Depends, Path, Query, Request, UploadFile
 from fastapi.params import File
@@ -257,11 +257,13 @@ def create_task(
 def preflight_local_ai_provider(
     request: Request,
     provider_id: str = Path(..., description="Stable local AI provider ID"),
-    generation_mode: str = Query(
-        "fast",
-        pattern="^(fast|quality)$",
-        description="Local AI generation mode",
-    ),
+    generation_mode: Annotated[
+        str,
+        Query(
+            pattern="^(fast|quality)$",
+            description="Local AI generation mode",
+        ),
+    ] = "fast",
 ):
     request_id = base.get_task_id(request)
     if not local_ai.is_public_source(provider_id):

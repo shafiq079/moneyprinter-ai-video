@@ -78,6 +78,13 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _non_negative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError(f"value must be >= 0, got {parsed}")
+    return parsed
+
+
 def _paragraph_count(value: str) -> int:
     parsed = int(value)
     if parsed < 1 or parsed > 10:
@@ -347,6 +354,21 @@ Batch manifests:
         default="pexels",
         choices=_CLI_VIDEO_SOURCES,
         help="video material provider; online providers require matching API keys in config.toml",
+    )
+    material_group.add_argument(
+        "--local-ai-generation-mode",
+        choices=("fast", "quality"),
+        default="fast",
+        help=(
+            "local AI generation mode; LTX supports fast/distilled and "
+            "quality/DFR, while Wan supports fast only"
+        ),
+    )
+    material_group.add_argument(
+        "--local-ai-seed",
+        type=_non_negative_int,
+        default=None,
+        help="optional deterministic base seed for local AI scenes",
     )
     material_group.add_argument(
         "--video-materials",
@@ -948,6 +970,8 @@ def build_video_params(args: argparse.Namespace) -> VideoParams:
 
     optional_arg_names = [
         "video_language",
+        "local_ai_generation_mode",
+        "local_ai_seed",
         "paragraph_number",
         "video_script_prompt",
         "custom_system_prompt",
