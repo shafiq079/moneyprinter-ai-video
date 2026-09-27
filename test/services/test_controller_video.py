@@ -427,6 +427,76 @@ class TestVideoControllerTasks(unittest.TestCase):
         self.assertEqual(data_property.get("type"), "null")
         self.assertIsNone(data_property.get("default"))
 
+    def test_cancel_endpoint_requests_cooperative_cancellation(self):
+        task = {
+            "task_id": "running-task",
+            "state": const.TASK_STATE_PROCESSING,
+            "progress": 40,
+        }
+        with (
+            patch.object(
+                video_controller.sm.state,
+                "get_task",
+                return_value=task,
+            ),
+            patch.object(
+                video_controller.tm,
+                "request_task_cancellation",
+                return_value=True,
+            ) as request_cancel,
+        ):
+            response = video_controller.cancel_video_task(
+                self._request(),
+                task_id="running-task",
+            )
+
+        self.assertEqual(response["status"], 200)
+        self.assertEqual(
+            response["data"],
+            {
+                "task_id": "running-task",
+                "cancel_requested": True,
+            },
+        )
+        request_cancel.assert_called_once_with("running-task")
+
+    def test_cancel_endpoint_rejects_terminal_or_missing_task(self):
+        with patch.object(
+            video_controller.sm.state,
+            "get_task",
+            return_value=None,
+        ):
+            with self.assertRaises(HttpException) as missing:
+                video_controller.cancel_video_task(
+                    self._request(),
+                    task_id="missing",
+                )
+        self.assertEqual(missing.exception.status_code, 404)
+
+        completed = {
+            "task_id": "complete",
+            "state": const.TASK_STATE_COMPLETE,
+            "progress": 100,
+        }
+        with (
+            patch.object(
+                video_controller.sm.state,
+                "get_task",
+                return_value=completed,
+            ),
+            patch.object(
+                video_controller.tm,
+                "request_task_cancellation",
+                return_value=False,
+            ),
+        ):
+            with self.assertRaises(HttpException) as terminal:
+                video_controller.cancel_video_task(
+                    self._request(),
+                    task_id="complete",
+                )
+        self.assertEqual(terminal.exception.status_code, 409)
+
     def test_delete_rejects_generation_and_cross_posting_tasks(self):
         """生成中和发布中的任务都在读取目录，删除接口必须返回 409。"""
         busy_tasks = (

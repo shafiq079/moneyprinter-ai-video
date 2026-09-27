@@ -105,6 +105,79 @@ def _get_video_music_prompt(params: VideoParams) -> str:
     return prompt
 
 
+class TaskCancellationRequested(RuntimeError):
+    def __init__(self, stage: str) -> None:
+        self.stage = str(stage or "pipeline")
+        super().__init__(f"task cancellation requested at {self.stage}")
+
+
+def request_task_cancellation(task_id: str) -> bool:
+    """Persist a cooperative cancellation request for a running/queued task."""
+
+    task = sm.state.get_task(task_id)
+    if not task:
+        return False
+
+    state = task.get("state")
+    try:
+        state = int(state)
+    except (TypeError, ValueError):
+        pass
+    if state != const.TASK_STATE_PROCESSING:
+        return False
+
+    return bool(
+        sm.state.patch_task(
+            task_id,
+            cancel_requested=True,
+            cancel_requested_at=time.time(),
+        )
+    )
+
+
+def is_cancellation_requested(task_id: str) -> bool:
+    task = sm.state.get_task(task_id) or {}
+    return bool(task.get("cancel_requested"))
+
+
+def _raise_if_cancelled(task_id: str, stage: str) -> None:
+    if is_cancellation_requested(task_id):
+        raise TaskCancellationRequested(stage)
+
+
+def _mark_task_cancelled(task_id: str, stage: str) -> dict:
+    """Persist a terminal cooperative-cancellation state without deleting assets."""
+
+    existing = sm.state.get_task(task_id) or {}
+    progress = int(existing.get("progress", 0) or 0)
+    fields = {
+        "state": const.TASK_STATE_CANCELLED,
+        "progress": progress,
+        "failed_stage": str(stage or "cancelled"),
+        "error": "Task cancelled by user",
+        "cancel_requested": True,
+        "cancelled": True,
+        "current_stage": None,
+    }
+    if not sm.state.patch_task(task_id, **fields):
+        sm.state.update_task(
+            task_id,
+            state=fields["state"],
+            progress=fields["progress"],
+            failed_stage=fields["failed_stage"],
+            error=fields["error"],
+            cancel_requested=True,
+            cancelled=True,
+            current_stage=None,
+        )
+    result = dict(existing)
+    result.update({"task_id": task_id, **fields})
+    logger.info(
+        f"task cancelled, task_id: {task_id}, stage: {fields['failed_stage']}"
+    )
+    return result
+
+
 def is_task_busy(task: dict | None) -> bool:
     """判断任务是否仍在生成或发布，供所有删除入口复用。"""
     if not task:
@@ -734,7 +807,10 @@ def get_video_materials(
                 provider=provider,
                 scenes=scenes,
                 progress_callback=report_scene_progress,
+                cancel_check=lambda: is_cancellation_requested(task_id),
             )
+        except local_ai.LocalAICancellationRequested:
+            raise
         except Exception as exc:
             details = None
             if isinstance(exc, local_ai.LocalAISceneGenerationError):
@@ -1865,7 +1941,21 @@ def _run_pipeline(
     voxcpm_prompt_text: str = "",
 ):
     logger.info(f"start task: {task_id}, stop_at: {stop_at}")
-    sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=5)
+    existing_task = sm.state.get_task(task_id)
+    if existing_task is None:
+        sm.state.update_task(
+            task_id,
+            state=const.TASK_STATE_PROCESSING,
+            progress=5,
+            cancel_requested=False,
+        )
+    else:
+        sm.state.patch_task(
+            task_id,
+            state=const.TASK_STATE_PROCESSING,
+            progress=5,
+        )
+    _raise_if_cancelled(task_id, "queued")
 
     prepared_local_ai_provider = None
     if (
@@ -1994,6 +2084,8 @@ def _run_pipeline(
             "in config.toml to a working ffmpeg executable",
         )
 
+    _raise_if_cancelled(task_id, "preflight")
+
     # 1. Generate script
     video_script = generate_script(task_id, params)
     if not video_script or "Error: " in video_script:
@@ -2011,6 +2103,8 @@ def _run_pipeline(
             task_id, state=const.TASK_STATE_COMPLETE, progress=100, script=video_script
         )
         return {"script": video_script}
+
+    _raise_if_cancelled(task_id, "script")
 
     # 2. Generate terms
     # Local AI scene prompts are planned after narration duration is known. Do not
@@ -2035,6 +2129,8 @@ def _run_pipeline(
         return {"script": video_script, "terms": video_terms}
 
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=20)
+
+    _raise_if_cancelled(task_id, "terms")
 
     # 3. Generate audio
     generate_audio_kwargs = {
@@ -2070,6 +2166,8 @@ def _run_pipeline(
         )
         return {"audio_file": audio_file, "audio_duration": audio_duration}
 
+    _raise_if_cancelled(task_id, "audio")
+
     # 4. Generate subtitle
     subtitle_path = generate_subtitle(
         task_id, params, video_script, sub_maker, audio_file
@@ -2085,6 +2183,8 @@ def _run_pipeline(
         return {"subtitle_path": subtitle_path}
 
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=40)
+
+    _raise_if_cancelled(task_id, "subtitle")
 
     # 5. Get video materials
     downloaded_videos = get_video_materials(
@@ -2118,6 +2218,8 @@ def _run_pipeline(
     # 这样可以避免 /subtitle 和 /audio 这类请求访问不存在的字段。
     if type(params.video_concat_mode) is str:
         params.video_concat_mode = VideoConcatMode(params.video_concat_mode)
+
+    _raise_if_cancelled(task_id, "materials")
 
     # 6. Generate final videos
     final_video_paths, combined_video_paths, generation_warnings = (
@@ -2231,6 +2333,10 @@ def start(
             voxcpm_prompt_audio=voxcpm_prompt_audio,
             voxcpm_prompt_text=voxcpm_prompt_text,
         )
+    except TaskCancellationRequested as exc:
+        return _mark_task_cancelled(task_id, exc.stage)
+    except local_ai.LocalAICancellationRequested:
+        return _mark_task_cancelled(task_id, "materials")
     except Exception as exc:
         logger.exception(
             f"unexpected task pipeline failure, task_id: {task_id}, error: {exc}"

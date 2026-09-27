@@ -58,6 +58,10 @@ class GenerationResult:
     model_fingerprint: str
 
 
+class LocalAICancellationRequested(RuntimeError):
+    """Raised at a safe local-AI scene boundary after cancellation is requested."""
+
+
 class LocalAISceneGenerationError(RuntimeError):
     """Safe scene-scoped failure suitable for task state and API responses."""
 

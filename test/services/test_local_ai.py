@@ -8,7 +8,11 @@ from unittest.mock import patch
 
 from app.models.schema import VideoConcatMode, VideoParams
 from app.services import generation_manifest, scene_planner, task, video
-from app.services.local_ai import FAKE_SOURCE_ID, LocalAISceneGenerationError
+from app.services.local_ai import (
+    FAKE_SOURCE_ID,
+    LocalAICancellationRequested,
+    LocalAISceneGenerationError,
+)
 from app.services.local_ai.fake import FakeLocalVideoProvider
 from app.services.local_ai.orchestrator import generate_scene_materials
 from app.utils import utils
@@ -249,6 +253,36 @@ class TestLocalAIGenerationManifest(LocalAITestCase):
                 (1, 1, 1, "generating", False),
                 (1, 1, 1, "ready", False),
             ],
+        )
+
+    def test_cancellation_boundary_stops_before_next_scene(self):
+        scenes = self.make_scenes()
+        provider = FakeLocalVideoProvider()
+        checks = 0
+
+        def cancel_check():
+            nonlocal checks
+            checks += 1
+            # Scene 1 is allowed to start. The boundary before Scene 2 cancels.
+            return checks >= 2
+
+        with self.assertRaises(LocalAICancellationRequested):
+            generate_scene_materials(
+                "cancel-between-scenes",
+                provider=provider,
+                scenes=scenes,
+                cancel_check=cancel_check,
+            )
+
+        self.assertEqual(provider.generated_scene_ids, [1])
+        manifest = generation_manifest.load_manifest("cancel-between-scenes")
+        self.assertEqual(manifest["scenes"][0]["status"], "ready")
+        self.assertEqual(manifest["scenes"][1]["status"], "pending")
+        self.assertTrue(
+            generation_manifest.resolve_asset(
+                "cancel-between-scenes",
+                manifest["scenes"][0]["active_asset"],
+            ).is_file()
         )
 
     def test_fully_cached_retry_does_not_enter_provider_generation_session(self):

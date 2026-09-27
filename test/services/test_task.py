@@ -62,6 +62,55 @@ class TestTaskService(unittest.TestCase):
         )
         self.assertFalse(tm.is_task_busy(None))
 
+    def test_request_task_cancellation_only_accepts_processing_task(self):
+        state = MemoryState()
+        state.update_task(
+            "processing",
+            state=tm.const.TASK_STATE_PROCESSING,
+            progress=30,
+        )
+        state.update_task(
+            "complete",
+            state=tm.const.TASK_STATE_COMPLETE,
+            progress=100,
+        )
+
+        with patch.object(tm.sm, "state", state):
+            self.assertTrue(tm.request_task_cancellation("processing"))
+            self.assertTrue(state.get_task("processing")["cancel_requested"])
+            self.assertFalse(tm.request_task_cancellation("complete"))
+            self.assertFalse(tm.request_task_cancellation("missing"))
+
+    def test_queued_cancellation_is_preserved_when_worker_starts(self):
+        state = MemoryState()
+        state.update_task(
+            "cancel-before-start",
+            state=tm.const.TASK_STATE_PROCESSING,
+            progress=0,
+            cancel_requested=True,
+        )
+        params = VideoParams(video_subject="should not generate")
+
+        with (
+            patch.object(tm.sm, "state", state),
+            patch.object(tm, "generate_script") as generate_script,
+        ):
+            result = tm.start(
+                "cancel-before-start",
+                params,
+                stop_at="script",
+            )
+
+        generate_script.assert_not_called()
+        self.assertEqual(result["state"], tm.const.TASK_STATE_CANCELLED)
+        self.assertTrue(result["cancelled"])
+        persisted = state.get_task("cancel-before-start")
+        self.assertEqual(
+            persisted["state"],
+            tm.const.TASK_STATE_CANCELLED,
+        )
+        self.assertEqual(persisted["error"], "Task cancelled by user")
+
     def test_generate_script_forwards_advanced_prompt_options(self):
         """
         任务生成入口和 WebUI/API 共用 VideoParams。这里验证自动生成文案时，

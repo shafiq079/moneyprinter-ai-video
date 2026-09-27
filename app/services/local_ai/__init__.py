@@ -4,6 +4,7 @@ import os
 
 from .base import (
     GenerationResult,
+    LocalAICancellationRequested,
     LocalAISceneGenerationError,
     LocalVideoProvider,
     SceneSpec,
@@ -160,6 +161,7 @@ def provider_generation_settings(provider: LocalVideoProvider) -> dict[str, obje
 __all__ = [
     "FAKE_SOURCE_ID",
     "GenerationResult",
+    "LocalAICancellationRequested",
     "LTX25_SOURCE_ID",
     "LTX25LocalProvider",
     "LocalAISceneGenerationError",

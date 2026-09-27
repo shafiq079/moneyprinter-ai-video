@@ -9,6 +9,7 @@ from loguru import logger
 from app.services import generation_manifest
 
 from .base import (
+    LocalAICancellationRequested,
     LocalAISceneGenerationError,
     LocalVideoProvider,
     SceneSpec,
@@ -24,6 +25,7 @@ def generate_scene_materials(
     progress_callback: (
         Callable[[int, int, SceneSpec, str, bool], None] | None
     ) = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> list[str]:
     """Generate/reuse ordered scene clips and persist progress after every scene."""
 
@@ -55,6 +57,10 @@ def generate_scene_materials(
     total_scenes = len(scenes)
     with ExitStack() as stack:
         for scene_index, scene in enumerate(scenes, start=1):
+            if cancel_check is not None and cancel_check():
+                raise LocalAICancellationRequested(
+                    f"local AI generation cancelled before scene {scene.scene_id}"
+                )
             logger.info(
                 f"local AI scene {scene_index}/{total_scenes}: "
                 f"provider={provider.provider_id}, scene_id={scene.scene_id}"

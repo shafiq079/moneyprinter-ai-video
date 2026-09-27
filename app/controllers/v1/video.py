@@ -331,6 +331,43 @@ def get_task(
     )
 
 
+@router.post(
+    "/tasks/{task_id}/cancel",
+    response_model=BaseResponse,
+    summary="Request cooperative task cancellation",
+)
+def cancel_video_task(
+    request: Request,
+    task_id: str = Path(..., description="Task ID"),
+):
+    request_id = base.get_task_id(request)
+    task = sm.state.get_task(task_id)
+    if not task:
+        raise HttpException(
+            task_id=task_id,
+            status_code=404,
+            message=f"{request_id}: task not found",
+        )
+
+    if not tm.request_task_cancellation(task_id):
+        raise HttpException(
+            task_id=task_id,
+            status_code=409,
+            message=f"{request_id}: task is not cancellable",
+        )
+
+    logger.info(
+        f"task cancellation requested: request_id={request_id}, task_id={task_id}"
+    )
+    return utils.get_response(
+        200,
+        {
+            "task_id": task_id,
+            "cancel_requested": True,
+        },
+    )
+
+
 @router.delete(
     "/tasks/{task_id}",
     response_model=TaskDeletionResponse,

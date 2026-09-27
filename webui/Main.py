@@ -867,6 +867,7 @@ def _normalize_task_state(state):
     if state in (
         const.TASK_STATE_COMPLETE,
         const.TASK_STATE_FAILED,
+        const.TASK_STATE_CANCELLED,
         const.TASK_STATE_PROCESSING,
     ):
         return state
@@ -916,6 +917,8 @@ def _task_state_label(state, has_video):
         return tr("Task Status Complete")
     if normalized_state == const.TASK_STATE_FAILED:
         return tr("Task Status Failed")
+    if normalized_state == const.TASK_STATE_CANCELLED:
+        return tr("Task Status Cancelled")
     if normalized_state == const.TASK_STATE_PROCESSING:
         return tr("Task Status Processing")
     if has_video:
@@ -927,7 +930,10 @@ def _task_state_filter_key(task):
     normalized_state = _normalize_task_state(task.get("state"))
     if normalized_state == const.TASK_STATE_PROCESSING:
         return "processing"
-    if normalized_state == const.TASK_STATE_FAILED:
+    if normalized_state in {
+        const.TASK_STATE_FAILED,
+        const.TASK_STATE_CANCELLED,
+    }:
         return "failed"
     if normalized_state == const.TASK_STATE_COMPLETE or task["video_file"]:
         return "complete"
@@ -1413,7 +1419,7 @@ def _render_scene_editor() -> None:
 
 def _render_task_table(filtered_tasks, key_prefix):
     with st.container(key=f"task_table_header_{key_prefix}"):
-        header_cols = st.columns([1.1, 1.7, 3.0, 0.8, 2.0], vertical_alignment="center")
+        header_cols = st.columns([1.1, 1.7, 3.0, 0.8, 2.4], vertical_alignment="center")
         header_cols[0].caption(tr("Task Status"))
         header_cols[1].caption(tr("Task Updated At"))
         header_cols[2].caption(tr("Task Subject"))
@@ -1447,7 +1453,7 @@ def _render_task_table(filtered_tasks, key_prefix):
                 key=f"task_row_{key_prefix}_{safe_task_key}", border=True
             ):
                 row_cols = st.columns(
-                    [1.1, 1.7, 3.0, 0.8, 2.0],
+                    [1.1, 1.7, 3.0, 0.8, 2.4],
                     vertical_alignment="center",
                 )
                 row_cols[0].write(_task_state_label(task["state"], has_video))
@@ -1456,7 +1462,7 @@ def _render_task_table(filtered_tasks, key_prefix):
                 row_cols[3].write(f"{task['progress']}%")
 
                 action_cols = row_cols[4].columns(
-                    5,
+                    6,
                     vertical_alignment="center",
                     gap="small",
                 )
@@ -1508,6 +1514,21 @@ def _render_task_table(filtered_tasks, key_prefix):
                         _select_scene_editor_task(task_id)
 
                 with action_cols[4]:
+                    cancel_label = tr("Cancel Task")
+                    if st.button(
+                        cancel_label,
+                        key=f"cancel_task_{key_prefix}_{task_id}",
+                        use_container_width=True,
+                        icon=":material/stop_circle:",
+                        help=cancel_label,
+                        disabled=not is_processing,
+                    ):
+                        if tm.request_task_cancellation(task_id):
+                            st.toast(tr("Cancellation Requested"))
+                        else:
+                            st.warning(tr("Cancellation Unavailable"))
+
+                with action_cols[5]:
                     delete_label = tr("Delete Task")
                     delete_help = (
                         f"{delete_label} ({tr('Task Status Processing')})"
@@ -2248,6 +2269,12 @@ def _render_generation_task_snapshot(task_id, task):
         _render_generation_logs(task_id)
         return
 
+    if state == const.TASK_STATE_CANCELLED:
+        st.warning(tr("Video Generation Cancelled"))
+        render_scene_plan_preview()
+        _render_generation_logs(task_id)
+        return
+
     video_files = task.get("videos") or []
     if state != const.TASK_STATE_COMPLETE or not video_files:
         st.error(tr("Video Generation Failed"))
@@ -2341,7 +2368,11 @@ def _render_running_generation_task(task_id):
         return
 
     state = _normalize_task_state((task or {}).get("state"))
-    if state in {const.TASK_STATE_COMPLETE, const.TASK_STATE_FAILED}:
+    if state in {
+        const.TASK_STATE_COMPLETE,
+        const.TASK_STATE_FAILED,
+        const.TASK_STATE_CANCELLED,
+    }:
         _remove_active_generation_task(task_id)
         # 完整页面脚本现在没有耗时生成逻辑，可以安全 rerun 并把结果改为静态
         # 渲染。这样任务结束后不会让浏览器永久保留一个两秒轮询的 Fragment。
@@ -2366,7 +2397,11 @@ def _render_current_generation_task():
         return
 
     state = _normalize_task_state((task or {}).get("state"))
-    if state in {const.TASK_STATE_COMPLETE, const.TASK_STATE_FAILED}:
+    if state in {
+        const.TASK_STATE_COMPLETE,
+        const.TASK_STATE_FAILED,
+        const.TASK_STATE_CANCELLED,
+    }:
         _remove_active_generation_task(task_id)
         _render_generation_task_snapshot(task_id, task)
         return
