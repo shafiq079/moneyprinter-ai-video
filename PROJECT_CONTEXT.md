@@ -8,7 +8,7 @@ Read this file first in every new AI or developer session. `docs/SRS.md` is the 
 - **Branches:** `main` is the untouched, stable vendor baseline; `development` is the sole active branch and contains the accepted local-AI implementation work in progress. Create no other branches. Changes go directly onto `development`; after an accepted stabilization point, merge `development` into `main` with a normal merge commit and keep the two-branch policy.
 - **Product remote:** `https://github.com/shafiq079/moneyprinter-ai-video`. Published baseline verified on 27 September 2026: `main` = `ad5496f1b729d1d7e361dd972015d26c08b0e052`, `development` = `7d6980f117126e42c6102e1f8ffe2d83b6079377` before this documentation update. The remote contains only `main` and `development`. `origin` points to this product repository and `upstream` points to `harry0703/MoneyPrinterTurbo`. Do not use the older `shafiq079/MoneyPrinterTurbo` fork for this product.
 - **Old prototype:** `shafiq079/content-factory` `main` at `a1760488aae68b8c1c1076a26720a14f4368088f` is read-only reference. Its Next.js UI, FastAPI project API, SQLite queue, timeline v7 and renderer are **not** the new application.
-- **Completed:** SRS read and converted to Markdown; upstream and selected prototype files inspected; architecture and migration decisions recorded; **M1 local provider contract/fake CPU path completed**; **M2 `wan22_local` backend provider implemented and CPU/CI verified**. Real Wan inference has not yet been GPU-validated, and LTX has not been integrated.
+- **Completed:** SRS read and converted to Markdown; upstream and selected prototype files inspected; architecture and migration decisions recorded; **M1 local provider contract/fake CPU path completed**; **M2 `wan22_local` backend provider implemented and CPU/CI verified**; **M3 source registration/operator surface completed and CI verified**. M4 Scene Director quality is active. Real Wan inference has not yet been GPU-validated, and LTX has not been integrated.
 
 ## Architecture to preserve
 
@@ -16,7 +16,7 @@ Existing `app/services/task.py` orchestrates script, search terms, narration/cus
 
 ## Current-upstream revalidation and SRS refinements
 
-1. The upstream SHA in the SRS is still the latest `main`; no rebase or new vendor commit is necessary. The stock/remote AI dispatch and WebUI AI Video group described in the SRS exist.
+1. Upstream `harry0703/MoneyPrinterTurbo` moved on 27 September 2026 from the pinned vendor baseline `ad5496f1b729d1d7e361dd972015d26c08b0e052` to `8e259e9f072c9e08464f040cd658d4eb046a57d0`. The one new upstream commit changes Redis task traversal/cross-post recovery in `app/services/state.py`, `app/services/task.py` and their tests. It is **not merged** into this product during M4; keep the vendor baseline pinned and reconcile upstream deliberately at a stabilization point.
 2. Upstream already measures **written TTS audio** (with a duration ceiling) and probes custom audio in `task.py:generate_audio`; do not port Content Factory's narration measurement. Scene planning still needs to use that measured duration and maintain actual ordered scene-to-narration mapping.
 3. API task manager already has `max_queued_tasks`, existing provider preflight, task state, and some remote task recovery. Reuse these, but they do **not** provide local scene persistence, GPU serialization, or a resumable local inference workflow. An in-process GPU lock alone will not coordinate multiple API worker processes; either constrain the first deployment to one inference process or design a cross-process guard before claiming multi-process safety.
 4. Existing `download_videos()` accepts `search_terms` and `audio_duration` and returns local paths. It does **not** carry SceneSpec, fingerprints, versions, or restart semantics. The local route may need its own ordered task-level orchestration and a small material-layer adapter, rather than blindly feeding prompts through the stock keyword interface.
@@ -44,11 +44,13 @@ Wan configuration is operator-owned through `[wan22_local]` / environment settin
 
 **M2 functional code head:** `e0a363bd82641c153f8485e48a09462b7c938bd5` on `development`. CPU CI exercises mocked Wan worker/runtime boundaries; no real Wan checkpoint was loaded and no GPU/VRAM/visual-quality claim has been validated.
 
-## Exact next milestone: M3 source registration and operator surface
+## M3 completed: source registration and operator surface
 
-Expose `wan22_local` through the existing MoneyPrinterTurbo product shell without changing the underlying M2 inference design. Add the source to WebUI/CLI registration, provide clear operator setup/status/preflight guidance, and make API/CLI/WebUI validation use the same stable source ID and configuration rules. Model/checkpoint/device paths remain server/operator configuration rather than public task payload fields. Add CPU-safe tests for source selection, readiness/error display and backward compatibility with all existing video sources. Do not start LTX or a frontend rewrite in M3.
+M3 exposed `wan22_local` through WebUI, CLI and API using the same provider/preflight rules, added the readiness button and CLI/API preflight commands, documented operator setup in `docs/LOCAL_AI_VIDEO.md`, kept model/checkpoint paths out of public task requests, and left the fake provider internal. The M3 registration commit `09dbdae49cc8533c37f22560bf8c5a80bc3626a3` revealed two stale regression expectations; follow-up `7a6775bfb7e6fec73188f99b9daae6cb613c2927` aligned the Agent Skill exception and WebUI group test. CI run `36325467280` passed Windows smoke, Python 3.11, Python 3.13 and Ruff.
 
-Real Wan GPU validation is a separate hardware-validation step. When a suitable GPU environment becomes available, validate the exact installed official revision, checkpoint layout, successful multi-scene generation, output duration/aspect, runtime reuse, VRAM behavior and recovery before making performance claims.
+## Exact next milestone: M4 Scene Director quality
+
+Upgrade the minimal local scene planner without changing Wan inference. Planning happens only after narration duration is known and must preserve the already-generated narration text. Persist a canonical `scene_plan.json` so retries reuse the same prompts and do not invalidate completed scene clips just because an LLM answers differently. Add narrative beats, a project visual bible, concrete shot/camera direction, continuity notes and text/logo exclusions. Use the already configured MoneyPrinter LLM for visual direction when available, with a deterministic CPU-safe fallback. Expose a read-only prompt preview in the existing WebUI. Do not start LTX, scene regeneration/editing, factual research, or a frontend rewrite in M4.
 
 ## Verification and working protocol
 

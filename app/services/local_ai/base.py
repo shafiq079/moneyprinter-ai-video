@@ -3,12 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Protocol
 
 
 _ALLOWED_ASPECTS = {"16:9", "9:16", "1:1"}
+_ALLOWED_BEATS = {"hook", "setup", "build", "reveal", "payoff", "cta", "ending"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +22,11 @@ class SceneSpec:
     target_duration: float
     aspect: str
     seed: int
+    beat: str = "build"
+    negative_prompt: str = ""
+    continuity: str = ""
+    camera: str = ""
+    provider_settings: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.scene_id < 1:
@@ -31,6 +37,10 @@ class SceneSpec:
             raise ValueError("scene target_duration must be a positive finite number")
         if self.aspect not in _ALLOWED_ASPECTS:
             raise ValueError(f"unsupported scene aspect: {self.aspect}")
+        if self.beat not in _ALLOWED_BEATS:
+            raise ValueError(f"unsupported scene beat: {self.beat}")
+        if not isinstance(self.provider_settings, dict):
+            raise ValueError("scene provider_settings must be a dictionary")
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -97,7 +107,7 @@ def scene_fingerprint(
     """Return a stable fingerprint for every input that can change scene media."""
 
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "provider_id": provider_id,
         "model_fingerprint": model_fingerprint,
         "scene": scene.to_dict(),

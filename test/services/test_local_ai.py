@@ -58,6 +58,107 @@ class TestScenePlan(LocalAITestCase):
         self.assertTrue(all(scene.target_duration <= 2.0 for scene in scenes))
         self.assertTrue(all(scene.prompt for scene in scenes))
 
+    def test_scene_plan_assigns_director_metadata(self):
+        scenes = scene_planner.plan_scenes(
+            "Open strongly. Explain the idea. Reveal the point. Close.",
+            audio_duration=8.0,
+            max_scene_duration=2.0,
+            aspect="9:16",
+            base_seed=200,
+        )
+
+        self.assertEqual(scenes[0].beat, "hook")
+        self.assertEqual(scenes[-1].beat, "ending")
+        self.assertTrue(all(scene.camera for scene in scenes))
+        self.assertTrue(all(scene.continuity for scene in scenes))
+        self.assertTrue(all("No titles" in scene.prompt for scene in scenes))
+
+    def test_persisted_director_plan_is_reused_without_second_llm_call(self):
+        director_payload = {
+            "idea": "A focused coffee story",
+            "story_arc": "Hook, explain, then close.",
+            "visual_bible": "Warm natural light, consistent barista and cafe.",
+            "scenes": [
+                {
+                    "scene_id": 1,
+                    "beat": "hook",
+                    "prompt": "Macro shot of coffee beans falling into a grinder.",
+                    "camera": "macro push-in",
+                    "continuity": "Establish the same warm cafe.",
+                    "negative_prompt": "text, logos",
+                    "narration": "THIS MUST BE IGNORED",
+                },
+                {
+                    "scene_id": 2,
+                    "beat": "ending",
+                    "prompt": "Wide shot of the finished coffee on the same counter.",
+                    "camera": "slow pull-back",
+                    "continuity": "Keep the same cafe, cup, palette, and lighting.",
+                    "negative_prompt": "text, logos",
+                    "narration": "THIS MUST ALSO BE IGNORED",
+                },
+            ],
+        }
+        with patch.object(
+            scene_planner.llm,
+            "generate_json_response",
+            return_value=director_payload,
+        ) as generate:
+            first = scene_planner.get_or_create_scene_plan(
+                "director-cache",
+                "Coffee begins with the beans. The cup completes the ritual.",
+                video_subject="Coffee ritual",
+                audio_duration=4.0,
+                max_scene_duration=2.0,
+                aspect="9:16",
+                base_seed=50,
+            )
+            second = scene_planner.get_or_create_scene_plan(
+                "director-cache",
+                "Coffee begins with the beans. The cup completes the ritual.",
+                video_subject="Coffee ritual",
+                audio_duration=4.0,
+                max_scene_duration=2.0,
+                aspect="9:16",
+                base_seed=50,
+            )
+
+        generate.assert_called_once()
+        self.assertEqual(first.source, "configured_llm")
+        self.assertEqual(second, first)
+        self.assertTrue(scene_planner.scene_plan_path("director-cache").is_file())
+        self.assertEqual(
+            [scene.narration_segment for scene in first.scenes],
+            [
+                "Coffee begins with the beans.",
+                "The cup completes the ritual.",
+            ],
+        )
+        self.assertNotIn(
+            "THIS MUST BE IGNORED",
+            first.scenes[0].narration_segment,
+        )
+
+    def test_director_failure_uses_deterministic_persisted_fallback(self):
+        with patch.object(
+            scene_planner.llm,
+            "generate_json_response",
+            side_effect=ValueError("invalid director response"),
+        ):
+            plan = scene_planner.get_or_create_scene_plan(
+                "director-fallback",
+                "First point. Second point.",
+                video_subject="Test subject",
+                audio_duration=4.0,
+                max_scene_duration=2.0,
+                aspect="9:16",
+            )
+
+        self.assertEqual(plan.source, "deterministic_fallback")
+        self.assertTrue(all(scene.prompt for scene in plan.scenes))
+        persisted = scene_planner.load_scene_plan("director-fallback")
+        self.assertEqual(persisted, plan)
+
     def test_scene_plan_does_not_repeat_full_script_when_scenes_outnumber_sentences(self):
         script = "First point. Second point."
         scenes = scene_planner.plan_scenes(

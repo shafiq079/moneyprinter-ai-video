@@ -404,6 +404,11 @@ class TestWan22TaskIntegration(Wan22TestCase):
             patch.object(task.local_ai, "create_provider", return_value=FakeWanProvider()),
             patch.object(task.material, "download_videos") as remote_download,
             patch.object(task.sm.state, "update_task"),
+            patch.object(
+                scene_planner.llm,
+                "generate_json_response",
+                side_effect=RuntimeError("offline test"),
+            ),
             patch.object(utils, "task_dir", return_value=str(self.root / "task")),
         ):
             materials = task.get_video_materials(

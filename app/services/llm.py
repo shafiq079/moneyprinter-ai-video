@@ -829,6 +829,35 @@ def _strip_code_fence(text: str) -> str:
     return t.strip()
 
 
+def generate_json_response(prompt: str, app_config=None) -> dict:
+    """Generate one JSON object through the configured MoneyPrinter LLM provider."""
+
+    response = _generate_response(prompt=prompt, app_config=app_config)
+    if not response:
+        raise ValueError("LLM returned an empty JSON response")
+    if response.startswith("Error:"):
+        raise ValueError(response.removeprefix("Error:").strip())
+
+    cleaned = _strip_code_fence(response)
+    try:
+        payload = json.loads(cleaned)
+    except json.JSONDecodeError:
+        # Some providers prepend a short explanation despite a JSON-only
+        # instruction. Recover one outer object, but still reject malformed JSON.
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start < 0 or end <= start:
+            raise ValueError("LLM did not return a JSON object") from None
+        try:
+            payload = json.loads(cleaned[start : end + 1])
+        except json.JSONDecodeError as exc:
+            raise ValueError("LLM returned invalid JSON") from exc
+
+    if not isinstance(payload, dict):
+        raise ValueError("LLM JSON response must be an object")
+    return payload
+
+
 def generate_terms(
     video_subject: str,
     video_script: str,

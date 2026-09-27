@@ -660,8 +660,17 @@ def get_video_materials(
         aspect = getattr(params.video_aspect, "value", params.video_aspect)
         try:
             provider = local_ai_provider or local_ai.create_provider(params.video_source)
-            scenes = scene_planner.plan_scenes(
+            sm.state.update_task(
+                task_id,
+                state=const.TASK_STATE_PROCESSING,
+                progress=39,
+                current_stage="scene_planning",
+                local_ai_provider=provider.provider_id,
+            )
+            scene_plan = scene_planner.get_or_create_scene_plan(
+                task_id,
                 video_script,
+                video_subject=params.video_subject or "",
                 audio_duration=audio_duration,
                 max_scene_duration=local_ai.scene_duration_limit(
                     provider,
@@ -669,6 +678,19 @@ def get_video_materials(
                 ),
                 aspect=str(aspect),
                 base_seed=local_ai.provider_base_seed(provider),
+                # The fake provider is a CPU/CI transport test. Keep it independent
+                # from configured LLM/network availability.
+                use_llm=provider.provider_id != local_ai.FAKE_SOURCE_ID,
+            )
+            scenes = list(scene_plan.scenes)
+            sm.state.update_task(
+                task_id,
+                state=const.TASK_STATE_PROCESSING,
+                progress=40,
+                current_stage="local_ai_video",
+                local_ai_provider=provider.provider_id,
+                scene_plan_source=scene_plan.source,
+                scene_plan_count=len(scenes),
             )
 
             def report_scene_progress(

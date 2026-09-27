@@ -49,6 +49,7 @@ from app.services import (
     llm,
     local_ai,
     loomloom,
+    scene_planner,
     material,
     metaso_minimax,
     muapi,
@@ -1938,6 +1939,35 @@ def _render_generation_logs(task_id):
     st.code("\n".join(log_records))
 
 
+def _render_scene_plan_preview(task_id):
+    """Show persisted local-AI visual direction without host configuration."""
+    try:
+        plan = scene_planner.load_scene_plan(task_id)
+    except ValueError as exc:
+        logger.warning(
+            f"failed to load scene plan preview: task_id={task_id}, error={exc}"
+        )
+        return
+    if plan is None:
+        return
+
+    with st.expander(tr("Scene Plan"), expanded=False):
+        st.caption(f"{tr('Scene Plan Source')}: {plan.source}")
+        if plan.idea:
+            st.write(plan.idea)
+        if plan.visual_bible:
+            st.markdown(f"**{tr('Visual Bible')}**")
+            st.write(plan.visual_bible)
+        for scene in plan.scenes:
+            st.markdown(
+                f"**{tr('Scene')} {scene.scene_id} · {scene.beat} · "
+                f"{scene.target_duration:.1f}s**"
+            )
+            if scene.narration_segment:
+                st.caption(scene.narration_segment)
+            st.code(scene.prompt, language=None, wrap_lines=True)
+
+
 def _render_generation_task_snapshot(task_id, task):
     """根据状态存储中的快照渲染进度、失败原因或最终成片。"""
     if not task:
@@ -1953,6 +1983,7 @@ def _render_generation_task_snapshot(task_id, task):
             progress,
             text=f"{tr('Task Progress')}: {progress}%",
         )
+        _render_scene_plan_preview(task_id)
         _render_generation_logs(task_id)
         return
 
@@ -1960,6 +1991,7 @@ def _render_generation_task_snapshot(task_id, task):
         error = str(task.get("error") or "").strip()
         message = tr("Video Generation Failed")
         st.error(f"{message}: {error}" if error else message)
+        _render_scene_plan_preview(task_id)
         _render_generation_logs(task_id)
         return
 
@@ -1970,6 +2002,7 @@ def _render_generation_task_snapshot(task_id, task):
         return
 
     st.success(tr("Video Generation Completed"))
+    _render_scene_plan_preview(task_id)
     for warning in task.get("warnings") or []:
         if isinstance(warning, Mapping) and warning.get("code") == "batch_materials_reused":
             st.warning(
