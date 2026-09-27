@@ -8,7 +8,7 @@ Read this file first in every new AI or developer session. `docs/SRS.md` is the 
 - **Branches:** `main` is the untouched, stable vendor baseline; `development` is the sole active branch and contains the accepted local-AI implementation work in progress. Create no other branches. Changes go directly onto `development`; after an accepted stabilization point, merge `development` into `main` with a normal merge commit and keep the two-branch policy.
 - **Product remote:** `https://github.com/shafiq079/moneyprinter-ai-video`. Published baseline verified on 27 September 2026: `main` = `ad5496f1b729d1d7e361dd972015d26c08b0e052`, `development` = `7d6980f117126e42c6102e1f8ffe2d83b6079377` before this documentation update. The remote contains only `main` and `development`. `origin` points to this product repository and `upstream` points to `harry0703/MoneyPrinterTurbo`. Do not use the older `shafiq079/MoneyPrinterTurbo` fork for this product.
 - **Old prototype:** `shafiq079/content-factory` `main` at `a1760488aae68b8c1c1076a26720a14f4368088f` is read-only reference. Its Next.js UI, FastAPI project API, SQLite queue, timeline v7 and renderer are **not** the new application.
-- **Completed:** SRS read and converted to Markdown; upstream and selected prototype files inspected; architecture and migration decisions recorded; **M1 local provider contract/fake CPU path completed**; **M2 `wan22_local` backend provider implemented and CPU/CI verified**; **M3 source registration/operator surface completed and CI verified**. M4 Scene Director quality is active. Real Wan inference has not yet been GPU-validated, and LTX has not been integrated.
+- **Completed:** SRS read and converted to Markdown; upstream and selected prototype files inspected; architecture and migration decisions recorded; **M1 local provider contract/fake CPU path completed**; **M2/M3 Wan integration and operator surface are CPU/CI verified; M4 Scene Director, LTX 2.5 Fast/DFR, and Phase 5 single-scene iteration are implemented on `development`. Phase 5 CI is green. Real Wan/LTX GPU inference and Phase 6 quality measurements remain deferred until hardware is available.
 
 ## Architecture to preserve
 
@@ -51,6 +51,21 @@ M3 exposed `wan22_local` through WebUI, CLI and API using the same provider/pref
 ## Exact next milestone: M4 Scene Director quality
 
 Upgrade the minimal local scene planner without changing Wan inference. Planning happens only after narration duration is known and must preserve the already-generated narration text. Persist a canonical `scene_plan.json` so retries reuse the same prompts and do not invalidate completed scene clips just because an LLM answers differently. Add narrative beats, a project visual bible, concrete shot/camera direction, continuity notes and text/logo exclusions. Use the already configured MoneyPrinter LLM for visual direction when available, with a deterministic CPU-safe fallback. Expose a read-only prompt preview in the existing WebUI. Do not start LTX, scene regeneration/editing, factual research, or a frontend rewrite in M4.
+
+## Current development boundary after Phase 5
+
+Phase 5 single-scene regeneration is implemented and CI verified on
+`ce5f299564cf3c7b4945f93e0c83bfe576191406`: Windows smoke, Python 3.11
+and Python 3.13 all passed. The next roadmap phase is GPU quality tuning, but
+real GPU execution is intentionally deferred because no validation hardware is
+currently available.
+
+Development may continue without blocking on hardware. Phase 6 tooling provides
+`scripts/local_ai_benchmark.py`, which will later run identical prompts across
+Wan 2.2, LTX Fast and LTX Quality and record timing/media/GPU telemetry. Do not
+invent default-quality conclusions before those real measurements exist.
+Optional factual workflow and a larger editor remain non-blocking and should
+only be started for an explicit product need.
 
 ## Verification and working protocol
 

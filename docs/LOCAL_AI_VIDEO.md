@@ -145,6 +145,36 @@ USD 10,000,000 require a paid license for commercial use except for the
 license's defined non-commercial cases. This project does not redistribute LTX
 model weights, and this note is not legal advice.
 
+## Deferred GPU benchmark harness
+
+The benchmark tooling can be developed and CI-tested without a GPU. Do not treat
+its presence as evidence that Wan or LTX quality/performance has been validated.
+
+When a CUDA machine is available, run the same prompt across all three modes:
+
+```bash
+uv run python scripts/local_ai_benchmark.py \
+  --target wan22_local \
+  --target ltx25_local:fast \
+  --target ltx25_local:quality \
+  --duration 3 \
+  --aspect 9:16 \
+  --seed 42 \
+  --repeats 2 \
+  --output-dir storage/benchmarks/local-ai
+```
+
+The harness performs provider preflight, measures one cold runtime load, then
+records per-generation wall time, media validation time, output duration,
+dimensions and file size. When `nvidia-smi` is available it samples peak
+reported GPU memory use and utilization. Results are written to
+`benchmark.json` beside the generated clips. Provider metadata and model
+fingerprints are recorded through the same safe metadata surfaces used by the
+product; checkpoint/repository paths are not added to the report.
+
+Actual default tuning, provider comparisons and hardware guidance remain
+deferred until those measurements are collected on real hardware.
+
 ## Runtime and deployment boundaries
 
 - Wan model inference is serialized inside one MoneyPrinterTurbo process.
