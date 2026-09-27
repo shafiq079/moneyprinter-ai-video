@@ -334,6 +334,99 @@ def submit_scene_version_restore(
         raise
 
 
+def _run_local_ai_rerender(
+    task_id: str,
+    params: VideoParams,
+    capture_logs: bool,
+) -> dict:
+    """Run a same-task render-only rebuild through the serialized WebUI worker."""
+
+    log_handler_id = None
+    worker_thread_id = threading.get_ident()
+    try:
+        if capture_logs:
+            log_handler_id = logger.add(
+                lambda message: _append_task_log(task_id, str(message)),
+                level="DEBUG",
+                format=format_log_record,
+                colorize=False,
+                filter=lambda record: record["thread"].id == worker_thread_id,
+            )
+        with config.runtime_config_lock():
+            return tm.rerender_local_ai_task(task_id, params)
+    except Exception as exc:
+        logger.exception(
+            "render-only rerender worker failed: "
+            f"task_id={task_id}, error={exc}"
+        )
+        snapshot = sm.state.get_task(task_id) or {}
+        if snapshot.get("state") not in {
+            const.TASK_STATE_COMPLETE,
+            const.TASK_STATE_FAILED,
+        }:
+            sm.state.update_task(
+                task_id,
+                state=const.TASK_STATE_FAILED,
+                progress=0,
+                current_stage=None,
+                render_only_rerender=True,
+                render_only_rerender_error=f"{type(exc).__name__}: {exc}",
+            )
+        return {
+            "task_id": task_id,
+            "state": (sm.state.get_task(task_id) or {}).get("state"),
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    finally:
+        if log_handler_id is not None:
+            try:
+                logger.remove(log_handler_id)
+            except ValueError:
+                logger.debug(
+                    f"rerender log handler already removed: task_id={task_id}"
+                )
+
+
+def submit_local_ai_rerender(
+    task_id: str,
+    params: VideoParams,
+    *,
+    capture_logs: bool = True,
+) -> None:
+    """Queue a same-task final rerender without local-video inference."""
+
+    previous = sm.state.get_task(task_id) or {}
+    submitted_params = tm.validate_local_ai_rerender(task_id, params)
+    sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_PROCESSING,
+        progress=70,
+        current_stage="final_rerender_queued",
+        render_only_rerender=True,
+        render_only_rerender_error=None,
+    )
+    try:
+        _task_manager.add_task(
+            _run_local_ai_rerender,
+            task_id=task_id,
+            params=submitted_params,
+            capture_logs=capture_logs,
+        )
+    except Exception:
+        sm.state.update_task(
+            task_id,
+            state=previous.get("state", const.TASK_STATE_FAILED),
+            progress=previous.get(
+                "progress",
+                100 if previous.get("videos") else 0,
+            ),
+            current_stage=None,
+            render_only_rerender=True,
+            render_only_rerender_error="render-only rerender could not be scheduled",
+        )
+        raise
+
+
 def submit_generation(
     task_id: str,
     params: VideoParams,

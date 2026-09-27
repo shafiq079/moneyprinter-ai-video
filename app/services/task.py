@@ -1317,6 +1317,247 @@ def _existing_final_video_paths(task_root: str) -> list[str]:
     return [item[1] for item in sorted(candidates)]
 
 
+_LOCAL_AI_RENDER_ONLY_FIELDS = frozenset(
+    {
+        "video_fit_mode",
+        "video_concat_mode",
+        "video_transition_mode",
+        "video_clip_speed",
+        "video_count",
+        "voice_volume",
+        "bgm_volume",
+        "subtitle_enabled",
+        "subtitle_position",
+        "subtitle_display_mode",
+        "subtitle_animation",
+        "custom_position",
+        "font_name",
+        "text_fore_color",
+        "text_background_color",
+        "rounded_subtitle_background",
+        "font_size",
+        "stroke_color",
+        "stroke_width",
+        "n_threads",
+    }
+)
+
+
+def _assert_render_only_params(
+    original: VideoParams,
+    proposed: VideoParams,
+) -> None:
+    """Reject any rerender change that would require new source/audio generation."""
+
+    original_values = original.model_dump(mode="json")
+    proposed_values = proposed.model_dump(mode="json")
+    changed_unsafe = sorted(
+        key
+        for key in original_values.keys() | proposed_values.keys()
+        if key not in _LOCAL_AI_RENDER_ONLY_FIELDS
+        and original_values.get(key) != proposed_values.get(key)
+    )
+    if changed_unsafe:
+        raise ValueError(
+            "render-only rerender cannot change generation inputs: "
+            + ", ".join(changed_unsafe)
+        )
+
+
+def _existing_render_paths(task_root: str) -> list[str]:
+    candidates: list[tuple[int, int, str]] = []
+    for name in os.listdir(task_root):
+        final_match = re.fullmatch(r"final-(\d+)\.mp4", name)
+        combined_match = re.fullmatch(r"combined-(\d+)\.mp4", name)
+        if final_match:
+            candidates.append(
+                (int(final_match.group(1)), 1, path.join(task_root, name))
+            )
+        elif combined_match:
+            candidates.append(
+                (int(combined_match.group(1)), 0, path.join(task_root, name))
+            )
+    return [item[2] for item in sorted(candidates)]
+
+
+def _backup_render_paths(
+    task_root: str,
+    *,
+    suffix: str,
+) -> list[tuple[str, str]]:
+    backups: list[tuple[str, str]] = []
+    for source in _existing_render_paths(task_root):
+        backup = f"{source}.{suffix}"
+        shutil.copy2(source, backup)
+        backups.append((source, backup))
+    return backups
+
+
+def _clear_render_paths(task_root: str) -> None:
+    for candidate in _existing_render_paths(task_root):
+        try:
+            os.remove(candidate)
+        except FileNotFoundError:
+            pass
+
+
+def _restore_render_backups(
+    task_root: str,
+    backups: list[tuple[str, str]],
+) -> None:
+    _clear_render_paths(task_root)
+    for original, backup in backups:
+        if path.isfile(backup):
+            os.replace(backup, original)
+
+
+def _discard_render_backups(backups: list[tuple[str, str]]) -> None:
+    for _, backup in backups:
+        try:
+            os.remove(backup)
+        except FileNotFoundError:
+            pass
+
+
+def validate_local_ai_rerender(
+    task_id: str,
+    params: VideoParams,
+) -> VideoParams:
+    """Validate a proposed render-only rerender before it is queued."""
+
+    (
+        stored_params,
+        _plan,
+        _audio_file,
+        subtitle_path,
+        _audio_duration,
+        prior_state,
+    ) = _load_scene_regeneration_context(task_id)
+    if is_task_busy(prior_state):
+        raise RuntimeError("task is already busy")
+
+    proposed = VideoParams.model_validate(params.model_dump(mode="json"))
+    _assert_render_only_params(stored_params, proposed)
+    if proposed.subtitle_enabled and not subtitle_path:
+        raise ValueError(
+            "render-only rerender cannot enable subtitles because the existing "
+            "task has no subtitle artifact"
+        )
+    generation_manifest.active_scene_paths(task_id)
+    return proposed
+
+
+def rerender_local_ai_task(
+    task_id: str,
+    params: VideoParams | None = None,
+) -> dict:
+    """Rebuild final outputs from stored local-AI materials without inference."""
+
+    (
+        stored_params,
+        _plan,
+        audio_file,
+        subtitle_path,
+        audio_duration,
+        prior_state,
+    ) = _load_scene_regeneration_context(task_id)
+    if is_task_busy(prior_state):
+        raise RuntimeError("task is already busy")
+
+    render_params = (
+        stored_params
+        if params is None
+        else validate_local_ai_rerender(task_id, params)
+    )
+    if params is None and render_params.subtitle_enabled and not subtitle_path:
+        raise ValueError(
+            "render-only rerender cannot enable subtitles because the existing "
+            "task has no subtitle artifact"
+        )
+
+    materials = generation_manifest.active_scene_paths(task_id)
+    task_root = _scene_regeneration_task_root(task_id)
+    previous_final_paths = _existing_final_video_paths(task_root)
+    backups = _backup_render_paths(
+        task_root,
+        suffix="render-only-rerender-backup",
+    )
+
+    sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_PROCESSING,
+        progress=70,
+        current_stage="final_rerender",
+        render_only_rerender=True,
+        render_only_rerender_error=None,
+    )
+
+    try:
+        # Starting from a clean render surface avoids stale final-N/combined-N
+        # files when video_count is reduced. Scene/audio/subtitle artifacts are
+        # untouched and the previous renders are recoverable from backups.
+        _clear_render_paths(task_root)
+        final_paths, combined_paths, warnings = generate_final_videos(
+            task_id,
+            render_params,
+            materials,
+            audio_file,
+            subtitle_path if render_params.subtitle_enabled else "",
+            audio_duration,
+            reuse_existing_generated_bgm=True,
+        )
+    except Exception as exc:
+        _restore_render_backups(task_root, backups)
+        sm.state.update_task(
+            task_id,
+            state=(
+                const.TASK_STATE_COMPLETE
+                if previous_final_paths
+                else const.TASK_STATE_FAILED
+            ),
+            progress=100 if previous_final_paths else 0,
+            current_stage=None,
+            videos=previous_final_paths or prior_state.get("videos"),
+            combined_videos=prior_state.get("combined_videos"),
+            render_only_rerender=True,
+            render_only_rerender_error=f"{type(exc).__name__}: {exc}",
+        )
+        raise
+    else:
+        _discard_render_backups(backups)
+
+    # Persist only after a successful rerender. Script/terms and all
+    # generation-driving parameters remain unchanged by the guard above.
+    task_artifacts.patch_script_data(
+        task_id,
+        params=render_params.model_dump(mode="json"),
+    )
+
+    result = {
+        "videos": final_paths,
+        "combined_videos": combined_paths,
+        "materials": materials,
+        "warnings": warnings,
+        "render_only": True,
+    }
+    sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_COMPLETE,
+        progress=100,
+        current_stage=None,
+        videos=final_paths,
+        combined_videos=combined_paths,
+        materials=materials,
+        audio_file=audio_file,
+        audio_duration=audio_duration,
+        subtitle_path=subtitle_path,
+        warnings=warnings or None,
+        render_only_rerender=True,
+        render_only_rerender_error=None,
+    )
+    return result
+
+
 def regenerate_local_ai_scene(
     task_id: str,
     scene_id: int,

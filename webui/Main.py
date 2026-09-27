@@ -1704,6 +1704,11 @@ def _apply_pending_task_restore():
         return False
 
     _apply_restored_params(payload["params"])
+    source = str(payload["params"].get("video_source") or "")
+    if local_ai.is_public_source(source):
+        st.session_state["task_restore_source_task_id"] = payload["task_id"]
+    else:
+        st.session_state.pop("task_restore_source_task_id", None)
     st.session_state["task_restore_succeeded"] = True
     logger.info(f"restored task configuration: {payload['task_id']}")
     return True
@@ -8226,14 +8231,83 @@ def _render_generation_controls(
 
     _render_settings_transfer(params)
 
-    start_button = st.button(
-        tr("Generate Video"),
-        use_container_width=True,
-        type="primary",
-        key="generate_video_button",
-        on_click=_prepare_generation_task,
+    rerender_source_task_id = str(
+        st.session_state.get("task_restore_source_task_id") or ""
     )
+    rerender_available = bool(
+        rerender_source_task_id
+        and local_ai.is_public_source(params.video_source)
+        and os.path.isfile(
+            os.path.join(
+                utils.task_dir(rerender_source_task_id),
+                "scene_plan.json",
+            )
+        )
+        and generation_manifest.manifest_path(
+            rerender_source_task_id
+        ).is_file()
+    )
+
+    rerender_button = False
+    if rerender_available:
+        rerender_col, generate_col = st.columns(2)
+        rerender_button = rerender_col.button(
+            tr("Rerender Existing AI Scenes"),
+            use_container_width=True,
+            type="secondary",
+            key="rerender_existing_local_ai_button",
+            icon=":material/movie_edit:",
+            help=tr("Rerender Existing AI Scenes Help"),
+        )
+        start_button = generate_col.button(
+            tr("Generate Video"),
+            use_container_width=True,
+            type="primary",
+            key="generate_video_button",
+            on_click=_prepare_generation_task,
+        )
+    else:
+        start_button = st.button(
+            tr("Generate Video"),
+            use_container_width=True,
+            type="primary",
+            key="generate_video_button",
+            on_click=_prepare_generation_task,
+        )
+
     render_onboarding_tour()
+
+    if rerender_button:
+        _save_runtime_config()
+        try:
+            webui_task.submit_local_ai_rerender(
+                rerender_source_task_id,
+                params,
+                capture_logs=not config.ui.get("hide_log", False),
+            )
+        except Exception as exc:
+            logger.warning(
+                "render-only rerender rejected: "
+                f"task_id={rerender_source_task_id}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            st.error(
+                tr("Rerender Existing AI Scenes Failed").format(
+                    error=str(exc)
+                )
+            )
+        else:
+            _add_active_generation_task(
+                rerender_source_task_id,
+                subject=params.video_subject
+                or params.video_script
+                or rerender_source_task_id,
+            )
+            st.session_state["current_generation_task_id"] = (
+                rerender_source_task_id
+            )
+            st.toast(tr("Rerender Existing AI Scenes Queued"))
+
     if start_button:
         _save_runtime_config()
         task_id = st.session_state.get("pending_generation_task_id") or str(uuid4())
@@ -8606,6 +8680,7 @@ def _render_generation_controls(
             st.stop()
 
         st.session_state["current_generation_task_id"] = task_id
+        st.session_state.pop("task_restore_source_task_id", None)
         logger.info(f"WebUI generation task submitted: task_id={task_id}")
 
     _render_current_generation_task()

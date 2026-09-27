@@ -412,6 +412,136 @@ class TestLocalAIGenerationManifest(LocalAITestCase):
         )
 
 
+class TestLocalAIRenderOnlyRerender(LocalAITestCase):
+    def _prepare_render_task(self, task_id: str):
+        params = VideoParams(
+            video_subject="render-only",
+            video_script="First scene. Second scene.",
+            video_source=FAKE_SOURCE_ID,
+            video_aspect="9:16",
+            video_fit_mode="cover",
+            video_concat_mode=VideoConcatMode.sequential,
+            video_clip_duration=1,
+            video_count=1,
+            subtitle_enabled=False,
+            bgm_type="",
+            bgm_volume=0,
+            n_threads=1,
+        )
+        plan = scene_planner.get_or_create_scene_plan(
+            task_id,
+            params.video_script,
+            video_subject=params.video_subject,
+            audio_duration=2.0,
+            max_scene_duration=1.0,
+            aspect="9:16",
+            base_seed=42,
+            use_llm=False,
+        )
+        provider = FakeLocalVideoProvider()
+        generate_scene_materials(
+            task_id,
+            provider=provider,
+            scenes=list(plan.scenes),
+        )
+        task.save_script_data(task_id, params.video_script, [], params)
+        self.make_audio(task_id, 2.0)
+        return params, provider
+
+    def test_render_only_rerender_never_calls_local_video_provider(self):
+        task_id = "render-only-success"
+        params, provider = self._prepare_render_task(task_id)
+        proposed = VideoParams.model_validate(
+            {
+                **params.model_dump(mode="json"),
+                "video_fit_mode": "contain",
+                "video_count": 2,
+            }
+        )
+
+        with (
+            patch.object(task.local_ai, "is_public_source", return_value=True),
+            patch.object(
+                task.local_ai,
+                "prepare_provider",
+                side_effect=AssertionError(
+                    "render-only rerender must not prepare a provider"
+                ),
+            ),
+            patch.object(
+                task.local_ai,
+                "create_provider",
+                side_effect=AssertionError(
+                    "render-only rerender must not create a provider"
+                ),
+            ),
+        ):
+            result = task.rerender_local_ai_task(
+                task_id,
+                proposed,
+            )
+
+        self.assertTrue(result["render_only"])
+        self.assertEqual(provider.generated_scene_ids, [1, 2])
+        self.assertEqual(len(result["videos"]), 2)
+        self.assertTrue(all(Path(item).is_file() for item in result["videos"]))
+        manifest = generation_manifest.load_manifest(task_id)
+        self.assertEqual(
+            [
+                generation_manifest.scene_record(manifest, scene_id)["active_asset"]
+                for scene_id in (1, 2)
+            ],
+            [
+                "generated_ai/scene-001/v001.mp4",
+                "generated_ai/scene-002/v001.mp4",
+            ],
+        )
+
+    def test_render_only_rerender_rejects_generation_input_change(self):
+        task_id = "render-only-reject"
+        params, _ = self._prepare_render_task(task_id)
+        proposed = VideoParams.model_validate(
+            {
+                **params.model_dump(mode="json"),
+                "local_ai_seed": 999,
+            }
+        )
+
+        with (
+            patch.object(task.local_ai, "is_public_source", return_value=True),
+            self.assertRaisesRegex(
+                ValueError,
+                "local_ai_seed",
+            ),
+        ):
+            task.validate_local_ai_rerender(
+                task_id,
+                proposed,
+            )
+
+    def test_render_only_rerender_rejects_enabling_missing_subtitles(self):
+        task_id = "render-only-no-subtitles"
+        params, _ = self._prepare_render_task(task_id)
+        proposed = VideoParams.model_validate(
+            {
+                **params.model_dump(mode="json"),
+                "subtitle_enabled": True,
+            }
+        )
+
+        with (
+            patch.object(task.local_ai, "is_public_source", return_value=True),
+            self.assertRaisesRegex(
+                ValueError,
+                "no subtitle artifact",
+            ),
+        ):
+            task.validate_local_ai_rerender(
+                task_id,
+                proposed,
+            )
+
+
 class TestLocalAISceneRegeneration(LocalAITestCase):
     def _prepare_task(self, task_id: str):
         params = VideoParams(

@@ -41,6 +41,23 @@ def _log_record(file_path, message="generation finished"):
     }
 
 
+def test_generation_controls_expose_same_task_local_ai_rerender():
+    tree = ast.parse(WEBUI_MAIN.read_text(encoding="utf-8"))
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_render_generation_controls"
+    )
+    calls = {
+        _attribute_name(node.func)
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call)
+    }
+
+    assert "webui_task.submit_local_ai_rerender" in calls
+
+
 def test_generation_controls_submit_background_task_instead_of_blocking_page():
     """
     WebUI 生成按钮不能重新直接调用同步流水线。
@@ -379,6 +396,106 @@ def test_scene_version_restore_worker_uses_runtime_config_lock():
         "scene-restore-worker",
         2,
         "generated_ai/scene-002/v001.mp4",
+    )
+
+
+def test_submit_local_ai_rerender_validates_before_queueing():
+    task_id = "render-only-submit"
+    params = VideoParams(
+        video_subject="rerender",
+        video_source="ltx25_local",
+    )
+    validated = params.model_copy(deep=True)
+
+    with (
+        patch.object(
+            webui_task.tm,
+            "validate_local_ai_rerender",
+            return_value=validated,
+        ) as validate,
+        patch.object(webui_task._task_manager, "add_task") as add_task,
+    ):
+        webui_task.submit_local_ai_rerender(
+            task_id,
+            params,
+            capture_logs=False,
+        )
+
+    validate.assert_called_once_with(task_id, params)
+    add_task.assert_called_once()
+    queued = add_task.call_args.kwargs
+    assert queued["task_id"] == task_id
+    assert queued["params"] == validated
+    assert queued["params"] is validated
+    state = webui_task.sm.state.get_task(task_id)
+    assert state["state"] == const.TASK_STATE_PROCESSING
+    assert state["current_stage"] == "final_rerender_queued"
+    webui_task.sm.state.delete_task(task_id)
+
+
+def test_submit_local_ai_rerender_rejection_does_not_mark_task_processing():
+    task_id = "render-only-rejected"
+    params = VideoParams(
+        video_subject="rerender",
+        video_source="ltx25_local",
+    )
+    webui_task.sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_COMPLETE,
+        progress=100,
+        videos=["/tmp/final-1.mp4"],
+    )
+    try:
+        with (
+            patch.object(
+                webui_task.tm,
+                "validate_local_ai_rerender",
+                side_effect=ValueError("unsafe field changed"),
+            ),
+            patch.object(webui_task._task_manager, "add_task") as add_task,
+            pytest.raises(ValueError, match="unsafe field changed"),
+        ):
+            webui_task.submit_local_ai_rerender(
+                task_id,
+                params,
+                capture_logs=False,
+            )
+
+        add_task.assert_not_called()
+        state = webui_task.sm.state.get_task(task_id)
+        assert state["state"] == const.TASK_STATE_COMPLETE
+    finally:
+        webui_task.sm.state.delete_task(task_id)
+
+
+def test_local_ai_rerender_worker_uses_runtime_config_lock():
+    params = VideoParams(
+        video_subject="rerender",
+        video_source="ltx25_local",
+    )
+    with (
+        patch.object(
+            webui_task.tm,
+            "rerender_local_ai_task",
+            return_value={"render_only": True},
+        ) as rerender,
+        patch.object(
+            webui_task.config,
+            "runtime_config_lock",
+            return_value=nullcontext(),
+        ) as runtime_lock,
+    ):
+        result = webui_task._run_local_ai_rerender(
+            "render-only-worker",
+            params,
+            capture_logs=False,
+        )
+
+    assert result == {"render_only": True}
+    runtime_lock.assert_called_once_with()
+    rerender.assert_called_once_with(
+        "render-only-worker",
+        params,
     )
 
 
