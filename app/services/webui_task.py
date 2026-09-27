@@ -240,6 +240,100 @@ def submit_scene_regeneration(
         raise
 
 
+def _run_scene_version_restore(
+    task_id: str,
+    scene_id: int,
+    relative_path: str,
+    capture_logs: bool,
+) -> dict:
+    """Restore one existing scene version through the serialized WebUI worker."""
+
+    log_handler_id = None
+    worker_thread_id = threading.get_ident()
+    try:
+        if capture_logs:
+            log_handler_id = logger.add(
+                lambda message: _append_task_log(task_id, str(message)),
+                level="DEBUG",
+                format=format_log_record,
+                colorize=False,
+                filter=lambda record: record["thread"].id == worker_thread_id,
+            )
+        with config.runtime_config_lock():
+            return tm.restore_local_ai_scene_version(
+                task_id,
+                scene_id,
+                relative_path,
+            )
+    except Exception as exc:
+        logger.exception(
+            "scene version restore worker failed: "
+            f"task_id={task_id}, scene_id={scene_id}, error={exc}"
+        )
+        return {
+            "task_id": task_id,
+            "scene_id": scene_id,
+            "state": (sm.state.get_task(task_id) or {}).get("state"),
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    finally:
+        if log_handler_id is not None:
+            try:
+                logger.remove(log_handler_id)
+            except ValueError:
+                logger.debug(
+                    f"scene restore log handler already removed: task_id={task_id}"
+                )
+
+
+def submit_scene_version_restore(
+    task_id: str,
+    scene_id: int,
+    *,
+    relative_path: str,
+    capture_logs: bool = True,
+) -> None:
+    """Queue a no-GPU restore of a previously validated scene version."""
+
+    selected = str(relative_path or "").strip()
+    if not selected:
+        raise ValueError("scene version path must not be empty")
+
+    previous = sm.state.get_task(task_id) or {}
+    if tm.is_task_busy(previous):
+        raise RuntimeError("task is already busy")
+
+    sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_PROCESSING,
+        progress=70,
+        current_stage="scene_version_restore_queued",
+        scene_regeneration_scene_id=int(scene_id),
+        scene_regeneration_error=None,
+    )
+    try:
+        _task_manager.add_task(
+            _run_scene_version_restore,
+            task_id=task_id,
+            scene_id=int(scene_id),
+            relative_path=selected,
+            capture_logs=capture_logs,
+        )
+    except Exception:
+        sm.state.update_task(
+            task_id,
+            state=previous.get("state", const.TASK_STATE_FAILED),
+            progress=previous.get(
+                "progress",
+                100 if previous.get("videos") else 0,
+            ),
+            current_stage=None,
+            scene_regeneration_error="scene version restore could not be scheduled",
+            scene_regeneration_scene_id=int(scene_id),
+        )
+        raise
+
+
 def submit_generation(
     task_id: str,
     params: VideoParams,

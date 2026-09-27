@@ -162,6 +162,83 @@ def next_scene_version(
     return relative.as_posix(), final_path, partial_path
 
 
+def scene_spec_from_version_metadata(
+    metadata: dict[str, Any],
+) -> SceneSpec:
+    """Rebuild a portable SceneSpec from stored version metadata."""
+
+    provider_settings = metadata.get("provider_settings")
+    if not isinstance(provider_settings, dict):
+        provider_settings = {}
+    return SceneSpec(
+        scene_id=int(metadata["scene_id"]),
+        narration_segment=str(metadata.get("narration_segment") or ""),
+        prompt=str(metadata["prompt"]),
+        target_duration=float(metadata["target_duration"]),
+        aspect=str(metadata["aspect"]),
+        seed=int(metadata["seed"]),
+        beat=str(metadata.get("beat") or "build"),
+        negative_prompt=str(metadata.get("negative_prompt") or ""),
+        continuity=str(metadata.get("continuity") or ""),
+        camera=str(metadata.get("camera") or ""),
+        provider_settings=provider_settings,
+    )
+
+
+def restore_scene_version(
+    task_id: str,
+    scene_id: int,
+    relative_path: str,
+) -> tuple[dict[str, Any], SceneSpec, Path]:
+    """Activate one stored scene version and restore its generation metadata."""
+
+    manifest = load_manifest(task_id)
+    if manifest is None:
+        raise ValueError("local AI generation manifest is missing")
+
+    record = scene_record(manifest, int(scene_id))
+    relative = str(relative_path or "")
+    if relative not in list(record.get("versions") or []):
+        raise ValueError("scene version is not registered in the task manifest")
+
+    metadata = scene_version_metadata(record, relative)
+    if metadata is None:
+        raise ValueError(
+            "scene version predates version metadata and cannot be safely restored"
+        )
+
+    candidate = resolve_asset(task_id, relative)
+    if not candidate.is_file():
+        raise ValueError("scene version file is missing")
+
+    scene = scene_spec_from_version_metadata(metadata)
+    if scene.scene_id != int(scene_id):
+        raise ValueError("scene version metadata does not match scene ID")
+
+    from app.services.local_ai.media import validate_video_clip
+
+    validated = validate_video_clip(candidate, scene)
+    record.update(scene.to_dict())
+    for key in (
+        "provider_id",
+        "model_fingerprint",
+        "provider_metadata",
+        "fingerprint",
+    ):
+        if key in metadata:
+            record[key] = metadata[key]
+    record["active_asset"] = relative
+    record["actual_duration"] = validated.duration
+    record["status"] = "ready"
+    record["error_type"] = None
+    record["error_code"] = None
+    record["regeneration_status"] = "restored"
+    record["regeneration_error_type"] = None
+    record["regeneration_error_code"] = None
+    save_manifest(task_id, manifest)
+    return manifest, scene, candidate
+
+
 def active_scene_paths(task_id: str) -> list[str]:
     """Return validated task-local active scene paths in scene order."""
 

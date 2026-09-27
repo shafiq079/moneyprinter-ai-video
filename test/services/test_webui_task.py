@@ -321,6 +321,67 @@ def test_scene_regeneration_worker_uses_runtime_config_lock():
     )
 
 
+def test_submit_scene_version_restore_queues_background_work():
+    task_id = "scene-version-restore-submit"
+    webui_task.sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_COMPLETE,
+        progress=100,
+        videos=["/tmp/final-1.mp4"],
+    )
+    try:
+        with patch.object(webui_task._task_manager, "add_task") as add_task:
+            webui_task.submit_scene_version_restore(
+                task_id,
+                3,
+                relative_path="generated_ai/scene-003/v001.mp4",
+                capture_logs=False,
+            )
+
+        add_task.assert_called_once()
+        kwargs = add_task.call_args.kwargs
+        assert kwargs["task_id"] == task_id
+        assert kwargs["scene_id"] == 3
+        assert (
+            kwargs["relative_path"]
+            == "generated_ai/scene-003/v001.mp4"
+        )
+        state = webui_task.sm.state.get_task(task_id)
+        assert state["state"] == const.TASK_STATE_PROCESSING
+        assert state["current_stage"] == "scene_version_restore_queued"
+    finally:
+        webui_task.sm.state.delete_task(task_id)
+
+
+def test_scene_version_restore_worker_uses_runtime_config_lock():
+    with (
+        patch.object(
+            webui_task.tm,
+            "restore_local_ai_scene_version",
+            return_value={"scene_id": 2, "restored": True},
+        ) as restore,
+        patch.object(
+            webui_task.config,
+            "runtime_config_lock",
+            return_value=nullcontext(),
+        ) as runtime_lock,
+    ):
+        result = webui_task._run_scene_version_restore(
+            "scene-restore-worker",
+            2,
+            "generated_ai/scene-002/v001.mp4",
+            capture_logs=False,
+        )
+
+    assert result == {"scene_id": 2, "restored": True}
+    runtime_lock.assert_called_once_with()
+    restore.assert_called_once_with(
+        "scene-restore-worker",
+        2,
+        "generated_ai/scene-002/v001.mp4",
+    )
+
+
 def test_submit_generation_returns_while_pipeline_is_still_running():
     """后台流水线未结束时，提交函数必须已经返回，让 Streamlit 完成本次渲染。"""
     task_id = "background-submit-test"

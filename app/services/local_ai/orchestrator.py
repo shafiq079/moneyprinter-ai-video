@@ -158,6 +158,11 @@ def generate_scene_materials(
             record["versions"] = versions
             record["active_asset"] = relative
             record["actual_duration"] = validated.actual_duration
+            generation_manifest.remember_scene_version(
+                record,
+                relative,
+                actual_duration=validated.actual_duration,
+            )
             record["status"] = "ready"
             record["error_type"] = None
             record["error_code"] = None
@@ -194,6 +199,15 @@ def regenerate_scene_material(
     old_status = record.get("status")
     old_actual_duration = record.get("actual_duration")
     old_fingerprint = record.get("fingerprint")
+    if old_active and generation_manifest.scene_version_metadata(
+        record,
+        old_active,
+    ) is None:
+        generation_manifest.remember_scene_version(
+            record,
+            old_active,
+            actual_duration=old_actual_duration,
+        )
 
     relative, final_path, partial_path = generation_manifest.next_scene_version(
         task_id,
@@ -259,6 +273,11 @@ def regenerate_scene_material(
     record["versions"] = versions
     record["active_asset"] = relative
     record["actual_duration"] = validated.actual_duration
+    generation_manifest.remember_scene_version(
+        record,
+        relative,
+        actual_duration=validated.actual_duration,
+    )
     record["status"] = "ready"
     record["error_type"] = None
     record["error_code"] = None

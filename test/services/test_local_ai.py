@@ -445,6 +445,22 @@ class TestLocalAISceneRegeneration(LocalAITestCase):
             ],
         )
         self.assertEqual(first["active_asset"], "generated_ai/scene-001/v002.mp4")
+        first_v1 = generation_manifest.scene_version_metadata(
+            first,
+            "generated_ai/scene-001/v001.mp4",
+        )
+        first_v2 = generation_manifest.scene_version_metadata(
+            first,
+            "generated_ai/scene-001/v002.mp4",
+        )
+        self.assertIsNotNone(first_v1)
+        self.assertIsNotNone(first_v2)
+        self.assertEqual(first_v1["seed"], original_plan.scenes[0].seed)
+        self.assertEqual(first_v2["seed"], 99)
+        self.assertEqual(
+            first_v1["prompt"],
+            original_plan.scenes[0].prompt,
+        )
         self.assertEqual(second["versions"], ["generated_ai/scene-002/v001.mp4"])
         self.assertEqual(second["active_asset"], "generated_ai/scene-002/v001.mp4")
 
@@ -494,6 +510,75 @@ class TestLocalAISceneRegeneration(LocalAITestCase):
         )
         persisted = scene_planner.load_scene_plan(task_id)
         self.assertEqual(persisted.scenes[0], original_plan.scenes[0])
+
+
+    def test_previous_scene_version_can_be_restored_without_new_inference(self):
+        task_id = "scene-version-restore"
+        _, original_plan = self._prepare_task(task_id)
+        replacement = FakeLocalVideoProvider()
+
+        with (
+            patch.object(task.local_ai, "is_public_source", return_value=True),
+            patch.object(
+                task.local_ai,
+                "prepare_provider",
+                return_value=replacement,
+            ),
+        ):
+            task.regenerate_local_ai_scene(
+                task_id,
+                1,
+                prompt="A newer first-scene prompt.",
+                seed=99,
+            )
+
+        replacement.generated_scene_ids.clear()
+        with patch.object(
+            task.local_ai,
+            "is_public_source",
+            return_value=True,
+        ):
+            result = task.restore_local_ai_scene_version(
+                task_id,
+                1,
+                "generated_ai/scene-001/v001.mp4",
+            )
+
+        self.assertTrue(result["restored"])
+        self.assertEqual(replacement.generated_scene_ids, [])
+        self.assertTrue(Path(result["videos"][0]).is_file())
+
+        manifest = generation_manifest.load_manifest(task_id)
+        first = generation_manifest.scene_record(manifest, 1)
+        self.assertEqual(
+            first["active_asset"],
+            "generated_ai/scene-001/v001.mp4",
+        )
+        restored_plan = scene_planner.load_scene_plan(task_id)
+        self.assertEqual(restored_plan.source, "version_restore")
+        self.assertEqual(
+            restored_plan.scenes[0].prompt,
+            original_plan.scenes[0].prompt,
+        )
+        self.assertEqual(
+            restored_plan.scenes[0].seed,
+            original_plan.scenes[0].seed,
+        )
+
+    def test_legacy_scene_version_without_metadata_cannot_be_restored(self):
+        task_id = "legacy-scene-version"
+        self._prepare_task(task_id)
+        manifest = generation_manifest.load_manifest(task_id)
+        first = generation_manifest.scene_record(manifest, 1)
+        first["version_metadata"] = {}
+        generation_manifest.save_manifest(task_id, manifest)
+
+        with self.assertRaisesRegex(ValueError, "predates version metadata"):
+            generation_manifest.restore_scene_version(
+                task_id,
+                1,
+                first["active_asset"],
+            )
 
 
 class TestLocalAITaskIntegration(LocalAITestCase):

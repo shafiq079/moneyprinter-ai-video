@@ -564,6 +564,36 @@ def save_scene_plan(task_id: str, plan: ScenePlan) -> None:
     _atomic_write_json(scene_plan_path(task_id), plan.to_dict())
 
 
+def replace_scene_in_plan(
+    plan: ScenePlan,
+    replacement: SceneSpec,
+    *,
+    source: str,
+) -> ScenePlan:
+    """Replace one scene while preserving project-level direction."""
+
+    scenes: list[SceneSpec] = []
+    replaced = False
+    for scene in plan.scenes:
+        if scene.scene_id == replacement.scene_id:
+            scenes.append(replacement)
+            replaced = True
+        else:
+            scenes.append(scene)
+    if not replaced:
+        raise KeyError(
+            f"scene {replacement.scene_id} is missing from scene plan"
+        )
+    return ScenePlan(
+        idea=plan.idea,
+        story_arc=plan.story_arc,
+        visual_bible=plan.visual_bible,
+        source=str(source),
+        input_fingerprint=plan.input_fingerprint,
+        scenes=tuple(scenes),
+    )
+
+
 def revise_scene_plan(
     plan: ScenePlan,
     scene_id: int,

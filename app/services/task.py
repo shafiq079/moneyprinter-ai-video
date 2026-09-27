@@ -1371,6 +1371,144 @@ def regenerate_local_ai_scene(
     return result
 
 
+def restore_local_ai_scene_version(
+    task_id: str,
+    scene_id: int,
+    relative_path: str,
+) -> dict:
+    """Restore one validated scene version and rerender without GPU inference."""
+
+    params, plan, audio_file, subtitle_path, audio_duration, prior_state = (
+        _load_scene_regeneration_context(task_id)
+    )
+    if is_task_busy(prior_state):
+        raise RuntimeError("task is already busy")
+
+    original_manifest = generation_manifest.load_manifest(task_id)
+    if original_manifest is None:
+        raise ValueError("generation manifest is missing")
+    original_manifest = json.loads(json.dumps(original_manifest))
+
+    current_record = generation_manifest.scene_record(
+        original_manifest,
+        int(scene_id),
+    )
+    if current_record.get("active_asset") == str(relative_path):
+        return {
+            "scene_id": int(scene_id),
+            "scene_file": str(
+                generation_manifest.resolve_asset(
+                    task_id,
+                    str(relative_path),
+                )
+            ),
+            "videos": prior_state.get("videos") or [],
+            "combined_videos": prior_state.get("combined_videos") or [],
+            "materials": prior_state.get("materials") or [],
+            "warnings": prior_state.get("warnings") or [],
+            "restored": False,
+        }
+
+    task_root = _scene_regeneration_task_root(task_id)
+    previous_final_paths = _existing_final_video_paths(task_root)
+    backups: list[tuple[str, str]] = []
+    for final_path in previous_final_paths:
+        backup_path = f"{final_path}.scene-version-restore-backup"
+        shutil.copy2(final_path, backup_path)
+        backups.append((final_path, backup_path))
+
+    sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_PROCESSING,
+        progress=70,
+        current_stage="scene_version_restore",
+        scene_regeneration_scene_id=int(scene_id),
+        scene_regeneration_error=None,
+    )
+
+    try:
+        _, restored_scene, restored_path = (
+            generation_manifest.restore_scene_version(
+                task_id,
+                int(scene_id),
+                str(relative_path),
+            )
+        )
+        restored_plan = scene_planner.replace_scene_in_plan(
+            plan,
+            restored_scene,
+            source="version_restore",
+        )
+        scene_planner.save_scene_plan(task_id, restored_plan)
+        materials = generation_manifest.active_scene_paths(task_id)
+        final_paths, combined_paths, warnings = generate_final_videos(
+            task_id,
+            params,
+            materials,
+            audio_file,
+            subtitle_path,
+            audio_duration,
+            reuse_existing_generated_bgm=True,
+        )
+    except Exception as exc:
+        generation_manifest.save_manifest(task_id, original_manifest)
+        scene_planner.save_scene_plan(task_id, plan)
+        for final_path, backup_path in backups:
+            if path.isfile(backup_path):
+                os.replace(backup_path, final_path)
+        sm.state.update_task(
+            task_id,
+            state=const.TASK_STATE_COMPLETE
+            if previous_final_paths
+            else const.TASK_STATE_FAILED,
+            progress=100 if previous_final_paths else 0,
+            current_stage=None,
+            videos=previous_final_paths or prior_state.get("videos"),
+            scene_regeneration_error=f"{type(exc).__name__}: {exc}",
+            scene_regeneration_scene_id=int(scene_id),
+        )
+        raise
+    else:
+        for _, backup_path in backups:
+            try:
+                os.remove(backup_path)
+            except FileNotFoundError:
+                pass
+
+    result = {
+        "scene_id": restored_scene.scene_id,
+        "scene_file": str(restored_path),
+        "videos": final_paths,
+        "combined_videos": combined_paths,
+        "materials": materials,
+        "warnings": warnings,
+        "restored": True,
+    }
+    sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_COMPLETE,
+        progress=100,
+        current_stage=None,
+        videos=final_paths,
+        combined_videos=combined_paths,
+        materials=materials,
+        audio_file=audio_file,
+        audio_duration=audio_duration,
+        subtitle_path=subtitle_path,
+        warnings=warnings or None,
+        scene_progress={
+            "current": 1,
+            "total": 1,
+            "scene_id": restored_scene.scene_id,
+            "status": "restored",
+            "reused": True,
+        },
+        scene_regeneration_error=None,
+        scene_regeneration_scene_id=restored_scene.scene_id,
+    )
+    return result
+
+
 def _patch_cross_post_state(task_id: str, **kwargs) -> bool | None:
     """安全更新发布字段；短暂状态后端故障时有限重试。"""
     for attempt in range(1, _CROSS_POST_STATE_WRITE_ATTEMPTS + 1):

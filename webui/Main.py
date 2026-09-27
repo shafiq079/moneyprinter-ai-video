@@ -1265,6 +1265,8 @@ def _render_scene_editor() -> None:
             if scene.narration_segment:
                 st.caption(scene.narration_segment)
 
+            selected_version = active_asset
+            selected_version_metadata = None
             if versions:
                 default_index = (
                     versions.index(active_asset)
@@ -1294,6 +1296,12 @@ def _render_scene_editor() -> None:
                     preview_path = None
                 if preview_path is not None and preview_path.is_file():
                     st.video(str(preview_path))
+                selected_version_metadata = (
+                    generation_manifest.scene_version_metadata(
+                        record,
+                        selected_version,
+                    )
+                )
 
             prompt_value = st.text_area(
                 tr("Scene Prompt"),
@@ -1311,27 +1319,96 @@ def _render_scene_editor() -> None:
                 )
             )
 
-            if st.button(
-                tr("Regenerate Scene"),
-                key=f"regenerate_scene_{task_id}_{scene.scene_id}",
-                use_container_width=True,
-                icon=":material/refresh:",
-                disabled=is_busy,
-            ):
-                try:
-                    webui_task.submit_scene_regeneration(
-                        task_id,
-                        scene.scene_id,
-                        prompt=prompt_value,
-                        seed=seed_value,
+            scene_action_cols = st.columns(
+                3,
+                vertical_alignment="center",
+                gap="small",
+            )
+            with scene_action_cols[0]:
+                if st.button(
+                    tr("Regenerate Scene"),
+                    key=f"regenerate_scene_{task_id}_{scene.scene_id}",
+                    use_container_width=True,
+                    icon=":material/refresh:",
+                    disabled=is_busy,
+                    help=tr("Regenerate Scene Help"),
+                ):
+                    try:
+                        webui_task.submit_scene_regeneration(
+                            task_id,
+                            scene.scene_id,
+                            prompt=prompt_value,
+                            seed=seed_value,
+                        )
+                    except Exception as exc:
+                        st.error(
+                            f"{tr('Scene Regeneration Failed')}: {exc}"
+                        )
+                    else:
+                        st.toast(tr("Scene Regeneration Queued"))
+                        st.rerun(scope="fragment")
+
+            with scene_action_cols[1]:
+                if st.button(
+                    tr("New Variation"),
+                    key=f"variation_scene_{task_id}_{scene.scene_id}",
+                    use_container_width=True,
+                    icon=":material/casino:",
+                    disabled=is_busy,
+                    help=tr("New Variation Help"),
+                ):
+                    try:
+                        webui_task.submit_scene_regeneration(
+                            task_id,
+                            scene.scene_id,
+                            prompt=prompt_value,
+                            seed=seed_value + 1,
+                        )
+                    except Exception as exc:
+                        st.error(
+                            f"{tr('Scene Regeneration Failed')}: {exc}"
+                        )
+                    else:
+                        st.toast(tr("Scene Regeneration Queued"))
+                        st.rerun(scope="fragment")
+
+            with scene_action_cols[2]:
+                restore_disabled = (
+                    is_busy
+                    or not selected_version
+                    or selected_version == active_asset
+                    or selected_version_metadata is None
+                )
+                restore_help = (
+                    tr("Legacy Scene Version Help")
+                    if (
+                        selected_version
+                        and selected_version != active_asset
+                        and selected_version_metadata is None
                     )
-                except Exception as exc:
-                    st.error(
-                        f"{tr('Scene Regeneration Failed')}: {exc}"
-                    )
-                else:
-                    st.toast(tr("Scene Regeneration Queued"))
-                    st.rerun(scope="fragment")
+                    else tr("Restore Scene Version Help")
+                )
+                if st.button(
+                    tr("Restore Scene Version"),
+                    key=f"restore_scene_version_{task_id}_{scene.scene_id}",
+                    use_container_width=True,
+                    icon=":material/history:",
+                    disabled=restore_disabled,
+                    help=restore_help,
+                ):
+                    try:
+                        webui_task.submit_scene_version_restore(
+                            task_id,
+                            scene.scene_id,
+                            relative_path=selected_version,
+                        )
+                    except Exception as exc:
+                        st.error(
+                            f"{tr('Scene Regeneration Failed')}: {exc}"
+                        )
+                    else:
+                        st.toast(tr("Scene Version Restore Queued"))
+                        st.rerun(scope="fragment")
 
 
 def _render_task_table(filtered_tasks, key_prefix):
