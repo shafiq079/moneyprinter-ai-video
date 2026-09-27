@@ -24,7 +24,8 @@ from .runtime import LOCAL_AI_RUNTIME
 
 LTX25_SOURCE_ID = "ltx25_local"
 LTX25_FAMILY_ID = "ltx25"
-LTX25_MODEL_NAME = "LTX-2.5 Distilled"
+LTX25_MODEL_NAME = "LTX-2.5"
+LTX25_MODES = {"fast", "quality"}
 _PROTOCOL_PREFIX = "MPT_LTX25_JSON:"
 _ADAPTER_VERSION = "mpt-ltx25-local:v1"
 
@@ -96,6 +97,7 @@ class LTX25Settings:
     audio_vae_path: Path
     spatial_upsampler_path: Path
     python_executable: str
+    detailing_lora_path: Path | None = None
     device_id: int = 0
     base_seed: int = 42
     offload_mode: str = "cpu"
@@ -139,6 +141,19 @@ class LTX25Settings:
                 str(keys["spatial_upsampler_path"])
             ).expanduser().resolve(),
             python_executable=_resolve_python(str(python_value)),
+            detailing_lora_path=(
+                Path(
+                    str(
+                        os.getenv("LTX25_DETAILING_LORA")
+                        or section.get("detailing_lora_path", "")
+                    )
+                ).expanduser().resolve()
+                if str(
+                    os.getenv("LTX25_DETAILING_LORA")
+                    or section.get("detailing_lora_path", "")
+                ).strip()
+                else None
+            ),
             device_id=_parse_int(
                 os.getenv("LTX25_DEVICE", section.get("device", 0)),
                 0,
@@ -168,6 +183,7 @@ class LTX25Settings:
             str(self.video_vae_path),
             str(self.audio_vae_path),
             str(self.spatial_upsampler_path),
+            str(self.detailing_lora_path or ""),
             self.device_id,
             self.offload_mode,
             self.fp8_cast,
@@ -187,13 +203,35 @@ def _file_stat_fingerprint(path: Path) -> tuple[int, int]:
     return stat.st_size, stat.st_mtime_ns
 
 
-def _validate_model_files(settings: LTX25Settings) -> tuple[Path, ...]:
+def _normalize_generation_mode(value: str | None) -> str:
+    mode = str(value or "fast").strip().lower()
+    if mode not in LTX25_MODES:
+        raise LTX25ConfigurationError(
+            "LTX 2.5 generation mode must be fast or quality"
+        )
+    return mode
+
+
+def _validate_model_files(
+    settings: LTX25Settings,
+    generation_mode: str = "fast",
+) -> tuple[Path, ...]:
     repo = settings.repo_path
     required_repo_files = (
         repo / "packages" / "ltx-pipelines" / "src" / "ltx_pipelines" / "distilled.py",
         repo / "packages" / "ltx-pipelines" / "src" / "ltx_pipelines" / "utils" / "model_paths.py",
         repo / "packages" / "ltx-core" / "src" / "ltx_core" / "__init__.py",
     )
+    mode = _normalize_generation_mode(generation_mode)
+    if mode == "quality":
+        required_repo_files += (
+            repo
+            / "packages"
+            / "ltx-pipelines"
+            / "src"
+            / "ltx_pipelines"
+            / "dfr_pipeline.py",
+        )
     if any(not item.is_file() for item in required_repo_files):
         raise LTX25ConfigurationError(
             "ltx25_local.repo_path must point to an official LTX-2 checkout "
@@ -211,11 +249,25 @@ def _validate_model_files(settings: LTX25Settings) -> tuple[Path, ...]:
         raise LTX25ConfigurationError(
             "ltx25_local is missing one or more required LTX-2.5 model files"
         )
+    if mode == "quality":
+        if (
+            settings.detailing_lora_path is None
+            or not settings.detailing_lora_path.is_file()
+        ):
+            raise LTX25ConfigurationError(
+                "LTX 2.5 quality mode requires "
+                "ltx25_local.detailing_lora_path"
+            )
+        model_files += (settings.detailing_lora_path,)
     return model_files
 
 
-def _model_fingerprint(settings: LTX25Settings) -> str:
-    model_files = _validate_model_files(settings)
+def _model_fingerprint(
+    settings: LTX25Settings,
+    generation_mode: str,
+) -> str:
+    mode = _normalize_generation_mode(generation_mode)
+    model_files = _validate_model_files(settings, mode)
     repo = settings.repo_path
     code_files = {
         "distilled": repo
@@ -232,6 +284,15 @@ def _model_fingerprint(settings: LTX25Settings) -> str:
         / "utils"
         / "model_paths.py",
     }
+    if mode == "quality":
+        code_files["dfr"] = (
+            repo
+            / "packages"
+            / "ltx-pipelines"
+            / "src"
+            / "ltx_pipelines"
+            / "dfr_pipeline.py"
+        )
     payload = {
         "adapter": _ADAPTER_VERSION,
         "model": LTX25_MODEL_NAME,
@@ -244,6 +305,7 @@ def _model_fingerprint(settings: LTX25Settings) -> str:
             for path in model_files
         ],
         "generation": {
+            "mode": mode,
             "offload_mode": settings.offload_mode,
             "fp8_cast": settings.fp8_cast,
         },
@@ -253,18 +315,22 @@ def _model_fingerprint(settings: LTX25Settings) -> str:
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    return "ltx25-distilled:sha256:" + hashlib.sha256(encoded).hexdigest()
+    return f"ltx25-{mode}:sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
 def _worker_script() -> Path:
     return Path(__file__).with_name("ltx25_worker.py").resolve()
 
 
-def _worker_command(settings: LTX25Settings, mode: str) -> list[str]:
+def _worker_command(
+    settings: LTX25Settings,
+    worker_mode: str,
+    generation_mode: str,
+) -> list[str]:
     command = [
         settings.python_executable,
         str(_worker_script()),
-        mode,
+        worker_mode,
         "--repo",
         str(settings.repo_path),
         "--transformer",
@@ -281,7 +347,13 @@ def _worker_command(settings: LTX25Settings, mode: str) -> list[str]:
         str(settings.device_id),
         "--offload-mode",
         settings.offload_mode,
+        "--generation-mode",
+        _normalize_generation_mode(generation_mode),
     ]
+    if settings.detailing_lora_path is not None:
+        command.extend(
+            ["--detailing-lora", str(settings.detailing_lora_path)]
+        )
     if settings.fp8_cast:
         command.append("--fp8-cast")
     return command
@@ -314,8 +386,13 @@ def _parse_worker_response(output: str) -> dict[str, Any]:
 
 
 class _LTXWorkerClient:
-    def __init__(self, settings: LTX25Settings) -> None:
+    def __init__(
+        self,
+        settings: LTX25Settings,
+        generation_mode: str = "fast",
+    ) -> None:
         self.settings = settings
+        self.generation_mode = _normalize_generation_mode(generation_mode)
         self._process: subprocess.Popen | None = None
         self._request_lock = threading.RLock()
         self._loaded = False
@@ -325,7 +402,11 @@ class _LTXWorkerClient:
             return
         self.close()
         self._process = subprocess.Popen(
-            _worker_command(self.settings, "--serve"),
+            _worker_command(
+                self.settings,
+                "--serve",
+                self.generation_mode,
+            ),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -435,33 +516,51 @@ class LTX25LocalProvider:
     _worker_key: tuple[Any, ...] | None = None
     _worker_factory = _LTXWorkerClient
 
-    def __init__(self, settings: LTX25Settings | None = None) -> None:
+    def __init__(
+        self,
+        settings: LTX25Settings | None = None,
+        generation_mode: str = "fast",
+    ) -> None:
         self.settings = settings or LTX25Settings.from_config()
-        self.model_fingerprint = _model_fingerprint(self.settings)
+        self.generation_mode = _normalize_generation_mode(generation_mode)
+        self.model_fingerprint = _model_fingerprint(
+            self.settings,
+            self.generation_mode,
+        )
         self.base_seed = self.settings.base_seed
         self._preflight_complete = False
 
     def safe_metadata(self) -> dict[str, Any]:
         return {
             "model": LTX25_MODEL_NAME,
-            "mode": "fast",
+            "mode": self.generation_mode,
             "device_index": self.settings.device_id,
             "offload_mode": self.settings.offload_mode,
             "fp8_cast": self.settings.fp8_cast,
             "output_audio": "none",
         }
 
+    def generation_settings(self) -> dict[str, object]:
+        return {"mode": self.generation_mode}
+
     def preflight(self) -> None:
         if self._preflight_complete:
             return
-        _validate_model_files(self.settings)
+        _validate_model_files(
+            self.settings,
+            self.generation_mode,
+        )
         if not utils.check_ffmpeg_ready():
             raise LTX25ConfigurationError(
                 "LTX 2.5 requires a working FFmpeg executable"
             )
         try:
             completed = subprocess.run(
-                _worker_command(self.settings, "--preflight"),
+                _worker_command(
+                    self.settings,
+                    "--preflight",
+                    self.generation_mode,
+                ),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -497,7 +596,10 @@ class LTX25LocalProvider:
             if cls._worker is None or cls._worker_key != key:
                 if cls._worker is not None:
                     cls._worker.close()
-                cls._worker = cls._worker_factory(settings)
+                cls._worker = cls._worker_factory(
+                    settings,
+                    model_fingerprint.split(":", 1)[0].removeprefix("ltx25-"),
+                )
                 cls._worker_key = key
             return cls._worker
 
@@ -516,8 +618,9 @@ class LTX25LocalProvider:
     def load_runtime(self) -> None:
         with LOCAL_AI_RUNTIME.generation_slot(self.family_id):
             logger.info(
-                "loading/reusing LTX 2.5 Distilled runtime "
-                f"on CUDA device {self.settings.device_id}"
+                "loading/reusing LTX 2.5 runtime "
+                f"mode={self.generation_mode}, "
+                f"CUDA device={self.settings.device_id}"
             )
             self._worker_for(self.settings, self.model_fingerprint).load()
 

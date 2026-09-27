@@ -20,8 +20,9 @@ from app.utils import utils
 class _FakeWorker:
     instances = []
 
-    def __init__(self, settings):
+    def __init__(self, settings, generation_mode="fast"):
         self.settings = settings
+        self.generation_mode = generation_mode
         self.load_count = 0
         self.generate_count = 0
         self.closed = False
@@ -91,6 +92,7 @@ class LTX25TestCase(unittest.TestCase):
         for relative in (
             "packages/ltx-core/src/ltx_core/__init__.py",
             "packages/ltx-pipelines/src/ltx_pipelines/distilled.py",
+            "packages/ltx-pipelines/src/ltx_pipelines/dfr_pipeline.py",
             "packages/ltx-pipelines/src/ltx_pipelines/utils/model_paths.py",
         ):
             (self.repo / relative).write_text("# test\n", encoding="utf-8")
@@ -102,12 +104,14 @@ class LTX25TestCase(unittest.TestCase):
         self.video_vae = self.models / "video-vae.safetensors"
         self.audio_vae = self.models / "audio-vae.safetensors"
         self.spatial = self.models / "spatial-upscaler.safetensors"
+        self.detailing = self.models / "ltx-2.5-detailing-lora.safetensors"
         for path in (
             self.transformer,
             self.text_encoder,
             self.video_vae,
             self.audio_vae,
             self.spatial,
+            self.detailing,
         ):
             path.write_bytes(b"test-model")
 
@@ -119,6 +123,20 @@ class LTX25TestCase(unittest.TestCase):
             audio_vae_path=self.audio_vae,
             spatial_upsampler_path=self.spatial,
             python_executable="python",
+            device_id=0,
+            base_seed=91,
+            offload_mode="cpu",
+            fp8_cast=True,
+        )
+        self.quality_settings = LTX25Settings(
+            repo_path=self.repo,
+            transformer_path=self.transformer,
+            text_encoder_path=self.text_encoder,
+            video_vae_path=self.video_vae,
+            audio_vae_path=self.audio_vae,
+            spatial_upsampler_path=self.spatial,
+            python_executable="python",
+            detailing_lora_path=self.detailing,
             device_id=0,
             base_seed=91,
             offload_mode="cpu",
@@ -148,7 +166,7 @@ class TestLTX25Configuration(LTX25TestCase):
             }
         )
         self.assertTrue(
-            provider.model_fingerprint.startswith("ltx25-distilled:sha256:")
+            provider.model_fingerprint.startswith("ltx25-fast:sha256:")
         )
         self.assertEqual(provider.safe_metadata()["mode"], "fast")
         self.assertEqual(provider.safe_metadata()["output_audio"], "none")
@@ -177,6 +195,61 @@ class TestLTX25Configuration(LTX25TestCase):
         self.assertIn("--offload-mode", command)
         self.assertIn("--fp8-cast", command)
         self.assertEqual(command[0], self.settings.python_executable)
+        self.assertIn("--generation-mode", command)
+        self.assertIn("fast", command)
+
+    def test_quality_mode_requires_detailing_lora(self):
+        with self.assertRaisesRegex(
+            LTX25ConfigurationError,
+            "detailing_lora_path",
+        ):
+            LTX25LocalProvider(
+                settings=self.settings,
+                generation_mode="quality",
+            )
+
+    def test_quality_mode_has_distinct_fingerprint_and_metadata(self):
+        fast = LTX25LocalProvider(settings=self.quality_settings)
+        quality = LTX25LocalProvider(
+            settings=self.quality_settings,
+            generation_mode="quality",
+        )
+
+        self.assertNotEqual(fast.model_fingerprint, quality.model_fingerprint)
+        self.assertTrue(
+            quality.model_fingerprint.startswith("ltx25-quality:sha256:")
+        )
+        self.assertEqual(quality.safe_metadata()["mode"], "quality")
+        self.assertEqual(
+            quality.generation_settings(),
+            {"mode": "quality"},
+        )
+
+    def test_quality_preflight_passes_mode_and_detailing_asset(self):
+        provider = LTX25LocalProvider(
+            settings=self.quality_settings,
+            generation_mode="quality",
+        )
+        response = "MPT_LTX25_JSON:" + json.dumps({"ok": True}) + "\n"
+        completed = subprocess.CompletedProcess([], 0, stdout=response)
+
+        with (
+            patch(
+                "app.services.local_ai.ltx25.utils.check_ffmpeg_ready",
+                return_value=True,
+            ),
+            patch(
+                "app.services.local_ai.ltx25.subprocess.run",
+                return_value=completed,
+            ) as run,
+        ):
+            provider.preflight()
+
+        command = run.call_args.args[0]
+        mode_index = command.index("--generation-mode")
+        detail_index = command.index("--detailing-lora")
+        self.assertEqual(command[mode_index + 1], "quality")
+        self.assertEqual(command[detail_index + 1], str(self.detailing))
 
 
 class TestLTX25Runtime(LTX25TestCase):
@@ -228,6 +301,22 @@ class TestLTX25Runtime(LTX25TestCase):
         self.assertTrue(all(scene.target_duration <= 8.0 for scene in scenes))
         self.assertEqual([scene.seed for scene in scenes], [91, 92, 93])
 
+    def test_switching_fast_to_quality_replaces_cached_worker(self):
+        with patch.object(LTX25LocalProvider, "_worker_factory", _FakeWorker):
+            fast = LTX25LocalProvider(settings=self.quality_settings)
+            fast.load_runtime()
+            first_worker = _FakeWorker.instances[0]
+
+            quality = LTX25LocalProvider(
+                settings=self.quality_settings,
+                generation_mode="quality",
+            )
+            quality.load_runtime()
+
+        self.assertTrue(first_worker.closed)
+        self.assertEqual(len(_FakeWorker.instances), 2)
+        self.assertEqual(_FakeWorker.instances[1].generation_mode, "quality")
+
 
 class TestLTX25TaskIntegration(LTX25TestCase):
     def test_pipeline_preflight_fails_before_script_when_ltx_is_not_ready(self):
@@ -268,10 +357,13 @@ class TestLTX25TaskIntegration(LTX25TestCase):
 
             def safe_metadata(self):
                 return {
-                    "model": "LTX-2.5 Distilled",
-                    "mode": "fast",
+                    "model": "LTX-2.5",
+                    "mode": "quality",
                     "output_audio": "none",
                 }
+
+            def generation_settings(self):
+                return {"mode": "quality"}
 
             def preflight(self):
                 return None
@@ -328,6 +420,8 @@ class TestLTX25TaskIntegration(LTX25TestCase):
             video_subject="test",
             video_script="A prepared narration for a longer local LTX task.",
             video_source=LTX25_SOURCE_ID,
+            local_ai_generation_mode="quality",
+            local_ai_seed=120,
             video_aspect="9:16",
             video_clip_duration=10,
             subtitle_enabled=False,
@@ -362,10 +456,16 @@ class TestLTX25TaskIntegration(LTX25TestCase):
         self.assertEqual(len(materials), 3)
         self.assertEqual(
             [scene["seed"] for scene in manifest["scenes"]],
-            [91, 92, 93],
+            [120, 121, 122],
         )
         self.assertTrue(
             all(scene["target_duration"] <= 8.0 for scene in manifest["scenes"])
+        )
+        self.assertTrue(
+            all(
+                scene["provider_settings"] == {"mode": "quality"}
+                for scene in manifest["scenes"]
+            )
         )
 
 

@@ -1739,7 +1739,10 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
                 f"got {args.video_source}"
             )
             return 2
-        status = local_ai.preflight_status(args.video_source)
+        status = local_ai.preflight_status(
+            args.video_source,
+            generation_mode=args.local_ai_generation_mode,
+        )
         print(json.dumps(status, ensure_ascii=False))
         return 0 if status["ready"] else 1
 

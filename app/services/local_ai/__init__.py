@@ -51,7 +51,11 @@ def is_source_enabled(source: str | None) -> bool:
     return False
 
 
-def create_provider(source: str) -> LocalVideoProvider:
+def create_provider(
+    source: str,
+    *,
+    generation_mode: str = "fast",
+) -> LocalVideoProvider:
     if source == FAKE_SOURCE_ID:
         if not is_source_enabled(source):
             raise RuntimeError(
@@ -59,30 +63,47 @@ def create_provider(source: str) -> LocalVideoProvider:
             )
         return FakeLocalVideoProvider()
     if source == WAN22_SOURCE_ID:
+        if generation_mode != "fast":
+            raise ValueError("Wan 2.2 supports local_ai_generation_mode=fast only")
         return Wan22LocalProvider()
     if source == LTX25_SOURCE_ID:
-        return LTX25LocalProvider()
+        return LTX25LocalProvider(generation_mode=generation_mode)
     raise ValueError(f"unknown local AI video source: {source}")
 
 
-def prepare_provider(source: str) -> LocalVideoProvider:
-    provider = create_provider(source)
+def prepare_provider(
+    source: str,
+    *,
+    generation_mode: str = "fast",
+) -> LocalVideoProvider:
+    provider = create_provider(source, generation_mode=generation_mode)
     provider.preflight()
     return provider
 
 
-def preflight_source(source: str) -> None:
-    prepare_provider(source)
+def preflight_source(
+    source: str,
+    *,
+    generation_mode: str = "fast",
+) -> None:
+    prepare_provider(source, generation_mode=generation_mode)
 
 
-def preflight_status(source: str) -> dict:
+def preflight_status(
+    source: str,
+    *,
+    generation_mode: str = "fast",
+) -> dict:
     """Run the same provider preflight used by tasks and return safe operator data."""
 
     if not is_public_source(source):
         raise ValueError(f"unsupported public local AI source: {source}")
 
     try:
-        provider = prepare_provider(source)
+        provider = prepare_provider(
+            source,
+            generation_mode=generation_mode,
+        )
     except Exception as exc:
         if isinstance(
             exc,
@@ -128,6 +149,14 @@ def provider_base_seed(provider: LocalVideoProvider, default: int = 42) -> int:
     return int(getattr(provider, "base_seed", default))
 
 
+def provider_generation_settings(provider: LocalVideoProvider) -> dict[str, object]:
+    getter = getattr(provider, "generation_settings", None)
+    if not callable(getter):
+        return {}
+    value = getter()
+    return dict(value) if isinstance(value, dict) else {}
+
+
 __all__ = [
     "FAKE_SOURCE_ID",
     "GenerationResult",
@@ -148,5 +177,6 @@ __all__ = [
     "public_source_ids",
     "prepare_provider",
     "provider_base_seed",
+    "provider_generation_settings",
     "scene_duration_limit",
 ]

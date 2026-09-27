@@ -1477,6 +1477,12 @@ def _apply_restored_params(params):
     video_source = params.get("video_source") or "pexels"
     _set_stable_widget_value("video_source_select", video_source)
     _set_stable_widget_value(
+        "local_ai_generation_mode_select",
+        params.get("local_ai_generation_mode") or "fast",
+    )
+    if params.get("local_ai_seed") is not None:
+        st.session_state["local_ai_seed_input"] = int(params["local_ai_seed"])
+    _set_stable_widget_value(
         "video_concat_mode_select", params.get("video_concat_mode") or "random"
     )
     _set_stable_widget_value(
@@ -5201,13 +5207,35 @@ def _render_video_settings(panel, params):
                         )
             if params.video_source == local_ai.LTX25_SOURCE_ID:
                 st.caption(tr("LTX 2.5 Local Help"))
+                params.local_ai_generation_mode = stable_selectbox(
+                    tr("Local AI Generation Mode"),
+                    options=["fast", "quality"],
+                    default_value=_saved_ui_choice(
+                        "local_ai_generation_mode",
+                        ["fast", "quality"],
+                        "fast",
+                    ),
+                    key="local_ai_generation_mode_select",
+                    format_func=lambda value: (
+                        tr("LTX Fast Distilled")
+                        if value == "fast"
+                        else tr("LTX Quality DFR")
+                    ),
+                    help=tr("Local AI Generation Mode Help"),
+                )
+                _set_runtime_config(
+                    "ui",
+                    "local_ai_generation_mode",
+                    params.local_ai_generation_mode,
+                )
                 if st.button(
                     tr("Check LTX 2.5 Readiness"),
                     key="ltx25_local_readiness_button",
                 ):
                     with st.spinner(tr("Checking LTX 2.5 Readiness")):
                         readiness = local_ai.preflight_status(
-                            local_ai.LTX25_SOURCE_ID
+                            local_ai.LTX25_SOURCE_ID,
+                            generation_mode=params.local_ai_generation_mode,
                         )
                     if readiness["ready"]:
                         st.success(tr("LTX 2.5 Ready"))
@@ -5217,6 +5245,25 @@ def _render_video_settings(panel, params):
                                 error=readiness["message"]
                             )
                         )
+            if params.video_source == local_ai.WAN22_SOURCE_ID:
+                params.local_ai_generation_mode = "fast"
+            if local_ai.is_public_source(params.video_source):
+                saved_local_seed = int(config.ui.get("local_ai_seed", 42) or 42)
+                params.local_ai_seed = int(
+                    st.number_input(
+                        tr("Local AI Seed"),
+                        min_value=0,
+                        value=max(0, saved_local_seed),
+                        step=1,
+                        key="local_ai_seed_input",
+                        help=tr("Local AI Seed Help"),
+                    )
+                )
+                _set_runtime_config(
+                    "ui",
+                    "local_ai_seed",
+                    params.local_ai_seed,
+                )
             if params.video_source == "local":
                 # Streamlit 的文件类型校验对扩展名大小写敏感，这里同时放行大小写两种形式。
                 local_file_types = sorted(

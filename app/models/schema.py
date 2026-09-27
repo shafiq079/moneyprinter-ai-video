@@ -116,6 +116,8 @@ class VideoParams(BaseModel):
     video_count: int = Field(default=1, ge=1)
 
     video_source: Optional[str] = "pexels"
+    local_ai_generation_mode: Literal["fast", "quality"] = "fast"
+    local_ai_seed: Optional[int] = Field(default=None, ge=0)
     video_materials: Optional[List[MaterialInfo]] = (
         None  # Materials used to generate the video
     )

@@ -56,6 +56,13 @@ def test_ltx25_selection_shows_readiness_control_without_running_preflight():
             )
         ]
         assert len(buttons) == 1
+        generation_modes = [
+            item
+            for item in app.selectbox
+            if getattr(item, "label", "") == "Generation mode"
+        ]
+        assert len(generation_modes) == 1
+        assert generation_modes[0].value == "fast"
         assert not app.exception
         preflight_status.assert_not_called()
 

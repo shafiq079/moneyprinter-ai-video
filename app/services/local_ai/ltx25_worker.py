@@ -46,26 +46,40 @@ def _missing_modules() -> list[str]:
     ]
 
 
-def _import_runtime(repo: Path):
+def _import_runtime(repo: Path, generation_mode: str):
     _install_repo(repo)
     with _quiet_output():
+        from ltx_core.loader import (
+            LTXV_LORA_COMFY_RENAMING_MAP,
+            LoraPathStrengthAndSDOps,
+        )
         from ltx_core.model.video_vae import get_video_chunks_number
         from ltx_core.quantization.fp8_cast import build_policy as build_fp8_cast_policy
         from ltx_pipelines.distilled import DistilledPipeline
+        DFRPipeline = None
+        if generation_mode == "quality":
+            from ltx_pipelines.dfr_pipeline import DFRPipeline
         from ltx_pipelines.utils.media_io import encode_video
         from ltx_pipelines.utils.model_paths import ModelPaths
         from ltx_pipelines.utils.types import OffloadMode
     return (
         DistilledPipeline,
+        DFRPipeline,
         ModelPaths,
         OffloadMode,
         encode_video,
         get_video_chunks_number,
         build_fp8_cast_policy,
+        LoraPathStrengthAndSDOps,
+        LTXV_LORA_COMFY_RENAMING_MAP,
     )
 
 
-def _preflight(repo: Path, device_id: int) -> dict[str, Any]:
+def _preflight(
+    repo: Path,
+    device_id: int,
+    generation_mode: str,
+) -> dict[str, Any]:
     missing = _missing_modules()
     if missing:
         return {
@@ -98,7 +112,7 @@ def _preflight(repo: Path, device_id: int) -> dict[str, Any]:
             "message": "Configured LTX 2.5 CUDA device index is unavailable",
         }
     try:
-        _import_runtime(repo)
+        _import_runtime(repo, generation_mode)
     except Exception as exc:
         return {
             "ok": False,
@@ -174,6 +188,8 @@ class LTXWorker:
         video_vae: Path,
         audio_vae: Path,
         spatial_upsampler: Path,
+        detailing_lora: Path | None,
+        generation_mode: str,
         device_id: int,
         offload_mode: str,
         fp8_cast: bool,
@@ -184,6 +200,8 @@ class LTXWorker:
         self.video_vae = video_vae
         self.audio_vae = audio_vae
         self.spatial_upsampler = spatial_upsampler
+        self.detailing_lora = detailing_lora
+        self.generation_mode = generation_mode
         self.device_id = device_id
         self.offload_mode = offload_mode
         self.fp8_cast = fp8_cast
@@ -196,12 +214,15 @@ class LTXWorker:
             return
         (
             DistilledPipeline,
+            DFRPipeline,
             ModelPaths,
             OffloadMode,
             encode_video,
             get_video_chunks_number,
             build_fp8_cast_policy,
-        ) = _import_runtime(self.repo)
+            LoraPathStrengthAndSDOps,
+            LTXV_LORA_COMFY_RENAMING_MAP,
+        ) = _import_runtime(self.repo, self.generation_mode)
         import torch
 
         model_paths = ModelPaths.from_split(
@@ -216,14 +237,33 @@ class LTXWorker:
             else None
         )
         with _quiet_output():
-            self.pipeline = DistilledPipeline(
-                model_paths=model_paths,
-                spatial_upsampler_path=str(self.spatial_upsampler),
-                loras=[],
-                device=torch.device(f"cuda:{self.device_id}"),
-                quantization=quantization,
-                offload_mode=OffloadMode(self.offload_mode),
-            )
+            common = {
+                "model_paths": model_paths,
+                "spatial_upsampler_path": str(self.spatial_upsampler),
+                "loras": [],
+                "device": torch.device(f"cuda:{self.device_id}"),
+                "quantization": quantization,
+                "offload_mode": OffloadMode(self.offload_mode),
+            }
+            if self.generation_mode == "quality":
+                if DFRPipeline is None or self.detailing_lora is None:
+                    raise ValueError(
+                        "LTX 2.5 quality mode requires the DFR pipeline "
+                        "and detailing LoRA"
+                    )
+                detailing = [
+                    LoraPathStrengthAndSDOps(
+                        str(self.detailing_lora),
+                        1.0,
+                        LTXV_LORA_COMFY_RENAMING_MAP,
+                    )
+                ]
+                self.pipeline = DFRPipeline(
+                    **common,
+                    detailing_lora=detailing,
+                )
+            else:
+                self.pipeline = DistilledPipeline(**common)
         self.encode_video = encode_video
         self.get_video_chunks_number = get_video_chunks_number
 
@@ -239,7 +279,7 @@ class LTXWorker:
 
         duration = float(request["duration"])
         if duration <= 0 or duration > 8.0 + 1e-6:
-            raise ValueError("scene duration exceeds the configured LTX fast limit")
+            raise ValueError("scene duration exceeds the configured LTX scene limit")
 
         width, height = _dimensions(str(request["aspect"]))
         fps = 24
@@ -247,15 +287,23 @@ class LTXWorker:
 
         try:
             with _quiet_output(), torch.inference_mode():
-                result = self.pipeline(
-                    prompt=str(request["prompt"]),
-                    seed=int(request["seed"]),
-                    height=height,
-                    width=width,
-                    frame_rate=fps,
-                    images=[],
-                    num_frames=frames,
-                )
+                pipeline_kwargs = {
+                    "prompt": str(request["prompt"]),
+                    "seed": int(request["seed"]),
+                    "height": height,
+                    "width": width,
+                    "frame_rate": fps,
+                    "images": [],
+                    "num_frames": frames,
+                }
+                if self.generation_mode == "quality":
+                    pipeline_kwargs.update(
+                        {
+                            "temporal_upscalings": 0,
+                            "spatial_upscalings": 1,
+                        }
+                    )
+                result = self.pipeline(**pipeline_kwargs)
                 self.encode_video(
                     video=result.video,
                     fps=fps,
@@ -324,6 +372,12 @@ def _worker_from_args(args) -> LTXWorker:
         video_vae=Path(args.video_vae).expanduser().resolve(),
         audio_vae=Path(args.audio_vae).expanduser().resolve(),
         spatial_upsampler=Path(args.spatial_upsampler).expanduser().resolve(),
+        detailing_lora=(
+            Path(args.detailing_lora).expanduser().resolve()
+            if args.detailing_lora
+            else None
+        ),
+        generation_mode=args.generation_mode,
         device_id=args.device,
         offload_mode=args.offload_mode,
         fp8_cast=args.fp8_cast,
@@ -332,7 +386,7 @@ def _worker_from_args(args) -> LTXWorker:
 
 def _serve(args) -> int:
     repo = Path(args.repo).expanduser().resolve()
-    preflight = _preflight(repo, args.device)
+    preflight = _preflight(repo, args.device, args.generation_mode)
     if not preflight.get("ok"):
         _respond(preflight)
         return 2
@@ -385,6 +439,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--video-vae", required=True)
     parser.add_argument("--audio-vae", required=True)
     parser.add_argument("--spatial-upscaler", required=True)
+    parser.add_argument("--detailing-lora", default="")
+    parser.add_argument(
+        "--generation-mode",
+        choices=("fast", "quality"),
+        default="fast",
+    )
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument(
         "--offload-mode",
@@ -401,7 +461,7 @@ def main() -> int:
     args = _parser().parse_args()
     repo = Path(args.repo).expanduser().resolve()
     if args.preflight:
-        _respond(_preflight(repo, args.device))
+        _respond(_preflight(repo, args.device, args.generation_mode))
         return 0
     if args.serve:
         return _serve(args)

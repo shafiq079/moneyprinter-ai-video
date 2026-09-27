@@ -219,6 +219,7 @@ def _planning_fingerprint(
     max_scene_duration: float,
     aspect: str,
     base_seed: int,
+    provider_settings: dict[str, object] | None = None,
 ) -> str:
     payload = {
         "schema_version": SCENE_PLAN_SCHEMA_VERSION,
@@ -230,6 +231,8 @@ def _planning_fingerprint(
         "aspect": str(aspect),
         "base_seed": int(base_seed),
     }
+    if provider_settings:
+        payload["provider_settings"] = dict(provider_settings)
     encoded = json.dumps(
         payload,
         ensure_ascii=False,
@@ -263,6 +266,7 @@ def _fallback_plan(
     base_seed: int,
     input_fingerprint: str,
     source: str,
+    provider_settings: dict[str, object] | None = None,
 ) -> ScenePlan:
     scene_count = max(1, math.ceil(audio_duration / max_scene_duration))
     durations = _normalize_durations(
@@ -314,6 +318,7 @@ def _fallback_plan(
                 ),
                 continuity=_clean_text(continuity, _CONTINUITY_LIMIT),
                 camera=_clean_text(camera, _CAMERA_LIMIT),
+                provider_settings=dict(provider_settings or {}),
             )
         )
 
@@ -568,6 +573,7 @@ def get_or_create_scene_plan(
     max_scene_duration: float,
     aspect: str,
     base_seed: int = 42,
+    provider_settings: dict[str, object] | None = None,
     use_llm: bool = True,
 ) -> ScenePlan:
     """Reuse a matching plan or create visual direction exactly once."""
@@ -586,6 +592,7 @@ def get_or_create_scene_plan(
         max_scene_duration=max_duration,
         aspect=aspect,
         base_seed=base_seed,
+        provider_settings=provider_settings,
     )
     try:
         existing = load_scene_plan(task_id)
@@ -609,6 +616,7 @@ def get_or_create_scene_plan(
         base_seed=base_seed,
         input_fingerprint=fingerprint,
         source="deterministic",
+        provider_settings=provider_settings,
     )
     plan = fallback
     if use_llm:
@@ -665,6 +673,7 @@ def plan_scenes(
         max_scene_duration=max_duration,
         aspect=aspect,
         base_seed=base_seed,
+        provider_settings=None,
     )
     return list(
         _fallback_plan(
@@ -676,5 +685,6 @@ def plan_scenes(
             base_seed=base_seed,
             input_fingerprint=fingerprint,
             source="deterministic",
+            provider_settings=None,
         ).scenes
     )

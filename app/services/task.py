@@ -659,13 +659,17 @@ def get_video_materials(
         logger.info("\n\n## generating local AI video materials")
         aspect = getattr(params.video_aspect, "value", params.video_aspect)
         try:
-            provider = local_ai_provider or local_ai.create_provider(params.video_source)
+            provider = local_ai_provider or local_ai.create_provider(
+                params.video_source,
+                generation_mode=params.local_ai_generation_mode,
+            )
             sm.state.update_task(
                 task_id,
                 state=const.TASK_STATE_PROCESSING,
                 progress=39,
                 current_stage="scene_planning",
                 local_ai_provider=provider.provider_id,
+                generation_mode=params.local_ai_generation_mode,
             )
             scene_plan = scene_planner.get_or_create_scene_plan(
                 task_id,
@@ -677,7 +681,12 @@ def get_video_materials(
                     params.video_clip_duration,
                 ),
                 aspect=str(aspect),
-                base_seed=local_ai.provider_base_seed(provider),
+                base_seed=(
+                    params.local_ai_seed
+                    if params.local_ai_seed is not None
+                    else local_ai.provider_base_seed(provider)
+                ),
+                provider_settings=local_ai.provider_generation_settings(provider),
                 # The fake provider is a CPU/CI transport test. Keep it independent
                 # from configured LLM/network availability.
                 use_llm=provider.provider_id != local_ai.FAKE_SOURCE_ID,
@@ -689,6 +698,7 @@ def get_video_materials(
                 progress=40,
                 current_stage="local_ai_video",
                 local_ai_provider=provider.provider_id,
+                generation_mode=params.local_ai_generation_mode,
                 scene_plan_source=scene_plan.source,
                 scene_plan_count=len(scenes),
             )
@@ -708,6 +718,7 @@ def get_video_materials(
                     progress=progress,
                     current_stage="local_ai_video",
                     local_ai_provider=provider.provider_id,
+                    generation_mode=params.local_ai_generation_mode,
                     scene_progress={
                         "current": current,
                         "total": total,
@@ -1485,7 +1496,8 @@ def _run_pipeline(
     ):
         try:
             prepared_local_ai_provider = local_ai.prepare_provider(
-                params.video_source
+                params.video_source,
+                generation_mode=params.local_ai_generation_mode,
             )
         except Exception as exc:
             return _mark_task_failed(

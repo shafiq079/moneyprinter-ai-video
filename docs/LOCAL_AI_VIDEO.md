@@ -119,6 +119,32 @@ In the WebUI, the current local-AI task exposes a read-only **Scene Plan**
 expander once the plan exists. It shows the visual bible and the final prompt
 sent for each scene without exposing model/checkpoint host paths.
 
+## LTX 2.5 Fast and Quality modes
+
+`ltx25_local` uses one stable provider ID. Each task selects
+`local_ai_generation_mode = "fast"` or `"quality"`.
+
+- **Fast / Distilled** uses the official LTX-2.5 `DistilledPipeline` and is the
+  default for iteration.
+- **Quality / DFR** uses the official `DFRPipeline` with the configured
+  detailing IC-LoRA. Set `ltx25_local.detailing_lora_path` before selecting
+  Quality. Quality preflight fails before script/TTS work when that asset is
+  missing.
+- `local_ai_seed` is an optional portable task parameter. When supplied it is
+  the first scene seed and later scenes increment it deterministically.
+- LTX native audio is intentionally stripped from generated scene clips in both
+  modes. MoneyPrinterTurbo narration, subtitles and BGM remain authoritative.
+
+LTX-2.5 versions released since 11 August 2026 are governed by Lightricks'
+**LTX-2.x Community License Agreement**, not the repository's earlier LTX-2
+license. Review the current upstream license before commercial deployment:
+https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2_x
+
+The current license states that entities with annual revenue of at least
+USD 10,000,000 require a paid license for commercial use except for the
+license's defined non-commercial cases. This project does not redistribute LTX
+model weights, and this note is not legal advice.
+
 ## Runtime and deployment boundaries
 
 - Wan model inference is serialized inside one MoneyPrinterTurbo process.

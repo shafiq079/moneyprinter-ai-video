@@ -257,6 +257,11 @@ def create_task(
 def preflight_local_ai_provider(
     request: Request,
     provider_id: str = Path(..., description="Stable local AI provider ID"),
+    generation_mode: str = Query(
+        "fast",
+        pattern="^(fast|quality)$",
+        description="Local AI generation mode",
+    ),
 ):
     request_id = base.get_task_id(request)
     if not local_ai.is_public_source(provider_id):
@@ -265,7 +270,13 @@ def preflight_local_ai_provider(
             status_code=404,
             message=f"{request_id}: unsupported local AI provider",
         )
-    return utils.get_response(200, local_ai.preflight_status(provider_id))
+    return utils.get_response(
+        200,
+        local_ai.preflight_status(
+            provider_id,
+            generation_mode=generation_mode,
+        ),
+    )
 
 
 @router.get("/tasks", response_model=TaskListResponse, summary="Get all tasks")

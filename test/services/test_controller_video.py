@@ -285,7 +285,34 @@ class TestVideoControllerTasks(unittest.TestCase):
 
         self.assertEqual(response["status"], 200)
         self.assertTrue(response["data"]["ready"])
-        preflight_status.assert_called_once_with("wan22_local")
+        preflight_status.assert_called_once_with(
+            "wan22_local",
+            generation_mode="fast",
+        )
+
+    def test_ltx_quality_preflight_forwards_generation_mode(self):
+        with patch.object(
+            video_controller.local_ai,
+            "preflight_status",
+            return_value={
+                "provider_id": "ltx25_local",
+                "ready": True,
+                "error_type": None,
+                "message": "ready",
+                "metadata": {"mode": "quality"},
+            },
+        ) as preflight_status:
+            response = video_controller.preflight_local_ai_provider(
+                self._request(),
+                provider_id="ltx25_local",
+                generation_mode="quality",
+            )
+
+        self.assertEqual(response["status"], 200)
+        preflight_status.assert_called_once_with(
+            "ltx25_local",
+            generation_mode="quality",
+        )
 
     def test_local_ai_preflight_endpoint_rejects_internal_or_unknown_sources(self):
         for provider_id in ("__local_ai_fake__", "unknown"):
