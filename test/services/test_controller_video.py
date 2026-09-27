@@ -267,6 +267,36 @@ class TestVideoControllerTasks(unittest.TestCase):
         self.assertIs(raised.exception, scheduling_error)
         self.assertIsNone(state.get_task("task-123"))
 
+    def test_local_ai_preflight_endpoint_uses_shared_provider_status(self):
+        with patch.object(
+            video_controller.local_ai,
+            "preflight_status",
+            return_value={
+                "provider_id": "wan22_local",
+                "ready": True,
+                "error_type": None,
+                "message": "ready",
+            },
+        ) as preflight_status:
+            response = video_controller.preflight_local_ai_provider(
+                self._request(),
+                provider_id="wan22_local",
+            )
+
+        self.assertEqual(response["status"], 200)
+        self.assertTrue(response["data"]["ready"])
+        preflight_status.assert_called_once_with("wan22_local")
+
+    def test_local_ai_preflight_endpoint_rejects_internal_or_unknown_sources(self):
+        for provider_id in ("__local_ai_fake__", "unknown"):
+            with self.subTest(provider_id=provider_id):
+                with self.assertRaises(HttpException) as raised:
+                    video_controller.preflight_local_ai_provider(
+                        self._request(),
+                        provider_id=provider_id,
+                    )
+                self.assertEqual(raised.exception.status_code, 404)
+
     def test_get_all_tasks_preserves_pagination(self):
         """任务列表响应必须包含状态层返回的总数和请求分页参数。"""
         with patch.object(

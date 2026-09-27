@@ -18,6 +18,7 @@ from app.controllers.v1.base import new_router
 from app.models.exception import HttpException
 from app.models.schema import (
     AudioRequest,
+    BaseResponse,
     BgmRetrieveResponse,
     BgmUploadResponse,
     SubtitleRequest,
@@ -31,6 +32,7 @@ from app.models.schema import (
     VideoMaterialRetrieveResponse
 )
 from app.services import bgm as bgm_service
+from app.services import local_ai
 from app.services import material_upload as material_upload_service
 from app.services import state as sm
 from app.services import task as tm
@@ -246,6 +248,25 @@ def create_task(
         raise HttpException(
             task_id=task_id, status_code=400, message=f"{request_id}: {str(e)}"
         )
+
+@router.get(
+    "/local-ai/providers/{provider_id}/preflight",
+    response_model=BaseResponse,
+    summary="Check a local AI video provider",
+)
+def preflight_local_ai_provider(
+    request: Request,
+    provider_id: str = Path(..., description="Stable local AI provider ID"),
+):
+    request_id = base.get_task_id(request)
+    if not local_ai.is_public_source(provider_id):
+        raise HttpException(
+            task_id=request_id,
+            status_code=404,
+            message=f"{request_id}: unsupported local AI provider",
+        )
+    return utils.get_response(200, local_ai.preflight_status(provider_id))
+
 
 @router.get("/tasks", response_model=TaskListResponse, summary="Get all tasks")
 def get_all_tasks(

@@ -47,6 +47,7 @@ _CLI_VIDEO_SOURCES = (
     "metaso_minimax",
     "muapi",
     "openai_image",
+    "wan22_local",
     "local",
 )
 
@@ -698,10 +699,22 @@ Batch manifests:
             "generates a UUID for every task"
         ),
     )
+    execution_mode.add_argument(
+        "--check-local-ai-source",
+        action="store_true",
+        help=(
+            "run operator preflight for the selected local AI video source and exit; "
+            "currently supported with --video-source wan22_local"
+        ),
+    )
     args = parser.parse_args(argv)
+
+    if args.check_local_ai_source and args.batch_file:
+        parser.error("--check-local-ai-source cannot be combined with --batch-file")
 
     if (
         not args.batch_file
+        and not args.check_local_ai_source
         and not args.video_subject.strip()
         and not args.video_script.strip()
     ):
@@ -1716,6 +1729,20 @@ def _run_batch_tasks(args: argparse.Namespace, tasks: list[VideoParams]) -> int:
 
 def run_cli(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+
+    if args.check_local_ai_source:
+        from app.services import local_ai
+
+        if not local_ai.is_public_source(args.video_source):
+            logger.error(
+                "--check-local-ai-source requires a public local AI source; "
+                f"got {args.video_source}"
+            )
+            return 2
+        status = local_ai.preflight_status(args.video_source)
+        print(json.dumps(status, ensure_ascii=False))
+        return 0 if status["ready"] else 1
+
     if args.batch_file:
         try:
             tasks = _build_batch_tasks(args)

@@ -801,6 +801,26 @@ class TestCli(unittest.TestCase):
                 os.remove(test_filepath)
 
 
+    def test_wan22_local_is_registered_as_a_cli_video_source(self):
+        args = cli.parse_args(
+            [
+                "--video-subject",
+                "test",
+                "--video-source",
+                "wan22_local",
+                "--stop-at",
+                "script",
+            ]
+        )
+        self.assertEqual(args.video_source, "wan22_local")
+
+    def test_local_ai_preflight_command_does_not_require_video_subject(self):
+        args = cli.parse_args(
+            ["--video-source", "wan22_local", "--check-local-ai-source"]
+        )
+        self.assertTrue(args.check_local_ai_source)
+        self.assertEqual(args.video_source, "wan22_local")
+
     def test_local_source_requires_video_materials(self):
         with self.assertRaises(SystemExit) as cm:
             cli.parse_args(["--video-subject", "test", "--video-source", "local"])

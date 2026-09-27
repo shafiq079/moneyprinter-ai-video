@@ -28,6 +28,7 @@ def test_ai_video_source_order_keeps_ofox_below_metaso():
         "metaso_minimax", "ofox", "loomloom", "volcengine_seedance", "wavespeed", "muapi"
     )
     assert groups["stock_video"] == ("pexels", "pixabay", "coverr")
+    assert groups["local_ai_video"] == ("wan22_local",)
 
 
 @pytest.mark.parametrize("language", sorted(file.stem for file in (WEBUI.parent / "i18n").glob("*.json")))

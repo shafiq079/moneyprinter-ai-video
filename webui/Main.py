@@ -47,6 +47,7 @@ from app.services import bgm as bgm_service
 from app.services import (
     cache_manager,
     llm,
+    local_ai,
     loomloom,
     material,
     metaso_minimax,
@@ -134,6 +135,7 @@ VIDEO_SOURCE_GROUPS = {
         "muapi",
     ),
     "ai_image": ("openai_image",),
+    "local_ai_video": ("wan22_local",),
     "local": ("local",),
 }
 # Upload-Post 的 API Key 与发布用户分别在两个页面管理，并且发布用户名称
@@ -5097,6 +5099,7 @@ def _render_video_settings(panel, params):
                 "muapi": tr("MuAPI AI Video"),
                 "loomloom": tr("Shengsuan Cloud AI Video"),
                 "openai_image": tr("OpenAI Compatible Text-to-Image"),
+                "wan22_local": tr("Wan 2.2 Local"),
                 "local": tr("Local file"),
             }
             saved_video_source_name = str(
@@ -5108,6 +5111,7 @@ def _render_video_settings(panel, params):
                     (tr("Stock Video"), VIDEO_SOURCE_GROUPS["stock_video"]),
                     (tr("AI Video"), VIDEO_SOURCE_GROUPS["ai_video"]),
                     (tr("AI Image"), VIDEO_SOURCE_GROUPS["ai_image"]),
+                    (tr("Local AI Video"), VIDEO_SOURCE_GROUPS["local_ai_video"]),
                     (tr("Local Material"), VIDEO_SOURCE_GROUPS["local"]),
                 ),
                 default_value=saved_video_source_name,
@@ -5136,6 +5140,24 @@ def _render_video_settings(panel, params):
                 st.caption(tr("Metaso MiniMax H3 Help"))
             if params.video_source == "muapi":
                 st.caption(tr("MuAPI AI Video Help"))
+            if params.video_source == local_ai.WAN22_SOURCE_ID:
+                st.caption(tr("Wan 2.2 Local Help"))
+                if st.button(
+                    tr("Check Wan 2.2 Readiness"),
+                    key="wan22_local_readiness_button",
+                ):
+                    with st.spinner(tr("Checking Wan 2.2 Readiness")):
+                        readiness = local_ai.preflight_status(
+                            local_ai.WAN22_SOURCE_ID
+                        )
+                    if readiness["ready"]:
+                        st.success(tr("Wan 2.2 Ready"))
+                    else:
+                        st.error(
+                            tr("Wan 2.2 Not Ready").format(
+                                error=readiness["message"]
+                            )
+                        )
             if params.video_source == "local":
                 # Streamlit 的文件类型校验对扩展名大小写敏感，这里同时放行大小写两种形式。
                 local_file_types = sorted(
@@ -7882,6 +7904,7 @@ def _render_generation_controls(
             "muapi",
             "loomloom",
             "openai_image",
+            "wan22_local",
             "local",
         ]:
             _remove_active_generation_task(task_id)
