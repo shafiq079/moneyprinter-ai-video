@@ -175,6 +175,31 @@ product; checkpoint/repository paths are not added to the report.
 Actual default tuning, provider comparisons and hardware guidance remain
 deferred until those measurements are collected on real hardware.
 
+## Local AI disk cleanup
+
+Generated scene versions are intentionally retained for comparison and rollback.
+Operators can inspect cleanup candidates without deleting anything:
+
+```bash
+uv run python scripts/local_ai_cleanup.py
+```
+
+Apply the configured policy explicitly:
+
+```bash
+uv run python scripts/local_ai_cleanup.py --apply
+```
+
+The `[local_ai_cleanup]` policy defaults to keeping two scene versions,
+waiting 24 hours before deleting crash/temp or unreferenced scene assets, and
+never deleting whole completed tasks. Set
+`completed_task_retention_days` to a positive value only when automatic
+retention cleanup of old completed task directories is desired.
+
+Cleanup skips tasks that are still generating or cross-posting. The active scene
+asset is always retained, even when an older restored version is active. The
+command is dry-run by default and supports `--task-id` plus policy overrides.
+
 ## Runtime and deployment boundaries
 
 - Wan model inference is serialized inside one MoneyPrinterTurbo process.

@@ -89,6 +89,11 @@ def prepare_manifest(
             for value in old.get("versions", [])
             if isinstance(value, str) and value
         ]
+        version_metadata = {
+            str(key): dict(value)
+            for key, value in (old.get("version_metadata") or {}).items()
+            if isinstance(key, str) and isinstance(value, dict)
+        }
         unchanged = old.get("fingerprint") == fingerprint
         record = {
             **scene.to_dict(),
@@ -100,6 +105,7 @@ def prepare_manifest(
             "active_asset": old.get("active_asset") if unchanged else None,
             "actual_duration": old.get("actual_duration") if unchanged else None,
             "versions": versions,
+            "version_metadata": version_metadata,
             "error_type": old.get("error_type") if unchanged else None,
             "error_code": old.get("error_code") if unchanged else None,
         }
@@ -160,6 +166,57 @@ def next_scene_version(
     final_path.parent.mkdir(parents=True, exist_ok=True)
     partial_path = final_path.with_name(f".{final_path.stem}.partial.mp4")
     return relative.as_posix(), final_path, partial_path
+
+
+def remember_scene_version(
+    record: dict[str, Any],
+    relative_path: str,
+    *,
+    actual_duration: float | None = None,
+) -> None:
+    """Persist the exact scene inputs used for one versioned clip."""
+
+    relative = str(relative_path or "")
+    if not relative:
+        raise ValueError("scene version path must not be empty")
+
+    metadata = {
+        key: record.get(key)
+        for key in (
+            "scene_id",
+            "narration_segment",
+            "prompt",
+            "target_duration",
+            "aspect",
+            "seed",
+            "beat",
+            "negative_prompt",
+            "continuity",
+            "camera",
+            "provider_settings",
+            "provider_id",
+            "model_fingerprint",
+            "provider_metadata",
+            "fingerprint",
+        )
+    }
+    metadata["actual_duration"] = (
+        float(actual_duration)
+        if actual_duration is not None
+        else record.get("actual_duration")
+    )
+
+    history = dict(record.get("version_metadata") or {})
+    history[relative] = metadata
+    record["version_metadata"] = history
+
+
+def scene_version_metadata(
+    record: dict[str, Any],
+    relative_path: str,
+) -> dict[str, Any] | None:
+    value = (record.get("version_metadata") or {}).get(str(relative_path))
+    return dict(value) if isinstance(value, dict) else None
 
 
 def scene_spec_from_version_metadata(

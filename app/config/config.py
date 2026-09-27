@@ -502,6 +502,7 @@ def save_config():
         config_to_save["voxcpm"] = dict(voxcpm)
         config_to_save["wan22_local"] = dict(wan22_local)
         config_to_save["ltx25_local"] = dict(ltx25_local)
+        config_to_save["local_ai_cleanup"] = dict(local_ai_cleanup)
         config_to_save["ui"] = dict(ui)
         serialized_config = toml.dumps(config_to_save)
 
@@ -562,6 +563,16 @@ fish_audio = _SynchronizedConfig(_cfg.get("fish_audio", {}))
 voxcpm = _SynchronizedConfig(_cfg.get("voxcpm", {}))
 wan22_local = _SynchronizedConfig(_cfg.get("wan22_local", {}))
 ltx25_local = _SynchronizedConfig(_cfg.get("ltx25_local", {}))
+local_ai_cleanup = _SynchronizedConfig(
+    _cfg.get(
+        "local_ai_cleanup",
+        {
+            "keep_scene_versions": 2,
+            "stale_temp_hours": 24,
+            "completed_task_retention_days": 0,
+        },
+    )
+)
 ui = _SynchronizedConfig(
     _cfg.get(
         "ui",

@@ -566,6 +566,19 @@ offload_mode = "cpu"
 fp8_cast = true
 
 # =============================================================================
+# Local AI Generated Asset Cleanup
+# =============================================================================
+[local_ai_cleanup]
+# Keep the active scene clip plus at least one comparison/recovery version.
+keep_scene_versions = 2
+# Crash leftovers such as .partial.mp4, .wan-raw.mp4 and .ltx-raw.mp4 are only
+# removed after this age. Set 0 to make them immediately eligible.
+stale_temp_hours = 24
+# 0 disables whole-task deletion. Set a positive number only when operators want
+# the cleanup command to delete completed task directories older than this many days.
+completed_task_retention_days = 0
+
+# =============================================================================
 # Material Request Proxy / 素材请求代理
 # =============================================================================
 
