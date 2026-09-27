@@ -95,6 +95,30 @@ and final MP4 output.
 Completed scene clips are fingerprinted and reused on retry. Missing or corrupt
 clips are regenerated without discarding valid completed scenes.
 
+## Scene Director and prompt preview
+
+For local AI video tasks, scene planning happens only after narration has been
+generated and its actual duration is known. The director treats that narration
+as fixed: it may direct the visuals, but it does not rewrite, reorder, merge or
+split the already-recorded narration.
+
+The task stores a canonical `scene_plan.json` beside its other task artifacts.
+It records the visual bible and each scene's fixed narration segment, duration,
+beat, prompt, camera direction, continuity notes, exclusions and deterministic
+seed. When the planning inputs are unchanged, retries reuse this file instead of
+asking the LLM to produce a new answer. That keeps scene fingerprints stable so
+valid completed clips remain reusable.
+
+MoneyPrinterTurbo uses the already configured LLM provider for visual direction.
+If the director response is unavailable or invalid, generation falls back to a
+deterministic CPU-safe visual plan rather than failing the video task. The M1
+fake provider always uses the deterministic path so CI never depends on an
+external LLM.
+
+In the WebUI, the current local-AI task exposes a read-only **Scene Plan**
+expander once the plan exists. It shows the visual bible and the final prompt
+sent for each scene without exposing model/checkpoint host paths.
+
 ## Runtime and deployment boundaries
 
 - Wan model inference is serialized inside one MoneyPrinterTurbo process.
