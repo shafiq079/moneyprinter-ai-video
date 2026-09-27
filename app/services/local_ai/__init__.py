@@ -10,6 +10,12 @@ from .base import (
 )
 from .fake import FakeLocalVideoProvider
 from .orchestrator import generate_scene_materials
+from .ltx25 import (
+    LTX25_SOURCE_ID,
+    LTX25ConfigurationError,
+    LTX25LocalProvider,
+    LTX25WorkerError,
+)
 from .wan22 import (
     WAN22_SOURCE_ID,
     Wan22ConfigurationError,
@@ -19,8 +25,8 @@ from .wan22 import (
 
 
 FAKE_SOURCE_ID = FakeLocalVideoProvider.provider_id
-_LOCAL_SOURCE_IDS = {FAKE_SOURCE_ID, WAN22_SOURCE_ID}
-_PUBLIC_SOURCE_IDS = (WAN22_SOURCE_ID,)
+_LOCAL_SOURCE_IDS = {FAKE_SOURCE_ID, WAN22_SOURCE_ID, LTX25_SOURCE_ID}
+_PUBLIC_SOURCE_IDS = (WAN22_SOURCE_ID, LTX25_SOURCE_ID)
 
 
 def is_local_ai_source(source: str | None) -> bool:
@@ -40,7 +46,7 @@ def is_source_enabled(source: str | None) -> bool:
 
     if source == FAKE_SOURCE_ID:
         return os.getenv("MPT_ENABLE_LOCAL_AI_FAKE_PROVIDER") == "1"
-    if source == WAN22_SOURCE_ID:
+    if source in {WAN22_SOURCE_ID, LTX25_SOURCE_ID}:
         return True
     return False
 
@@ -54,6 +60,8 @@ def create_provider(source: str) -> LocalVideoProvider:
         return FakeLocalVideoProvider()
     if source == WAN22_SOURCE_ID:
         return Wan22LocalProvider()
+    if source == LTX25_SOURCE_ID:
+        return LTX25LocalProvider()
     raise ValueError(f"unknown local AI video source: {source}")
 
 
@@ -76,7 +84,15 @@ def preflight_status(source: str) -> dict:
     try:
         provider = prepare_provider(source)
     except Exception as exc:
-        if isinstance(exc, (Wan22ConfigurationError, Wan22WorkerError)):
+        if isinstance(
+            exc,
+            (
+                Wan22ConfigurationError,
+                Wan22WorkerError,
+                LTX25ConfigurationError,
+                LTX25WorkerError,
+            ),
+        ):
             message = str(exc)
         else:
             message = f"local AI preflight failed ({type(exc).__name__})"
@@ -115,6 +131,8 @@ def provider_base_seed(provider: LocalVideoProvider, default: int = 42) -> int:
 __all__ = [
     "FAKE_SOURCE_ID",
     "GenerationResult",
+    "LTX25_SOURCE_ID",
+    "LTX25LocalProvider",
     "LocalAISceneGenerationError",
     "WAN22_SOURCE_ID",
     "Wan22LocalProvider",

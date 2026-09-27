@@ -801,6 +801,19 @@ class TestCli(unittest.TestCase):
                 os.remove(test_filepath)
 
 
+    def test_ltx25_local_is_registered_as_a_cli_video_source(self):
+        args = cli.parse_args(
+            [
+                "--video-subject",
+                "test",
+                "--video-source",
+                "ltx25_local",
+                "--stop-at",
+                "script",
+            ]
+        )
+        self.assertEqual(args.video_source, "ltx25_local")
+
     def test_wan22_local_is_registered_as_a_cli_video_source(self):
         args = cli.parse_args(
             [

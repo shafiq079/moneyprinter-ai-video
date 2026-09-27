@@ -501,6 +501,7 @@ def save_config():
         config_to_save["fish_audio"] = dict(fish_audio)
         config_to_save["voxcpm"] = dict(voxcpm)
         config_to_save["wan22_local"] = dict(wan22_local)
+        config_to_save["ltx25_local"] = dict(ltx25_local)
         config_to_save["ui"] = dict(ui)
         serialized_config = toml.dumps(config_to_save)
 
@@ -560,6 +561,7 @@ kokoro = _SynchronizedConfig(_cfg.get("kokoro", {}))
 fish_audio = _SynchronizedConfig(_cfg.get("fish_audio", {}))
 voxcpm = _SynchronizedConfig(_cfg.get("voxcpm", {}))
 wan22_local = _SynchronizedConfig(_cfg.get("wan22_local", {}))
+ltx25_local = _SynchronizedConfig(_cfg.get("ltx25_local", {}))
 ui = _SynchronizedConfig(
     _cfg.get(
         "ui",

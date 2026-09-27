@@ -25,12 +25,39 @@ def _video_source_groups():
     return ast.literal_eval(assignment.value)
 
 
-def test_wan22_is_registered_as_a_distinct_local_ai_video_source():
+def test_public_local_ai_sources_are_registered_as_distinct_video_sources():
     groups = _video_source_groups()
-    assert groups["local_ai_video"] == ("wan22_local",)
+    assert groups["local_ai_video"] == ("wan22_local", "ltx25_local")
     assert "__local_ai_fake__" not in {
         source for group in groups.values() for source in group
     }
+
+
+def test_ltx25_selection_shows_readiness_control_without_running_preflight():
+    values = dict(
+        config.app,
+        llm_provider="openai",
+        video_source="ltx25_local",
+    )
+    with (
+        patch.object(config, "app", values),
+        patch.object(config, "try_save_config", return_value=True),
+        patch("app.services.local_ai.preflight_status") as preflight_status,
+    ):
+        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=60)
+        app.session_state["ui_language"] = "en"
+        app.run()
+
+        buttons = [
+            item
+            for item in app.button
+            if str(getattr(item, "key", "")).startswith(
+                "ltx25_local_readiness_button"
+            )
+        ]
+        assert len(buttons) == 1
+        assert not app.exception
+        preflight_status.assert_not_called()
 
 
 def test_wan22_selection_shows_readiness_control_without_running_preflight():

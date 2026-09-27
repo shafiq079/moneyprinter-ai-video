@@ -136,7 +136,7 @@ VIDEO_SOURCE_GROUPS = {
         "muapi",
     ),
     "ai_image": ("openai_image",),
-    "local_ai_video": ("wan22_local",),
+    "local_ai_video": ("wan22_local", "ltx25_local"),
     "local": ("local",),
 }
 # Upload-Post 的 API Key 与发布用户分别在两个页面管理，并且发布用户名称
@@ -5140,6 +5140,7 @@ def _render_video_settings(panel, params):
                 "loomloom": tr("Shengsuan Cloud AI Video"),
                 "openai_image": tr("OpenAI Compatible Text-to-Image"),
                 "wan22_local": tr("Wan 2.2 Local"),
+                "ltx25_local": tr("LTX 2.5 Local"),
                 "local": tr("Local file"),
             }
             saved_video_source_name = str(
@@ -5195,6 +5196,24 @@ def _render_video_settings(panel, params):
                     else:
                         st.error(
                             tr("Wan 2.2 Not Ready").format(
+                                error=readiness["message"]
+                            )
+                        )
+            if params.video_source == local_ai.LTX25_SOURCE_ID:
+                st.caption(tr("LTX 2.5 Local Help"))
+                if st.button(
+                    tr("Check LTX 2.5 Readiness"),
+                    key="ltx25_local_readiness_button",
+                ):
+                    with st.spinner(tr("Checking LTX 2.5 Readiness")):
+                        readiness = local_ai.preflight_status(
+                            local_ai.LTX25_SOURCE_ID
+                        )
+                    if readiness["ready"]:
+                        st.success(tr("LTX 2.5 Ready"))
+                    else:
+                        st.error(
+                            tr("LTX 2.5 Not Ready").format(
                                 error=readiness["message"]
                             )
                         )
@@ -7945,6 +7964,7 @@ def _render_generation_controls(
             "loomloom",
             "openai_image",
             "wan22_local",
+            "ltx25_local",
             "local",
         ]:
             _remove_active_generation_task(task_id)

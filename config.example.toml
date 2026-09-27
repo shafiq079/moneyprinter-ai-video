@@ -543,6 +543,26 @@ offload_model = true
 t5_cpu = true
 convert_model_dtype = true
 
+[ltx25_local]
+# Official Lightricks/LTX-2 checkout. Use a dedicated worker environment with
+# the official LTX dependencies installed; the main MoneyPrinter process does
+# not import torch/LTX during normal startup.
+repo_path = ""
+python_executable = ""
+# LTX-2.5 split components used by DistilledPipeline.
+transformer_path = ""
+text_encoder_path = ""
+video_vae_path = ""
+audio_vae_path = ""
+spatial_upsampler_path = ""
+device = 0
+seed = 42
+# none = fastest/highest VRAM; cpu/disk stream weights to reduce VRAM.
+offload_mode = "cpu"
+# Official fp8-cast policy for bf16 checkpoints. Disable only when the target
+# GPU/runtime is known to have enough memory for bf16 transformer weights.
+fp8_cast = true
+
 # =============================================================================
 # Material Request Proxy / 素材请求代理
 # =============================================================================

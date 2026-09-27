@@ -48,6 +48,7 @@ _CLI_VIDEO_SOURCES = (
     "muapi",
     "openai_image",
     "wan22_local",
+    "ltx25_local",
     "local",
 )
 
@@ -703,8 +704,7 @@ Batch manifests:
         "--check-local-ai-source",
         action="store_true",
         help=(
-            "run operator preflight for the selected local AI video source and exit; "
-            "currently supported with --video-source wan22_local"
+            "run operator preflight for the selected public local AI video source and exit"
         ),
     )
     args = parser.parse_args(argv)
