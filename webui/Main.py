@@ -1970,6 +1970,13 @@ def _render_scene_plan_preview(task_id):
 
 def _render_generation_task_snapshot(task_id, task):
     """根据状态存储中的快照渲染进度、失败原因或最终成片。"""
+
+    def render_scene_plan_preview():
+        # Focused unit tests compile this renderer in isolation from Main.py.
+        # Keep the M4 preview additive instead of making it a hard dependency.
+        renderer = globals().get("_render_scene_plan_preview")
+        if callable(renderer):
+            renderer(task_id)
     if not task:
         st.info(tr("Generating Video"))
         _render_generation_logs(task_id)
@@ -1983,7 +1990,7 @@ def _render_generation_task_snapshot(task_id, task):
             progress,
             text=f"{tr('Task Progress')}: {progress}%",
         )
-        _render_scene_plan_preview(task_id)
+        render_scene_plan_preview()
         _render_generation_logs(task_id)
         return
 
@@ -1991,7 +1998,7 @@ def _render_generation_task_snapshot(task_id, task):
         error = str(task.get("error") or "").strip()
         message = tr("Video Generation Failed")
         st.error(f"{message}: {error}" if error else message)
-        _render_scene_plan_preview(task_id)
+        render_scene_plan_preview()
         _render_generation_logs(task_id)
         return
 
@@ -2002,7 +2009,7 @@ def _render_generation_task_snapshot(task_id, task):
         return
 
     st.success(tr("Video Generation Completed"))
-    _render_scene_plan_preview(task_id)
+    render_scene_plan_preview()
     for warning in task.get("warnings") or []:
         if isinstance(warning, Mapping) and warning.get("code") == "batch_materials_reused":
             st.warning(
