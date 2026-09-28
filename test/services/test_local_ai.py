@@ -309,6 +309,33 @@ class TestLocalAIGenerationManifest(LocalAITestCase):
         self.assertEqual(cached_provider.runtime_load_count, 0)
         self.assertEqual(cached_provider.generated_scene_ids, [])
 
+    def test_generation_logs_include_task_scene_stage_and_timing_context(self):
+        scenes = self.make_scenes(duration=1.0)
+        provider = FakeLocalVideoProvider()
+
+        with patch(
+            "app.services.local_ai.orchestrator.logger.info"
+        ) as info_log:
+            generate_scene_materials(
+                "observability-task",
+                provider=provider,
+                scenes=scenes,
+            )
+
+        messages = "\n".join(
+            str(call.args[0])
+            for call in info_log.call_args_list
+            if call.args
+        )
+        self.assertIn("task_id=observability-task", messages)
+        self.assertIn(f"provider={provider.provider_id}", messages)
+        self.assertIn("scene_id=1", messages)
+        self.assertIn("stage=runtime_load", messages)
+        self.assertIn("stage=scene_generation_complete", messages)
+        self.assertIn("generation_seconds=", messages)
+        self.assertIn("validation_seconds=", messages)
+        self.assertNotIn(str(self.task_root), messages)
+
     def test_progress_callback_reports_scene_before_and_after_generation(self):
         scenes = self.make_scenes(duration=1.0)
         provider = FakeLocalVideoProvider()

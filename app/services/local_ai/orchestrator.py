@@ -25,6 +25,7 @@ def _elapsed_seconds(started_at: float) -> float:
 def _record_runtime_load(
     manifest: dict,
     *,
+    task_id: str,
     provider: LocalVideoProvider,
     elapsed_seconds: float,
 ) -> None:
@@ -54,7 +55,8 @@ def _record_runtime_load(
         except Exception as exc:
             logger.debug(
                 "local AI runtime telemetry unavailable: "
-                f"provider={provider.provider_id}, error={type(exc).__name__}"
+                f"task_id={task_id}, provider={provider.provider_id}, "
+                f"stage=runtime_telemetry, error={type(exc).__name__}"
             )
         else:
             if isinstance(metrics, dict):
@@ -64,7 +66,8 @@ def _record_runtime_load(
 
     logger.info(
         "local AI runtime load/reuse completed: "
-        f"provider={provider.provider_id}, seconds={elapsed_seconds:.3f}"
+        f"task_id={task_id}, provider={provider.provider_id}, "
+        f"stage=runtime_load, elapsed_seconds={elapsed_seconds:.3f}"
     )
 
 
@@ -113,8 +116,10 @@ def generate_scene_materials(
                     f"local AI generation cancelled before scene {scene.scene_id}"
                 )
             logger.info(
-                f"local AI scene {scene_index}/{total_scenes}: "
-                f"provider={provider.provider_id}, scene_id={scene.scene_id}"
+                "local AI scene progress: "
+                f"task_id={task_id}, provider={provider.provider_id}, "
+                f"scene_id={scene.scene_id}, stage=checking, "
+                f"scene_index={scene_index}, total_scenes={total_scenes}"
             )
             if progress_callback is not None:
                 progress_callback(
@@ -168,6 +173,7 @@ def generate_scene_materials(
                 runtime_seconds = _elapsed_seconds(runtime_started)
                 _record_runtime_load(
                     manifest,
+                    task_id=task_id,
                     provider=provider,
                     elapsed_seconds=runtime_seconds,
                 )
@@ -217,6 +223,14 @@ def generate_scene_materials(
                     validation_seconds += _elapsed_seconds(validation_started)
             except Exception as exc:
                 partial_path.unlink(missing_ok=True)
+                logger.warning(
+                    "local AI scene generation failed: "
+                    f"task_id={task_id}, provider={provider.provider_id}, "
+                    f"scene_id={scene.scene_id}, stage=scene_generation, "
+                    f"generation_seconds={generation_seconds:.3f}, "
+                    f"validation_seconds={validation_seconds:.3f}, "
+                    f"error_type={type(exc).__name__}"
+                )
                 record["status"] = "failed"
                 record["active_asset"] = None
                 record["actual_duration"] = None
@@ -255,7 +269,8 @@ def generate_scene_materials(
             generation_manifest.save_manifest(task_id, manifest)
             logger.info(
                 "local AI scene generated: "
-                f"provider={provider.provider_id}, scene_id={scene.scene_id}, "
+                f"task_id={task_id}, provider={provider.provider_id}, "
+                f"scene_id={scene.scene_id}, stage=scene_generation_complete, "
                 f"generation_seconds={generation_seconds:.3f}, "
                 f"validation_seconds={validation_seconds:.3f}"
             )
@@ -329,6 +344,7 @@ def regenerate_scene_material(
             runtime_seconds = _elapsed_seconds(runtime_started)
             _record_runtime_load(
                 manifest,
+                task_id=task_id,
                 provider=provider,
                 elapsed_seconds=runtime_seconds,
             )
@@ -355,6 +371,14 @@ def regenerate_scene_material(
                 validation_seconds += _elapsed_seconds(validation_started)
     except Exception as exc:
         partial_path.unlink(missing_ok=True)
+        logger.warning(
+            "local AI scene regeneration failed: "
+            f"task_id={task_id}, provider={provider.provider_id}, "
+            f"scene_id={scene.scene_id}, stage=scene_regeneration, "
+            f"generation_seconds={generation_seconds:.3f}, "
+            f"validation_seconds={validation_seconds:.3f}, "
+            f"error_type={type(exc).__name__}"
+        )
         record["regeneration_status"] = "failed"
         record["regeneration_error_type"] = type(exc).__name__
         record["regeneration_error_code"] = str(
@@ -421,7 +445,8 @@ def regenerate_scene_material(
     generation_manifest.save_manifest(task_id, manifest)
     logger.info(
         "local AI scene regenerated: "
-        f"provider={provider.provider_id}, scene_id={scene.scene_id}, "
+        f"task_id={task_id}, provider={provider.provider_id}, "
+        f"scene_id={scene.scene_id}, stage=scene_regeneration_complete, "
         f"generation_seconds={generation_seconds:.3f}, "
         f"validation_seconds={validation_seconds:.3f}"
     )
