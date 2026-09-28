@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import Callable
 from contextlib import ExitStack
 
@@ -15,6 +16,56 @@ from .base import (
     SceneSpec,
     scene_fingerprint,
 )
+
+
+def _elapsed_seconds(started_at: float) -> float:
+    return round(max(time.perf_counter() - started_at, 0.0), 6)
+
+
+def _record_runtime_load(
+    manifest: dict,
+    *,
+    provider: LocalVideoProvider,
+    elapsed_seconds: float,
+) -> None:
+    telemetry = manifest.setdefault("telemetry", {})
+    previous_total = telemetry.get("runtime_load_seconds_total", 0.0)
+    previous_count = telemetry.get("runtime_load_count", 0)
+    try:
+        previous_total = float(previous_total)
+    except (TypeError, ValueError):
+        previous_total = 0.0
+    try:
+        previous_count = int(previous_count)
+    except (TypeError, ValueError):
+        previous_count = 0
+
+    telemetry["runtime_load_seconds_last"] = elapsed_seconds
+    telemetry["runtime_load_seconds_total"] = round(
+        previous_total + elapsed_seconds,
+        6,
+    )
+    telemetry["runtime_load_count"] = previous_count + 1
+
+    runtime_telemetry = getattr(provider, "runtime_telemetry", None)
+    if callable(runtime_telemetry):
+        try:
+            metrics = runtime_telemetry()
+        except Exception as exc:
+            logger.debug(
+                "local AI runtime telemetry unavailable: "
+                f"provider={provider.provider_id}, error={type(exc).__name__}"
+            )
+        else:
+            if isinstance(metrics, dict):
+                telemetry["runtime"] = (
+                    generation_manifest.sanitize_persisted_metadata(metrics)
+                )
+
+    logger.info(
+        "local AI runtime load/reuse completed: "
+        f"provider={provider.provider_id}, seconds={elapsed_seconds:.3f}"
+    )
 
 
 def generate_scene_materials(
@@ -112,7 +163,15 @@ def generate_scene_materials(
                     stack.enter_context(session_factory())
                     generation_session_entered = True
                 provider.preflight()
+                runtime_started = time.perf_counter()
                 provider.load_runtime()
+                runtime_seconds = _elapsed_seconds(runtime_started)
+                _record_runtime_load(
+                    manifest,
+                    provider=provider,
+                    elapsed_seconds=runtime_seconds,
+                )
+                generation_manifest.save_manifest(task_id, manifest)
                 runtime_loaded = True
 
             relative, final_path, partial_path = generation_manifest.next_scene_version(
@@ -134,16 +193,35 @@ def generate_scene_materials(
                     False,
                 )
 
+            generation_seconds = 0.0
+            validation_seconds = 0.0
             try:
-                provider.generate(scene, partial_path)
-                provider.validate_output(partial_path, scene)
+                generation_started = time.perf_counter()
+                try:
+                    provider.generate(scene, partial_path)
+                finally:
+                    generation_seconds = _elapsed_seconds(generation_started)
+
+                validation_started = time.perf_counter()
+                try:
+                    provider.validate_output(partial_path, scene)
+                finally:
+                    validation_seconds += _elapsed_seconds(validation_started)
+
                 os.replace(partial_path, final_path)
-                validated = provider.validate_output(final_path, scene)
+
+                validation_started = time.perf_counter()
+                try:
+                    validated = provider.validate_output(final_path, scene)
+                finally:
+                    validation_seconds += _elapsed_seconds(validation_started)
             except Exception as exc:
                 partial_path.unlink(missing_ok=True)
                 record["status"] = "failed"
                 record["active_asset"] = None
                 record["actual_duration"] = None
+                record["generation_seconds"] = generation_seconds
+                record["validation_seconds"] = round(validation_seconds, 6)
                 # Persist only an exception type. Detailed provider errors stay in logs
                 # so manifests cannot accidentally capture model paths/tokens/host data.
                 record["error_type"] = type(exc).__name__
@@ -164,6 +242,8 @@ def generate_scene_materials(
             record["versions"] = versions
             record["active_asset"] = relative
             record["actual_duration"] = validated.actual_duration
+            record["generation_seconds"] = generation_seconds
+            record["validation_seconds"] = round(validation_seconds, 6)
             generation_manifest.remember_scene_version(
                 record,
                 relative,
@@ -173,6 +253,12 @@ def generate_scene_materials(
             record["error_type"] = None
             record["error_code"] = None
             generation_manifest.save_manifest(task_id, manifest)
+            logger.info(
+                "local AI scene generated: "
+                f"provider={provider.provider_id}, scene_id={scene.scene_id}, "
+                f"generation_seconds={generation_seconds:.3f}, "
+                f"validation_seconds={validation_seconds:.3f}"
+            )
             outputs.append(str(final_path))
             if progress_callback is not None:
                 progress_callback(
@@ -230,22 +316,54 @@ def regenerate_scene_material(
     generation_manifest.save_manifest(task_id, manifest)
 
     session_factory = getattr(provider, "generation_session", None)
+    generation_seconds = 0.0
+    validation_seconds = 0.0
     try:
         with ExitStack() as stack:
             if callable(session_factory):
                 stack.enter_context(session_factory())
             provider.preflight()
+
+            runtime_started = time.perf_counter()
             provider.load_runtime()
-            provider.generate(scene, partial_path)
-            provider.validate_output(partial_path, scene)
+            runtime_seconds = _elapsed_seconds(runtime_started)
+            _record_runtime_load(
+                manifest,
+                provider=provider,
+                elapsed_seconds=runtime_seconds,
+            )
+            generation_manifest.save_manifest(task_id, manifest)
+
+            generation_started = time.perf_counter()
+            try:
+                provider.generate(scene, partial_path)
+            finally:
+                generation_seconds = _elapsed_seconds(generation_started)
+
+            validation_started = time.perf_counter()
+            try:
+                provider.validate_output(partial_path, scene)
+            finally:
+                validation_seconds += _elapsed_seconds(validation_started)
+
             os.replace(partial_path, final_path)
-            validated = provider.validate_output(final_path, scene)
+
+            validation_started = time.perf_counter()
+            try:
+                validated = provider.validate_output(final_path, scene)
+            finally:
+                validation_seconds += _elapsed_seconds(validation_started)
     except Exception as exc:
         partial_path.unlink(missing_ok=True)
         record["regeneration_status"] = "failed"
         record["regeneration_error_type"] = type(exc).__name__
         record["regeneration_error_code"] = str(
             getattr(exc, "code", type(exc).__name__)
+        )
+        record["last_regeneration_seconds"] = generation_seconds
+        record["last_regeneration_validation_seconds"] = round(
+            validation_seconds,
+            6,
         )
         record["active_asset"] = old_active
         record["status"] = old_status
@@ -282,6 +400,13 @@ def regenerate_scene_material(
     record["versions"] = versions
     record["active_asset"] = relative
     record["actual_duration"] = validated.actual_duration
+    record["generation_seconds"] = generation_seconds
+    record["validation_seconds"] = round(validation_seconds, 6)
+    record["last_regeneration_seconds"] = generation_seconds
+    record["last_regeneration_validation_seconds"] = round(
+        validation_seconds,
+        6,
+    )
     generation_manifest.remember_scene_version(
         record,
         relative,
@@ -294,5 +419,11 @@ def regenerate_scene_material(
     record["regeneration_error_type"] = None
     record["regeneration_error_code"] = None
     generation_manifest.save_manifest(task_id, manifest)
+    logger.info(
+        "local AI scene regenerated: "
+        f"provider={provider.provider_id}, scene_id={scene.scene_id}, "
+        f"generation_seconds={generation_seconds:.3f}, "
+        f"validation_seconds={validation_seconds:.3f}"
+    )
     return str(final_path)
 

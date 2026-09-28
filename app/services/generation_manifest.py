@@ -163,12 +163,17 @@ def prepare_manifest(
         }
         records.append(record)
 
+    previous_telemetry = previous.get("telemetry")
+    if not isinstance(previous_telemetry, dict):
+        previous_telemetry = {}
+
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "task_id": str(task_id),
         "provider_id": str(provider_id),
         "model_fingerprint": str(model_fingerprint),
         "provider_metadata": safe_provider_metadata,
+        "telemetry": sanitize_persisted_metadata(previous_telemetry),
         "scenes": records,
     }
     save_manifest(task_id, manifest)
@@ -250,6 +255,8 @@ def remember_scene_version(
             "model_fingerprint",
             "provider_metadata",
             "fingerprint",
+            "generation_seconds",
+            "validation_seconds",
         )
     }
     metadata["actual_duration"] = (
@@ -401,6 +408,16 @@ def local_ai_material_records(task_id: str) -> list[dict[str, Any]]:
                     else None
                 ),
                 "seed": int(record.get("seed") or 0),
+                "generation_seconds": (
+                    float(record["generation_seconds"])
+                    if isinstance(record.get("generation_seconds"), (int, float))
+                    else None
+                ),
+                "validation_seconds": (
+                    float(record["validation_seconds"])
+                    if isinstance(record.get("validation_seconds"), (int, float))
+                    else None
+                ),
             }
         )
     return records

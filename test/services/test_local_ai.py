@@ -382,6 +382,28 @@ class TestLocalAIGenerationManifest(LocalAITestCase):
         )
         self.assertEqual(first.session_entries, 1)
 
+        first_manifest = generation_manifest.load_manifest("cached-session")
+        telemetry = first_manifest["telemetry"]
+        self.assertEqual(telemetry["runtime_load_count"], 1)
+        self.assertGreaterEqual(telemetry["runtime_load_seconds_last"], 0.0)
+        first_total = telemetry["runtime_load_seconds_total"]
+        for record in first_manifest["scenes"]:
+            self.assertGreaterEqual(record["generation_seconds"], 0.0)
+            self.assertGreaterEqual(record["validation_seconds"], 0.0)
+            metadata = generation_manifest.scene_version_metadata(
+                record,
+                record["active_asset"],
+            )
+            self.assertIsNotNone(metadata)
+            self.assertEqual(
+                metadata["generation_seconds"],
+                record["generation_seconds"],
+            )
+            self.assertEqual(
+                metadata["validation_seconds"],
+                record["validation_seconds"],
+            )
+
         cached = SessionFakeProvider()
         generate_scene_materials(
             "cached-session",
@@ -391,6 +413,16 @@ class TestLocalAIGenerationManifest(LocalAITestCase):
         self.assertEqual(cached.session_entries, 0)
         self.assertEqual(cached.runtime_load_count, 0)
         self.assertEqual(cached.generated_scene_ids, [])
+
+        cached_manifest = generation_manifest.load_manifest("cached-session")
+        self.assertEqual(
+            cached_manifest["telemetry"]["runtime_load_count"],
+            1,
+        )
+        self.assertEqual(
+            cached_manifest["telemetry"]["runtime_load_seconds_total"],
+            first_total,
+        )
 
     def test_failure_preserves_ready_scene_and_retry_only_generates_missing_scene(self):
         scenes = self.make_scenes()
@@ -468,6 +500,29 @@ class TestLocalAIGenerationManifest(LocalAITestCase):
             "generated_ai/scene-001/v002.mp4",
         )
         self.assertEqual(Path(output_paths[1]).name, "v001.mp4")
+
+    def test_runtime_telemetry_hook_is_sanitized_in_manifest(self):
+        class TelemetryProvider(FakeLocalVideoProvider):
+            def runtime_telemetry(self):
+                return {
+                    "gpu_memory_used_mb": 321.5,
+                    "device_index": 0,
+                    "api_key": "DO-NOT-PERSIST",
+                }
+
+        scenes = self.make_scenes(duration=1.0)
+        generate_scene_materials(
+            "runtime-telemetry",
+            provider=TelemetryProvider(),
+            scenes=scenes,
+        )
+
+        manifest = generation_manifest.load_manifest("runtime-telemetry")
+        runtime_metrics = manifest["telemetry"]["runtime"]
+        self.assertEqual(runtime_metrics["gpu_memory_used_mb"], 321.5)
+        self.assertEqual(runtime_metrics["device_index"], 0)
+        self.assertNotIn("api_key", runtime_metrics)
+        self.assertNotIn("DO-NOT-PERSIST", json.dumps(manifest))
 
     def test_manifest_redacts_secrets_and_host_paths_from_metadata(self):
         scene = SceneSpec(
@@ -842,6 +897,12 @@ class TestLocalAISceneRegeneration(LocalAITestCase):
         self.assertIsNotNone(first_v2)
         self.assertEqual(first_v1["seed"], original_plan.scenes[0].seed)
         self.assertEqual(first_v2["seed"], 99)
+        self.assertGreaterEqual(first_v2["generation_seconds"], 0.0)
+        self.assertGreaterEqual(first_v2["validation_seconds"], 0.0)
+        self.assertEqual(
+            first_v2["generation_seconds"],
+            first["generation_seconds"],
+        )
         self.assertEqual(
             first_v1["prompt"],
             original_plan.scenes[0].prompt,
