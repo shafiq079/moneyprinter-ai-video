@@ -1578,6 +1578,40 @@ class TestTaskService(unittest.TestCase):
                 self.assertEqual(failed_task["failed_stage"], stage)
                 self.assertTrue(failed_task["error"])
 
+    def test_start_marks_final_video_validation_as_recoverable_video_failure(self):
+        params = VideoParams(
+            video_subject="Coffee",
+            video_source="wan22_local",
+        )
+        state = MemoryState()
+
+        with (
+            patch.object(
+                tm,
+                "_run_pipeline",
+                side_effect=tm.video.FinalVideoValidationError(
+                    "final video is not decodable"
+                ),
+            ),
+            patch.object(tm.sm, "state", state),
+        ):
+            result = tm.start("final-validation-failure", params)
+
+        failed_task = state.get_task("final-validation-failure")
+        self.assertEqual(result, failed_task)
+        self.assertEqual(failed_task["state"], tm.const.TASK_STATE_FAILED)
+        self.assertEqual(failed_task["failed_stage"], "video")
+        self.assertEqual(failed_task["local_ai_provider"], "wan22_local")
+        self.assertTrue(failed_task["recoverable"])
+        self.assertEqual(
+            failed_task["recovery_action"],
+            "rerender_final_video",
+        )
+        self.assertEqual(
+            failed_task["error"],
+            "FinalVideoValidationError: final video is not decodable",
+        )
+
     def test_start_records_unexpected_pipeline_exception(self):
         """未预期异常也必须结束任务，并向 API 暴露原始异常类型和信息。"""
         params = VideoParams(video_subject="Coffee")

@@ -2709,6 +2709,24 @@ def start(
         return _mark_task_cancelled(task_id, exc.stage)
     except local_ai.LocalAICancellationRequested:
         return _mark_task_cancelled(task_id, "materials")
+    except video.FinalVideoValidationError as exc:
+        details = {
+            "recoverable": True,
+            "recovery_action": "rerender_final_video",
+        }
+        if local_ai.is_local_ai_source(params.video_source):
+            details["local_ai_provider"] = params.video_source
+        logger.error(
+            "final video validation failed: "
+            f"task_id={task_id}, provider={params.video_source}, "
+            f"stage=video, error_type={type(exc).__name__}"
+        )
+        return _mark_task_failed(
+            task_id,
+            "video",
+            f"{type(exc).__name__}: {exc}",
+            details=details,
+        )
     except Exception as exc:
         logger.exception(
             f"unexpected task pipeline failure, task_id: {task_id}, error: {exc}"
