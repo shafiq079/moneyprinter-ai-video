@@ -66,12 +66,17 @@ class MemoryState(BaseState):
             progress = 100
 
         with self._lock:
-            self._tasks[task_id] = {
-                "task_id": task_id,
-                "state": state,
-                "progress": progress,
-                **kwargs,
-            }
+            # Match RedisState's field updates: stage progress must not erase a
+            # concurrent cancellation request or previously written artifacts.
+            task = self._tasks.setdefault(task_id, {})
+            task.update(
+                {
+                    "task_id": task_id,
+                    "state": state,
+                    "progress": progress,
+                    **copy.deepcopy(kwargs),
+                }
+            )
 
     def get_task(self, task_id: str):
         with self._lock:

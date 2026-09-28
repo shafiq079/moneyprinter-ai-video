@@ -341,6 +341,7 @@ def _mark_task_failed(
     progress = int((existing_task or {}).get("progress", 0) or 0)
     logger.error(f"task failed, task_id: {task_id}, stage: {stage}, error: {message}")
     failure = {
+        **(existing_task or {}),
         "task_id": task_id,
         "state": const.TASK_STATE_FAILED,
         "progress": progress,

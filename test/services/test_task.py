@@ -111,6 +111,25 @@ class TestTaskService(unittest.TestCase):
         )
         self.assertEqual(persisted["error"], "Task cancelled by user")
 
+    def test_cancellation_requested_during_script_survives_progress_update(self):
+        state = MemoryState()
+        params = VideoParams(video_subject="cancel during script", video_source="local")
+
+        def generate_script(task_id, _params):
+            self.assertTrue(tm.request_task_cancellation(task_id))
+            return "A finished script."
+
+        with (
+            patch.object(tm.sm, "state", state),
+            patch.object(tm, "generate_script", side_effect=generate_script),
+            patch.object(tm, "generate_audio") as generate_audio,
+        ):
+            result = tm.start("cancel-during-script", params, stop_at="audio")
+
+        generate_audio.assert_not_called()
+        self.assertEqual(result["state"], tm.const.TASK_STATE_CANCELLED)
+        self.assertTrue(state.get_task("cancel-during-script")["cancel_requested"])
+
     def test_generate_script_forwards_advanced_prompt_options(self):
         """
         任务生成入口和 WebUI/API 共用 VideoParams。这里验证自动生成文案时，
