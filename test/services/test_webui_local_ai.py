@@ -69,6 +69,10 @@ def test_ltx25_selection_shows_readiness_control_without_running_preflight():
             if getattr(item, "label", "") == "Visual style / direction"
         ]
         assert len(visual_style_inputs) == 1
+        assert any(
+            "GPU-intensive" in str(getattr(item, "value", ""))
+            for item in app.caption
+        )
         assert not app.exception
         preflight_status.assert_not_called()
 
@@ -96,5 +100,9 @@ def test_wan22_selection_shows_readiness_control_without_running_preflight():
             )
         ]
         assert len(buttons) == 1
+        assert any(
+            "GPU-intensive" in str(getattr(item, "value", ""))
+            for item in app.caption
+        )
         assert not app.exception
         preflight_status.assert_not_called()
