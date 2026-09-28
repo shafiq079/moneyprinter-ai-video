@@ -803,13 +803,23 @@ def get_video_materials(
                     },
                 )
 
-            return local_ai.generate_scene_materials(
+            generated_materials = local_ai.generate_scene_materials(
                 task_id,
                 provider=provider,
                 scenes=scenes,
                 progress_callback=report_scene_progress,
                 cancel_check=lambda: is_cancellation_requested(task_id),
             )
+            provenance = generation_manifest.local_ai_material_records(task_id)
+            task_artifacts.patch_script_data(
+                task_id,
+                local_ai_materials=provenance,
+            )
+            sm.state.update_task(
+                task_id,
+                local_ai_materials=provenance,
+            )
+            return generated_materials
         except local_ai.LocalAICancellationRequested:
             raise
         except Exception as exc:

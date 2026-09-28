@@ -815,6 +815,35 @@ class TestLocalAISceneRegeneration(LocalAITestCase):
             )
 
 
+class TestLocalAIProvenance(LocalAITestCase):
+    def test_active_material_records_identify_provider_without_host_paths(self):
+        task_id = "local-ai-provenance"
+        scenes = self.make_scenes(duration=1.0)
+        provider = FakeLocalVideoProvider()
+
+        generate_scene_materials(
+            task_id,
+            provider=provider,
+            scenes=scenes,
+        )
+        records = generation_manifest.local_ai_material_records(task_id)
+
+        self.assertEqual(len(records), 1)
+        record = records[0]
+        self.assertEqual(record["provider"], FAKE_SOURCE_ID)
+        self.assertEqual(record["scene_id"], 1)
+        self.assertEqual(
+            record["asset"],
+            "generated_ai/scene-001/v001.mp4",
+        )
+        self.assertFalse(Path(record["asset"]).is_absolute())
+        serialized = json.dumps(records)
+        self.assertNotIn(str(self.task_root), serialized)
+        self.assertIn("model_fingerprint", record)
+        self.assertIn("provider_metadata", record)
+        self.assertIn("generation_settings", record)
+
+
 class TestLocalAITaskIntegration(LocalAITestCase):
     def test_fake_source_is_disabled_outside_explicit_test_mode(self):
         from app.services import local_ai

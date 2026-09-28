@@ -296,6 +296,60 @@ def restore_scene_version(
     return manifest, scene, candidate
 
 
+def local_ai_material_records(task_id: str) -> list[dict[str, Any]]:
+    """Return portable provenance records for active generated scene materials."""
+
+    manifest = load_manifest(task_id)
+    if manifest is None:
+        raise ValueError("local AI generation manifest is missing")
+
+    default_provider = str(manifest.get("provider_id") or "")
+    default_model = str(manifest.get("model_fingerprint") or "")
+    default_metadata = manifest.get("provider_metadata")
+    if not isinstance(default_metadata, dict):
+        default_metadata = {}
+
+    records: list[dict[str, Any]] = []
+    for record in sorted(
+        manifest.get("scenes", []),
+        key=lambda item: int(item.get("scene_id", 0)),
+    ):
+        if not isinstance(record, dict):
+            continue
+        active_asset = str(record.get("active_asset") or "")
+        if record.get("status") != "ready" or not active_asset:
+            continue
+
+        provider_metadata = record.get("provider_metadata")
+        if not isinstance(provider_metadata, dict):
+            provider_metadata = default_metadata
+
+        provider_settings = record.get("provider_settings")
+        if not isinstance(provider_settings, dict):
+            provider_settings = {}
+
+        records.append(
+            {
+                "scene_id": int(record.get("scene_id", 0)),
+                "provider": str(record.get("provider_id") or default_provider),
+                "model_fingerprint": str(
+                    record.get("model_fingerprint") or default_model
+                ),
+                "provider_metadata": dict(provider_metadata),
+                "generation_settings": dict(provider_settings),
+                "asset": active_asset,
+                "target_duration": float(record.get("target_duration") or 0.0),
+                "actual_duration": (
+                    float(record["actual_duration"])
+                    if isinstance(record.get("actual_duration"), (int, float))
+                    else None
+                ),
+                "seed": int(record.get("seed") or 0),
+            }
+        )
+    return records
+
+
 def active_scene_paths(task_id: str) -> list[str]:
     """Return validated task-local active scene paths in scene order."""
 
