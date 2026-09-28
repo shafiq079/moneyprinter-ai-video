@@ -15,6 +15,7 @@ from app.services.local_ai.wan22 import (
     Wan22ConfigurationError,
     Wan22LocalProvider,
     Wan22Settings,
+    Wan22WorkerError,
 )
 from app.utils import utils
 
@@ -163,7 +164,36 @@ class TestWan22Configuration(Wan22TestCase):
         self.assertEqual(command[0], self.settings.python_executable)
 
 
+class _OOMWorker(_FakeWorker):
+    def request(self, payload):
+        if payload["action"] == "generate":
+            self.generate_count += 1
+            raise Wan22WorkerError(
+                "synthetic CUDA OOM",
+                code="cuda_oom",
+            )
+        return {"ok": True}
+
+
 class TestWan22Runtime(Wan22TestCase):
+    def test_cuda_oom_evicts_wan_runtime_and_never_publishes_output(self):
+        scene = SceneSpec(1, "one", "forest", 1.0, "9:16", 77)
+        output = self.root / "oom.mp4"
+
+        with patch.object(
+            Wan22LocalProvider,
+            "_worker_factory",
+            _OOMWorker,
+        ):
+            provider = Wan22LocalProvider(settings=self.settings)
+            with self.assertRaises(Wan22WorkerError) as raised:
+                provider.generate(scene, output)
+
+        self.assertEqual(raised.exception.code, "cuda_oom")
+        self.assertFalse(output.exists())
+        self.assertIsNone(Wan22LocalProvider._worker)
+        self.assertTrue(_OOMWorker.instances[-1].closed)
+
     def test_runtime_is_reused_across_provider_instances_and_scenes(self):
         scene_one = SceneSpec(1, "one", "forest", 1.0, "9:16", 77)
         scene_two = SceneSpec(2, "two", "mountain", 1.0, "9:16", 78)

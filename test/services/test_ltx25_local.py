@@ -13,6 +13,7 @@ from app.services.local_ai.ltx25 import (
     LTX25ConfigurationError,
     LTX25LocalProvider,
     LTX25Settings,
+    LTX25WorkerError,
 )
 from app.utils import utils
 
@@ -252,7 +253,36 @@ class TestLTX25Configuration(LTX25TestCase):
         self.assertEqual(command[detail_index + 1], str(self.detailing))
 
 
+class _OOMWorker(_FakeWorker):
+    def request(self, payload):
+        if payload["action"] == "generate":
+            self.generate_count += 1
+            raise LTX25WorkerError(
+                "synthetic CUDA OOM",
+                code="cuda_oom",
+            )
+        return {"ok": True}
+
+
 class TestLTX25Runtime(LTX25TestCase):
+    def test_cuda_oom_evicts_ltx_runtime_and_never_publishes_output(self):
+        scene = SceneSpec(1, "one", "forest", 1.0, "9:16", 91)
+        output = self.root / "oom.mp4"
+
+        with patch.object(
+            LTX25LocalProvider,
+            "_worker_factory",
+            _OOMWorker,
+        ):
+            provider = LTX25LocalProvider(settings=self.settings)
+            with self.assertRaises(LTX25WorkerError) as raised:
+                provider.generate(scene, output)
+
+        self.assertEqual(raised.exception.code, "cuda_oom")
+        self.assertFalse(output.exists())
+        self.assertIsNone(LTX25LocalProvider._worker)
+        self.assertTrue(_OOMWorker.instances[-1].closed)
+
     def test_runtime_is_reused_across_instances_and_scenes(self):
         scene_one = SceneSpec(1, "one", "forest", 1.0, "9:16", 91)
         scene_two = SceneSpec(2, "two", "mountain", 1.0, "9:16", 92)

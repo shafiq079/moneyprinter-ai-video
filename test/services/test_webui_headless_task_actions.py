@@ -31,7 +31,11 @@ def headless_task_app(tmp_path, monkeypatch):
     video_file = task_dir / "final-1.mp4"
     video_file.write_bytes(b"test video payload")
 
-    monkeypatch.setattr(utils, "task_dir", lambda: str(tasks_dir))
+    monkeypatch.setattr(
+        utils,
+        "task_dir",
+        lambda sub_dir="": str(tasks_dir / sub_dir) if sub_dir else str(tasks_dir),
+    )
     monkeypatch.setattr(sm.state, "get_all_tasks", lambda *_args, **_kwargs: ([], 0))
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.delenv("DISPLAY", raising=False)

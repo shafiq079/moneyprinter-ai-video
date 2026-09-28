@@ -1041,6 +1041,17 @@ class TestLocalAIStoragePreflight(LocalAITestCase):
         self.assertIn("not writable", status["message"])
 
 
+class _SyntheticCudaOOM(RuntimeError):
+    code = "cuda_oom"
+
+
+class _OOMFakeProvider(FakeLocalVideoProvider):
+    def generate(self, scene, output_path):
+        if scene.scene_id == 2:
+            raise _SyntheticCudaOOM("synthetic CUDA out of memory")
+        return super().generate(scene, output_path)
+
+
 class TestLocalAITaskIntegration(LocalAITestCase):
     def test_full_fake_pipeline_writes_video_state_and_safe_artifacts(self):
         task_id = "full-fake-pipeline"
@@ -1183,6 +1194,51 @@ class TestLocalAITaskIntegration(LocalAITestCase):
         self.assertEqual(
             len(script["local_ai_materials"]),
             len(result["materials"]),
+        )
+
+    def test_synthetic_cuda_oom_preserves_completed_scene_and_recovery_hint(self):
+        params = VideoParams(
+            video_subject="OOM test",
+            video_script="First scene. Second scene.",
+            video_source=FAKE_SOURCE_ID,
+            video_aspect="9:16",
+            video_clip_duration=1,
+            subtitle_enabled=False,
+            bgm_type="",
+        )
+        provider = _OOMFakeProvider()
+
+        with (
+            patch.object(task.sm.state, "update_task"),
+            patch.object(
+                task,
+                "_mark_task_failed",
+                return_value={"state": -1},
+            ) as failed,
+        ):
+            result = task.get_video_materials(
+                "synthetic-cuda-oom",
+                params,
+                [],
+                2.0,
+                video_script=params.video_script,
+                local_ai_provider=provider,
+            )
+
+        self.assertIsNone(result)
+        manifest = generation_manifest.load_manifest("synthetic-cuda-oom")
+        self.assertEqual(manifest["scenes"][0]["status"], "ready")
+        self.assertTrue(manifest["scenes"][0]["active_asset"])
+        self.assertEqual(manifest["scenes"][1]["status"], "failed")
+        self.assertIsNone(manifest["scenes"][1]["active_asset"])
+        self.assertEqual(manifest["scenes"][1]["error_code"], "cuda_oom")
+
+        details = failed.call_args.kwargs["details"]
+        self.assertEqual(details["local_ai_error_code"], "cuda_oom")
+        self.assertTrue(details["recoverable"])
+        self.assertEqual(
+            details["recovery_action"],
+            "adjust_gpu_settings_and_retry_scene",
         )
 
     def test_scene_failure_records_structured_recovery_fields(self):
