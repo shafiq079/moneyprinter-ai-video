@@ -612,6 +612,35 @@ def generate_audio(
         return None, None, None
 
     if not custom_audio_file:
+        if voice.is_no_voice(getattr(params, "voice_name", "")):
+            logger.info(
+                "no-voice mode selected; skipping TTS provider and preparing "
+                "a silent timing track"
+            )
+            audio_file = path.join(utils.task_dir(task_id), "audio.mp3")
+            prepared = voice.prepare_no_voice_audio(
+                video_script,
+                audio_file,
+            )
+            if prepared is None:
+                _mark_task_failed(
+                    task_id,
+                    "audio",
+                    "failed to prepare silent no-voice timing track",
+                )
+                return None, None, None
+
+            sub_maker, measured_duration = prepared
+            audio_duration = math.ceil(measured_duration)
+            if audio_duration <= 0:
+                _mark_task_failed(
+                    task_id,
+                    "audio",
+                    "silent no-voice duration is zero",
+                )
+                return None, None, None
+            return audio_file, audio_duration, sub_maker
+
         reusable_preview = _resolve_reusable_voice_preview(
             task_id,
             params,
@@ -689,6 +718,30 @@ def generate_subtitle(task_id, params, video_script, sub_maker, audio_file):
     if not subtitle_provider:
         logger.info("subtitle provider is empty, skip subtitle generation")
         return ""
+
+    # No Voice uses a deterministic script timeline over a silent timing track.
+    # Do not send silence to Whisper: that would load/transcribe a speech model
+    # even though the user explicitly requested no generated voice.
+    if (
+        voice.is_no_voice(getattr(params, "voice_name", ""))
+        and sub_maker is not None
+    ):
+        voice.create_subtitle(
+            text=video_script,
+            sub_maker=sub_maker,
+            subtitle_file=subtitle_path,
+            word_level=(
+                getattr(params, "subtitle_display_mode", "sentence")
+                == "word_by_word"
+            ),
+        )
+        subtitle_lines = subtitle.file_to_subtitles(subtitle_path)
+        if not subtitle_lines:
+            logger.warning(
+                "no-voice subtitle timeline did not produce a valid subtitle file"
+            )
+            return ""
+        return subtitle_path
 
     if sub_maker is None and subtitle_provider != "whisper":
         # 自定义音频不会经过 TTS，因此没有 Edge/Azure 等 TTS 返回的

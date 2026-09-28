@@ -756,6 +756,74 @@ class TestTaskService(unittest.TestCase):
         self.assertEqual(failed_task["failed_stage"], "terms")
         self.assertTrue(failed_task["error"])
 
+    def test_generate_audio_no_voice_skips_tts_dispatcher(self):
+        task_id = "test-no-voice-audio"
+        task_dir = utils.task_dir(task_id)
+        params = VideoParams(
+            video_subject="silent local AI video",
+            video_script="",
+            voice_name=tm.voice.NO_VOICE_NAME,
+        )
+        sub_maker = MagicMock()
+
+        try:
+            with (
+                patch.object(
+                    tm.voice,
+                    "prepare_no_voice_audio",
+                    return_value=(sub_maker, 4.2),
+                ) as prepare_no_voice_audio,
+                patch.object(tm.voice, "tts") as tts,
+            ):
+                audio_file, audio_duration, result_sub_maker = tm.generate_audio(
+                    task_id,
+                    params,
+                    "A silent visual story.",
+                )
+        finally:
+            shutil.rmtree(task_dir, ignore_errors=True)
+
+        self.assertEqual(audio_file, os.path.join(task_dir, "audio.mp3"))
+        self.assertEqual(audio_duration, 5)
+        self.assertIs(result_sub_maker, sub_maker)
+        prepare_no_voice_audio.assert_called_once_with(
+            "A silent visual story.",
+            os.path.join(task_dir, "audio.mp3"),
+        )
+        tts.assert_not_called()
+
+    def test_custom_audio_takes_precedence_over_no_voice_sentinel(self):
+        task_id = "test-custom-audio-no-voice"
+        task_dir = utils.task_dir(task_id)
+        custom_audio_file = os.path.join(task_dir, "custom-audio.mp3")
+        with open(custom_audio_file, "wb") as audio:
+            audio.write(b"fake audio")
+
+        params = VideoParams(
+            video_subject="custom audio",
+            custom_audio_file=custom_audio_file,
+            voice_name=tm.voice.NO_VOICE_NAME,
+        )
+        try:
+            with (
+                patch.object(tm.voice, "prepare_no_voice_audio") as prepare_silence,
+                patch.object(tm.voice, "tts") as tts,
+                patch.object(tm.voice, "get_audio_duration", return_value=6),
+            ):
+                audio_file, audio_duration, sub_maker = tm.generate_audio(
+                    task_id,
+                    params,
+                    "script",
+                )
+        finally:
+            shutil.rmtree(task_dir, ignore_errors=True)
+
+        self.assertEqual(audio_file, os.path.realpath(custom_audio_file))
+        self.assertEqual(audio_duration, 6)
+        self.assertIsNone(sub_maker)
+        prepare_silence.assert_not_called()
+        tts.assert_not_called()
+
     def test_generate_audio_uses_custom_file_inside_task_directory(self):
         task_id = "test-custom-audio-safe"
         task_dir = utils.task_dir(task_id)
@@ -903,6 +971,50 @@ class TestTaskService(unittest.TestCase):
         failed_task = state.get_task(task_id)
         self.assertEqual(failed_task["failed_stage"], "audio")
         self.assertIn("does not exist", failed_task["error"])
+
+    def test_no_voice_subtitles_do_not_transcribe_silence_with_whisper(self):
+        task_id = "test-no-voice-subtitles"
+        task_dir = utils.task_dir(task_id)
+        params = VideoParams(
+            video_subject="silent captions",
+            voice_name=tm.voice.NO_VOICE_NAME,
+            subtitle_enabled=True,
+        )
+        sub_maker = MagicMock()
+
+        def write_subtitle(*, subtitle_file, **_kwargs):
+            Path(subtitle_file).write_text(
+                "1\n00:00:00,000 --> 00:00:03,000\nSilent captions\n\n",
+                encoding="utf-8",
+            )
+
+        try:
+            with (
+                patch.object(
+                    tm.config,
+                    "app",
+                    dict(tm.config.app, subtitle_provider="whisper"),
+                ),
+                patch.object(
+                    tm.voice,
+                    "create_subtitle",
+                    side_effect=write_subtitle,
+                ) as create_subtitle,
+                patch.object(tm.subtitle, "create") as whisper_create,
+            ):
+                subtitle_path = tm.generate_subtitle(
+                    task_id,
+                    params,
+                    "Silent captions",
+                    sub_maker,
+                    os.path.join(task_dir, "audio.mp3"),
+                )
+        finally:
+            shutil.rmtree(task_dir, ignore_errors=True)
+
+        self.assertTrue(subtitle_path.endswith("subtitle.srt"))
+        create_subtitle.assert_called_once()
+        whisper_create.assert_not_called()
 
     def test_generate_audio_prefers_file_duration_over_sub_maker(self):
         # Every fixture deliberately makes the file duration and the SubMaker

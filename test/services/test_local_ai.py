@@ -1120,6 +1120,71 @@ class TestLocalAITaskIntegration(LocalAITestCase):
         self.assertNotIn(str(self.task_root), json.dumps(plan))
         self.assertNotIn(str(self.task_root), json.dumps(manifest))
 
+    def test_full_fake_pipeline_no_voice_never_calls_tts_provider(self):
+        task_id = "full-fake-no-voice"
+        state = MemoryState()
+        params = VideoParams(
+            video_subject="A silent local video",
+            video_script="Open the story. Finish the story.",
+            video_source=FAKE_SOURCE_ID,
+            video_aspect="9:16",
+            video_clip_duration=1,
+            local_ai_seed=23,
+            voice_name=task.voice.NO_VOICE_NAME,
+            subtitle_enabled=True,
+            bgm_type="",
+            bgm_volume=0,
+            font_size=32,
+            n_threads=1,
+        )
+
+        with (
+            patch.dict("os.environ", {"MPT_ENABLE_LOCAL_AI_FAKE_PROVIDER": "1"}),
+            patch.object(task.sm, "state", state),
+            patch.object(
+                task.config,
+                "app",
+                dict(task.config.app, subtitle_provider="whisper"),
+            ),
+            patch.object(
+                task.voice,
+                "tts",
+                side_effect=AssertionError(
+                    "No Voice mode must not call the generic TTS dispatcher"
+                ),
+            ) as tts,
+            patch.object(task.subtitle, "create") as whisper_create,
+            patch.object(task.material, "download_videos") as download_videos,
+        ):
+            result = task.start(task_id, params)
+
+        tts.assert_not_called()
+        whisper_create.assert_not_called()
+        download_videos.assert_not_called()
+        self.assertEqual(
+            state.get_task(task_id)["state"],
+            task.const.TASK_STATE_COMPLETE,
+        )
+        self.assertTrue(Path(result["audio_file"]).is_file())
+        self.assertGreater(result["audio_duration"], 0)
+        self.assertTrue(Path(result["subtitle_path"]).is_file())
+        self.assertTrue(Path(result["videos"][0]).is_file())
+        self.assertGreaterEqual(len(result["materials"]), 1)
+
+        script = json.loads(
+            (self.task_root / task_id / "script.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            script["params"]["voice_name"],
+            task.voice.NO_VOICE_NAME,
+        )
+        self.assertEqual(
+            len(script["local_ai_materials"]),
+            len(result["materials"]),
+        )
+
     def test_scene_failure_records_structured_recovery_fields(self):
         params = VideoParams(
             video_subject="test",
