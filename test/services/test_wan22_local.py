@@ -20,6 +20,21 @@ from app.services.local_ai.wan22 import (
 from app.utils import utils
 
 
+class _CountingProcessLock:
+    def __init__(self, device_id, events):
+        self.device_id = device_id
+        self.events = events
+        self.acquired = False
+
+    def acquire(self):
+        self.events.append(("acquire", self.device_id))
+        self.acquired = True
+
+    def release(self):
+        self.events.append(("release", self.device_id))
+        self.acquired = False
+
+
 class _FakeWorker:
     instances = []
 
@@ -262,6 +277,83 @@ class TestWan22Runtime(Wan22TestCase):
             self.assertEqual(manager.active_family, "ltx25")
 
         self.assertEqual(calls, ["release-wan"])
+
+    def test_runtime_manager_process_lock_is_reentrant_per_thread(self):
+        events = []
+        manager = LocalAIRuntimeManager(
+            process_lock_factory=lambda device_id: _CountingProcessLock(
+                device_id,
+                events,
+            )
+        )
+
+        with manager.generation_slot("wan22", device_id=2):
+            with manager.generation_slot("wan22", device_id=2):
+                self.assertEqual(manager.active_family, "wan22")
+
+        self.assertEqual(
+            events,
+            [
+                ("acquire", 2),
+                ("release", 2),
+            ],
+        )
+
+    def test_runtime_manager_rejects_nested_device_switch(self):
+        events = []
+        manager = LocalAIRuntimeManager(
+            process_lock_factory=lambda device_id: _CountingProcessLock(
+                device_id,
+                events,
+            )
+        )
+
+        with manager.generation_slot("wan22", device_id=0):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "cannot switch CUDA devices",
+            ):
+                with manager.generation_slot("wan22", device_id=1):
+                    pass
+
+        self.assertEqual(events, [("acquire", 0), ("release", 0)])
+
+    def test_independent_runtime_managers_serialize_same_gpu_lock_file(self):
+        with tempfile.TemporaryDirectory() as lock_root:
+            first_manager = LocalAIRuntimeManager(lock_root=lock_root)
+            second_manager = LocalAIRuntimeManager(lock_root=lock_root)
+            entered = []
+            first_inside = threading.Event()
+            release_first = threading.Event()
+
+            def first():
+                with first_manager.generation_slot("wan22", device_id=0):
+                    entered.append("first")
+                    first_inside.set()
+                    release_first.wait(timeout=3)
+
+            def second():
+                first_inside.wait(timeout=3)
+                with second_manager.generation_slot("ltx25", device_id=0):
+                    entered.append("second")
+
+            first_thread = threading.Thread(target=first)
+            second_thread = threading.Thread(target=second)
+            first_thread.start()
+            second_thread.start()
+
+            self.assertTrue(first_inside.wait(timeout=3))
+            second_thread.join(timeout=0.2)
+            self.assertEqual(entered, ["first"])
+
+            release_first.set()
+            first_thread.join(timeout=3)
+            second_thread.join(timeout=3)
+
+            self.assertFalse(first_thread.is_alive())
+            self.assertFalse(second_thread.is_alive())
+            self.assertEqual(entered, ["first", "second"])
+            self.assertTrue((Path(lock_root) / "gpu-0.lock").is_file())
 
     def test_task_generation_session_blocks_family_switch_until_all_scenes_finish(self):
         manager = LocalAIRuntimeManager()

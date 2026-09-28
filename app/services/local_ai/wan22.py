@@ -546,10 +546,16 @@ class Wan22LocalProvider:
         LOCAL_AI_RUNTIME.clear_active_family(cls.family_id)
 
     def generation_session(self):
-        return LOCAL_AI_RUNTIME.generation_slot(self.family_id)
+        return LOCAL_AI_RUNTIME.generation_slot(
+            self.family_id,
+            self.settings.device_id,
+        )
 
     def load_runtime(self) -> None:
-        with LOCAL_AI_RUNTIME.generation_slot(self.family_id):
+        with LOCAL_AI_RUNTIME.generation_slot(
+            self.family_id,
+            self.settings.device_id,
+        ):
             logger.info(
                 "loading/reusing Wan 2.2 local runtime "
                 f"on CUDA device {self.settings.device_id}"
@@ -565,7 +571,10 @@ class Wan22LocalProvider:
         output = Path(output_path)
         output.parent.mkdir(parents=True, exist_ok=True)
 
-        with LOCAL_AI_RUNTIME.generation_slot(self.family_id):
+        with LOCAL_AI_RUNTIME.generation_slot(
+            self.family_id,
+            self.settings.device_id,
+        ):
             worker = self._worker_for(self.settings, self.model_fingerprint)
             try:
                 worker.load()
