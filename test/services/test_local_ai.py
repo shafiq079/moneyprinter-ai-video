@@ -6,7 +6,12 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
-from app.models.schema import VideoConcatMode, VideoParams
+from app.models.schema import (
+    VideoConcatMode,
+    VideoFitMode,
+    VideoParams,
+    VideoTransitionMode,
+)
 from app.services import generation_manifest, scene_planner, task, video
 from app.services.local_ai import (
     FAKE_SOURCE_ID,
@@ -1130,6 +1135,66 @@ class TestLocalAITaskIntegration(LocalAITestCase):
         self.assertNotIn(str(self.task_root), json.dumps(script))
         self.assertNotIn(str(self.task_root), json.dumps(plan))
         self.assertNotIn(str(self.task_root), json.dumps(manifest))
+
+    def test_local_ai_composer_preserves_fit_transition_and_output_contract(self):
+        scenes = [
+            SceneSpec(
+                scene_id=1,
+                narration_segment="first",
+                prompt="wide landscape scene",
+                target_duration=1.0,
+                aspect="16:9",
+                seed=42,
+            ),
+            SceneSpec(
+                scene_id=2,
+                narration_segment="second",
+                prompt="second wide landscape scene",
+                target_duration=1.0,
+                aspect="16:9",
+                seed=43,
+            ),
+        ]
+        materials = generate_scene_materials(
+            "composer-contract",
+            provider=FakeLocalVideoProvider(),
+            scenes=scenes,
+        )
+        audio_path = self.make_audio("composer-contract", 2.0)
+        params = VideoParams(
+            video_subject="composer contract",
+            video_script="First. Second.",
+            video_source=FAKE_SOURCE_ID,
+            video_aspect="9:16",
+            video_fit_mode=VideoFitMode.contain,
+            video_concat_mode=VideoConcatMode.sequential,
+            video_transition_mode=VideoTransitionMode.fade_in,
+            video_clip_duration=1,
+            subtitle_enabled=False,
+            bgm_type="",
+            bgm_volume=0,
+            n_threads=1,
+        )
+
+        final_paths, _, warnings = task.generate_final_videos(
+            "composer-contract",
+            params,
+            materials,
+            str(audio_path),
+            "",
+            2.0,
+        )
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(len(final_paths), 1)
+        clip = video._open_video_clip_quietly(final_paths[0], audio=True)
+        try:
+            self.assertEqual(tuple(clip.size), (1080, 1920))
+            self.assertGreaterEqual(clip.duration, 1.8)
+            self.assertLessEqual(clip.duration, 2.3)
+            self.assertIsNotNone(clip.audio)
+        finally:
+            video.close_clip(clip)
 
     def test_full_fake_pipeline_no_voice_never_calls_tts_provider(self):
         task_id = "full-fake-no-voice"
