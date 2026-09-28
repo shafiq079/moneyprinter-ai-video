@@ -108,11 +108,20 @@ class TestVoiceService(unittest.TestCase):
             Path(command[-1]).write_bytes(b"fake-silent-mp3")
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        with tempfile.TemporaryDirectory() as tmp_dir, patch.object(
-            vs.utils,
-            "get_ffmpeg_binary",
-            return_value="/tmp/fake-ffmpeg",
-        ), patch.object(vs.subprocess, "run", side_effect=fake_run):
+        with (
+            tempfile.TemporaryDirectory() as tmp_dir,
+            patch.object(
+                vs.utils,
+                "get_ffmpeg_binary",
+                return_value="/tmp/fake-ffmpeg",
+            ),
+            patch.object(vs.subprocess, "run", side_effect=fake_run),
+            patch.object(
+                vs,
+                "_get_audio_duration_from_file",
+                return_value=3.0,
+            ) as duration_probe,
+        ):
             voice_file = str(Path(tmp_dir) / "silent.mp3")
             sub_maker = vs.tts(
                 text="第一句话。Second sentence.",
@@ -122,6 +131,7 @@ class TestVoiceService(unittest.TestCase):
             )
 
             self.assertEqual(Path(voice_file).read_bytes(), b"fake-silent-mp3")
+            duration_probe.assert_called_once_with(voice_file)
 
         self.assertIsNotNone(sub_maker)
         self.assertEqual(getattr(sub_maker, "subs", []), ["第一句话", "Second sentence"])
