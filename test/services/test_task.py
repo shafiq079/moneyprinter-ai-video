@@ -203,6 +203,7 @@ class TestTaskService(unittest.TestCase):
         with (
             patch.object(tm.video, "combine_videos"),
             patch.object(tm.video, "generate_video", return_value=True),
+            patch.object(tm.voice, "get_audio_duration", return_value=4.2) as measure_audio,
             patch.object(
                 tm.video,
                 "validate_final_video_output",
@@ -226,9 +227,10 @@ class TestTaskService(unittest.TestCase):
                 "final-1.mp4",
             ),
             expected_aspect="9:16",
-            expected_duration=5,
+            expected_duration=4.2,
             require_audio=True,
         )
+        measure_audio.assert_called_once_with("audio.mp3")
 
     def test_generate_final_videos_uses_generated_sonilo_music(self):
         """Sonilo 必须针对每条拼接后的视频生成配乐，并传给最终混音。"""

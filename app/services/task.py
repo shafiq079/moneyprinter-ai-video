@@ -1161,6 +1161,20 @@ def generate_final_videos(
     final_video_paths = []
     combined_video_paths = []
     warnings = []
+    local_ai_final_duration = float(audio_duration or 0)
+    if local_ai.is_local_ai_source(params.video_source):
+        try:
+            measured_audio_duration = float(
+                voice.get_audio_duration(audio_file) or 0
+            )
+        except Exception as exc:
+            logger.warning(
+                "failed to measure local AI narration for final validation; "
+                f"task_id={task_id}, error={type(exc).__name__}"
+            )
+        else:
+            if math.isfinite(measured_audio_duration) and measured_audio_duration > 0:
+                local_ai_final_duration = measured_audio_duration
     allocate_batch_materials = params.video_count > 1 and params.video_source in {
         "pexels", "pixabay", "coverr", "local"
     }
@@ -1314,7 +1328,7 @@ def generate_final_videos(
                     expected_aspect=str(
                         getattr(params.video_aspect, "value", params.video_aspect)
                     ),
-                    expected_duration=audio_duration,
+                    expected_duration=local_ai_final_duration,
                     require_audio=True,
                 )
             except video.FinalVideoValidationError:
