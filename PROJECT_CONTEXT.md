@@ -1,4 +1,4 @@
-# MoneyPrinterTurbo Local AI Video — Project Context
+# MoneyPrinter AI Video — Project Context
 
 Read this file first in every new AI or developer session. `docs/SRS.md` is the full product specification; `docs/MIGRATION_MAP.md` is the file-level porting decision. Update this handoff with every accepted milestone.
 
@@ -6,13 +6,13 @@ Read this file first in every new AI or developer session. `docs/SRS.md` is the 
 
 - **Product base:** `harry0703/MoneyPrinterTurbo` `main`, commit `ad5496f1b729d1d7e361dd972015d26c08b0e052` (verified again on 26 September 2026). The local `upstream` remote points there. Vendor tag: `vendor/mpt-2026-09-26-ad5496f`.
 - **Branches:** `main` is the untouched, stable vendor baseline; `development` is the sole active branch and contains the accepted local-AI implementation work in progress. Create no other branches. Changes go directly onto `development`; after an accepted stabilization point, merge `development` into `main` with a normal merge commit and keep the two-branch policy.
-- **Product remote:** `https://github.com/shafiq079/moneyprinter-ai-video`. Published baseline verified on 27 September 2026: `main` = `ad5496f1b729d1d7e361dd972015d26c08b0e052`, `development` = `7d6980f117126e42c6102e1f8ffe2d83b6079377` before this documentation update. The remote contains only `main` and `development`. `origin` points to this product repository and `upstream` points to `harry0703/MoneyPrinterTurbo`. Do not use the older `shafiq079/MoneyPrinterTurbo` fork for this product.
+- **Product remote:** `https://github.com/shafiq079/moneyprinter-ai-video`. This CPU hardening pass started at `development` commit `269d5c0202492608e2a1309c94afcf1650bea3fc`; `main` remains the pinned vendor baseline `ad5496f1b729d1d7e361dd972015d26c08b0e052`. Use only these two branches. `origin` points to this product repository and `upstream` points to `harry0703/MoneyPrinterTurbo`. Do not use the older `shafiq079/MoneyPrinterTurbo` fork for this product.
 - **Old prototype:** `shafiq079/content-factory` `main` at `a1760488aae68b8c1c1076a26720a14f4368088f` is read-only reference. Its Next.js UI, FastAPI project API, SQLite queue, timeline v7 and renderer are **not** the new application.
-- **Completed:** SRS read and converted to Markdown; upstream and selected prototype files inspected; architecture and migration decisions recorded; **M1 local provider contract/fake CPU path completed**; **M2/M3 Wan integration and operator surface are CPU/CI verified; M4 Scene Director, LTX 2.5 Fast/DFR, and Phase 5 single-scene iteration are implemented on `development`. Phase 5 CI is green. Real Wan/LTX GPU inference and Phase 6 quality measurements remain deferred until hardware is available.
+- **Completed:** SRS conversion, upstream revalidation and migration decisions; M1 fake-provider foundation; M2/M3 Wan integration and operator surface; M4 Scene Director; LTX 2.5 Fast/DFR; Phase 5 scene iteration; render-only rerender, cancellation, cleanup, provenance and security hardening. All are on `development`. Real Wan/LTX inference and Phase 6 quality measurements require GPU hardware and remain deferred.
 
 ## Architecture to preserve
 
-Existing `app/services/task.py` orchestrates script, search terms, narration/custom audio, captions, materials, final render and optional publishing. `app/services/material.py:download_videos()` handles stock and remote generated material. The WebUI is `webui/Main.py`, requests are `app/models/schema.py:VideoParams`, API controllers live under `app/controllers/`, and CLI is `cli.py`. Keep upstream TTS, captions, BGM and MoviePy/FFmpeg composition. Add `wan22_local` and `ltx25_local` as distinct AI video material sources through small integrations and new `app/services/local_ai/` modules. A local scene plan and atomic generation manifest will own persisted scene clips; runtime/GPU management will sit below the existing task manager.
+`app/services/task.py` orchestrates script, search terms, narration/custom audio, captions, materials, final render and optional publishing. `app/services/material.py:download_videos()` handles stock and remote generated material; local AI bypasses it. The WebUI is `webui/Main.py`, requests are `app/models/schema.py:VideoParams`, API controllers live under `app/controllers/`, and CLI is `cli.py`. Keep upstream TTS, captions, BGM and MoviePy/FFmpeg composition. `wan22_local` and `ltx25_local` are distinct local AI video material sources implemented under `app/services/local_ai/`; the task-local scene plan and atomic generation manifest own persisted scene clips. Runtime management sits below the existing task manager.
 
 ## Current-upstream revalidation and SRS refinements
 
@@ -48,17 +48,14 @@ Wan configuration is operator-owned through `[wan22_local]` / environment settin
 
 M3 exposed `wan22_local` through WebUI, CLI and API using the same provider/preflight rules, added the readiness button and CLI/API preflight commands, documented operator setup in `docs/LOCAL_AI_VIDEO.md`, kept model/checkpoint paths out of public task requests, and left the fake provider internal. The M3 registration commit `09dbdae49cc8533c37f22560bf8c5a80bc3626a3` revealed two stale regression expectations; follow-up `7a6775bfb7e6fec73188f99b9daae6cb613c2927` aligned the Agent Skill exception and WebUI group test. CI run `36325467280` passed Windows smoke, Python 3.11, Python 3.13 and Ruff.
 
-## Exact next milestone: M4 Scene Director quality
+## Current development boundary
 
-Upgrade the minimal local scene planner without changing Wan inference. Planning happens only after narration duration is known and must preserve the already-generated narration text. Persist a canonical `scene_plan.json` so retries reuse the same prompts and do not invalidate completed scene clips just because an LLM answers differently. Add narrative beats, a project visual bible, concrete shot/camera direction, continuity notes and text/logo exclusions. Use the already configured MoneyPrinter LLM for visual direction when available, with a deterministic CPU-safe fallback. Expose a read-only prompt preview in the existing WebUI. Do not start LTX, scene regeneration/editing, factual research, or a frontend rewrite in M4.
-
-## Current development boundary after Phase 5
-
-Phase 5 single-scene regeneration is implemented and CI verified on
-`ce5f299564cf3c7b4945f93e0c83bfe576191406`: Windows smoke, Python 3.11
-and Python 3.13 all passed. The next roadmap phase is GPU quality tuning, but
-real GPU execution is intentionally deferred because no validation hardware is
-currently available.
+Phase 5 single-scene regeneration was CI verified on
+`ce5f299564cf3c7b4945f93e0c83bfe576191406`. Subsequent commits added
+version restore, render-only rerender, cooperative cancellation, safe cleanup,
+provenance and metadata redaction through the starting SHA above. The next
+hardware-dependent milestone is real Wan/LTX GPU validation and quality tuning;
+do not claim model quality or GPU performance from CPU fake-provider tests.
 
 Development may continue without blocking on hardware. Phase 6 tooling provides
 `scripts/local_ai_benchmark.py`, which will later run identical prompts across
@@ -66,6 +63,38 @@ Wan 2.2, LTX Fast and LTX Quality and record timing/media/GPU telemetry. Do not
 invent default-quality conclusions before those real measurements exist.
 Optional factual workflow and a larger editor remain non-blocking and should
 only be started for an explicit product need.
+
+## CPU integration and hardening pass
+
+Starting from `269d5c0202492608e2a1309c94afcf1650bea3fc`, the locked
+Python 3.11 and 3.13 environments were installed with `uv sync --frozen`.
+The CPU fake provider completed the real task pipeline from supplied script
+through offline narration, scene planning, three versioned scenes, subtitles,
+stock BGM mixing, final MP4 and persisted state/artifacts. The stock/remote
+material downloader was excluded. CLI source/mode/seed/style and stop-at
+checks, FastAPI preflight/submission/state/cancellation/error routes, Streamlit
+AppTest source controls and live HTTP health were exercised. Existing tests
+cover scene edit/restore, corrupt cache reuse, render-only rerender, cancellation
+boundaries, cleanup dry-run/apply, and provider metadata redaction. New tests
+also verify generated BGM reuse without paid requests or new narration/AI,
+failed final-rerender rollback and a full fake-provider task.
+
+The pass found that `MemoryState.update_task` replaced the whole record at
+every progress step, silently dropping cancellation requests made during a
+stage and discarding local-AI provenance from later task state. It now merges
+fields atomically like `RedisState`; failure return snapshots include retained
+fields. A missing `SceneSpec` import in a security test was also fixed.
+No model weights, CUDA setup or actual Wan/LTX inference were run. Browser
+automation could not reach this container's localhost; Streamlit AppTest and
+same-process HTTP health provided the practical UI/startup checks.
+The final Python 3.11 full suite passed with **1407 passed, 19 skipped and
+10624 subtests passed**; overall coverage with branch measurement was
+**77%**, above the configured
+70% CI floor. The sequential Python 3.13 full suite also passed with
+**1407 passed, 19 skipped and 10624 subtests passed**, and **77%** coverage.
+Linux execution of the Windows smoke subset passed with
+**187 passed, 5 skipped and 70 subtests passed**. Check GitHub Actions at the
+latest `development` commit for the actual Windows runner result.
 
 ## Verification and working protocol
 
@@ -75,4 +104,4 @@ M1 is verified by GitHub Actions on commit `ef007c85ffc64d18366861fe7eab6246d388
 
 M2's production-provider implementation and subsequent hardening commits are CPU-tested only. Commit `258323657245be1b680a11f49d406fc40aefd40f` passed Windows smoke, Python 3.11 and Python 3.13 jobs with **1340 passed, 16 skipped, 10622 subtests passed** and about **80% total coverage**. The final code-only follow-up `e0a363bd82641c153f8485e48a09462b7c938bd5` adds only import-package metadata for the isolated Wan worker; its Python 3.11 full suite, Ruff and Windows smoke checks passed before this documentation update. There was no real GPU run, Wan inference, LTX inference or model benchmark.
 
-On the next session: `git fetch upstream`, `git switch development`, inspect `git status`, check that `development` contains `main`, read this file, `docs/SRS.md` Sections 3/9/19/20, then `docs/MIGRATION_MAP.md`. Recheck `upstream/main` for changes before M3; do not silently merge upstream into the product. Preserve upstream MIT `LICENSE`, do not commit model weights, keep the fake provider test-only, keep Wan model paths out of task payloads, and use the existing `uv.lock` / CI commands for regression runs.
+On the next session: fetch `origin/development`, inspect `git status`, read this file, `docs/SRS.md`, `docs/MIGRATION_MAP.md` and `docs/LOCAL_AI_VIDEO.md`. Recheck `upstream/main` before any deliberate upstream integration; do not silently merge it. Preserve upstream MIT `LICENSE`, do not commit model weights, keep the fake provider test-only, keep provider host paths out of persisted metadata, and use the existing `uv.lock` / CI commands for regression runs.
