@@ -380,6 +380,54 @@ class TestVideoControllerTasks(unittest.TestCase):
             sm.state.delete_task(task_id)
             shutil.rmtree(task_dir, ignore_errors=True)
 
+    def test_task_query_exposes_local_ai_artifact_package(self):
+        task = {
+            "task_id": "local-ai-artifacts",
+            "state": const.TASK_STATE_COMPLETE,
+            "progress": 100,
+        }
+        package = {
+            "schema_version": 1,
+            "task_id": "local-ai-artifacts",
+            "final_videos": ["final-1.mp4"],
+            "combined_videos": ["combined-1.mp4"],
+            "script": "script.json",
+            "captions": "subtitle.srt",
+            "audio": "audio.mp3",
+            "scene_plan": "scene_plan.json",
+            "generation_manifest": "generated_ai/generation_manifest.json",
+            "scene_materials": ["generated_ai/scene-001/v001.mp4"],
+        }
+
+        with (
+            patch.object(
+                video_controller.sm.state,
+                "get_task",
+                return_value=task,
+            ),
+            patch.object(
+                video_controller.task_artifacts,
+                "has_local_ai_output_package",
+                return_value=True,
+            ),
+            patch.object(
+                video_controller.task_artifacts,
+                "build_output_package",
+                return_value=package,
+            ) as build_package,
+        ):
+            response = video_controller.get_task(
+                self._request(),
+                task_id="local-ai-artifacts",
+                query=MagicMock(),
+            )
+
+        self.assertEqual(response["data"]["artifact_package"], package)
+        build_package.assert_called_once_with(
+            "local-ai-artifacts",
+            task_state=task,
+        )
+
     def test_task_query_preserves_structured_failure_details(self):
         """失败阶段和错误信息必须通过任务查询接口原样返回。"""
         failed_task = {
@@ -414,6 +462,11 @@ class TestVideoControllerTasks(unittest.TestCase):
         ]
         self.assertIn("failed_stage", task_data_schema["properties"])
         self.assertIn("cross_post_state", task_data_schema["properties"])
+        self.assertIn("artifact_package", task_data_schema["properties"])
+        self.assertIn(
+            "TaskArtifactPackageData",
+            TaskQueryResponse.model_json_schema()["$defs"],
+        )
 
         list_schema = TaskListResponse.model_json_schema()
         self.assertIn("TaskListData", list_schema["$defs"])

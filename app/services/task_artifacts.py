@@ -94,3 +94,153 @@ def patch_script_data(task_id: str, **updates: Any) -> bool:
             f"error={type(exc).__name__}, detail={exc}"
         )
         return False
+
+OUTPUT_PACKAGE_SCHEMA_VERSION = 1
+
+
+def _task_root(task_id: str) -> Path:
+    return Path(utils.task_dir(task_id)).resolve()
+
+
+def _task_relative_existing_file(
+    task_id: str,
+    value: str | os.PathLike[str] | None,
+) -> str | None:
+    """Return one existing task-local file as a portable relative path."""
+
+    if not value:
+        return None
+
+    root = _task_root(task_id)
+    candidate_value = Path(str(value))
+    candidate = (
+        candidate_value.resolve()
+        if candidate_value.is_absolute()
+        else (root / candidate_value).resolve()
+    )
+    try:
+        relative = candidate.relative_to(root)
+    except ValueError:
+        return None
+    if not candidate.is_file():
+        return None
+    return relative.as_posix()
+
+
+def _discover_indexed_files(task_id: str, prefix: str) -> list[str]:
+    root = _task_root(task_id)
+    if not root.is_dir():
+        return []
+
+    discovered: list[tuple[int, str]] = []
+    for candidate in root.glob(f"{prefix}-*.mp4"):
+        if not candidate.is_file():
+            continue
+        stem_suffix = candidate.stem.removeprefix(f"{prefix}-")
+        try:
+            index = int(stem_suffix)
+        except ValueError:
+            continue
+        discovered.append((index, candidate.relative_to(root).as_posix()))
+    return [relative for _, relative in sorted(discovered)]
+
+
+def _relative_files_from_state(
+    task_id: str,
+    values: Any,
+    *,
+    fallback_prefix: str,
+) -> list[str]:
+    if not isinstance(values, (list, tuple)):
+        values = []
+
+    result: list[str] = []
+    for value in values:
+        relative = _task_relative_existing_file(task_id, value)
+        if relative and relative not in result:
+            result.append(relative)
+    if result:
+        return result
+    return _discover_indexed_files(task_id, fallback_prefix)
+
+
+def build_output_package(
+    task_id: str,
+    task_state: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a portable artifact index for one task.
+
+    All returned paths are relative to the task directory. Missing optional
+    artifacts are represented as None or empty lists; host paths are never
+    serialized into the package.
+    """
+
+    state = dict(task_state or {})
+    root = _task_root(task_id)
+
+    final_videos = _relative_files_from_state(
+        task_id,
+        state.get("videos"),
+        fallback_prefix="final",
+    )
+    combined_videos = _relative_files_from_state(
+        task_id,
+        state.get("combined_videos"),
+        fallback_prefix="combined",
+    )
+
+    script_file = _task_relative_existing_file(task_id, root / "script.json")
+    subtitle_file = _task_relative_existing_file(
+        task_id,
+        state.get("subtitle_path") or root / "subtitle.srt",
+    )
+    audio_file = _task_relative_existing_file(
+        task_id,
+        state.get("audio_file") or root / "audio.mp3",
+    )
+    scene_plan = _task_relative_existing_file(task_id, root / "scene_plan.json")
+    generation_manifest = _task_relative_existing_file(
+        task_id,
+        root / "generated_ai" / "generation_manifest.json",
+    )
+
+    scene_materials: list[str] = []
+    if generation_manifest:
+        # Local import avoids coupling the generic script-artifact writer to
+        # the local-AI manifest module during normal module initialization.
+        from app.services import generation_manifest as local_ai_manifest
+
+        try:
+            records = local_ai_manifest.local_ai_material_records(task_id)
+        except (OSError, ValueError):
+            records = []
+        for record in records:
+            relative = _task_relative_existing_file(
+                task_id,
+                record.get("asset"),
+            )
+            if relative and relative not in scene_materials:
+                scene_materials.append(relative)
+
+    return {
+        "schema_version": OUTPUT_PACKAGE_SCHEMA_VERSION,
+        "task_id": str(task_id),
+        "final_videos": final_videos,
+        "combined_videos": combined_videos,
+        "script": script_file,
+        "captions": subtitle_file,
+        "audio": audio_file,
+        "scene_plan": scene_plan,
+        "generation_manifest": generation_manifest,
+        "scene_materials": scene_materials,
+    }
+
+
+def has_local_ai_output_package(task_id: str) -> bool:
+    """Return whether a task contains the local-AI manifest/scene-plan package."""
+
+    root = _task_root(task_id)
+    return (
+        (root / "scene_plan.json").is_file()
+        and (root / "generated_ai" / "generation_manifest.json").is_file()
+    )

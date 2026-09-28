@@ -289,6 +289,21 @@ class TaskResponseData(BaseModel):
     task_id: str
 
 
+class TaskArtifactPackageData(BaseModel):
+    """Portable, task-relative index of generated output artifacts."""
+
+    schema_version: int = 1
+    task_id: str
+    final_videos: List[str] = Field(default_factory=list)
+    combined_videos: List[str] = Field(default_factory=list)
+    script: Optional[str] = None
+    captions: Optional[str] = None
+    audio: Optional[str] = None
+    scene_plan: Optional[str] = None
+    generation_manifest: Optional[str] = None
+    scene_materials: List[str] = Field(default_factory=list)
+
+
 class TaskStatusData(BaseModel):
     """任务查询对外保证的稳定字段；历史和扩展字段继续原样透传。"""
 
@@ -299,6 +314,7 @@ class TaskStatusData(BaseModel):
     progress: int = 0
     videos: Optional[List[str]] = None
     combined_videos: Optional[List[str]] = None
+    artifact_package: Optional[TaskArtifactPackageData] = None
     failed_stage: Optional[str] = None
     error: Optional[str] = None
     cross_post_state: Optional[

@@ -65,6 +65,7 @@ from app.services import elevenlabs_music as elevenlabs_music_service
 from app.services import sonilo as sonilo_service
 from app.services import state as sm
 from app.services import task as tm
+from app.services import task_artifacts
 from app.services import version_checker
 from app.utils.logging_utils import configure_terminal_logger
 from app.utils import utils
@@ -1417,9 +1418,47 @@ def _render_scene_editor() -> None:
                         st.rerun(scope="fragment")
 
 
+def _select_artifact_package_task(task_id: str) -> None:
+    st.session_state["artifact_package_task_id"] = str(task_id)
+
+
+def _render_artifact_package_view() -> None:
+    task_id = str(st.session_state.get("artifact_package_task_id") or "")
+    if not task_id:
+        return
+
+    try:
+        task_state = sm.state.get_task(task_id) or {}
+    except Exception:
+        task_state = {}
+
+    try:
+        package = task_artifacts.build_output_package(
+            task_id,
+            task_state=task_state,
+        )
+    except (OSError, ValueError) as exc:
+        st.warning(f"{tr('Artifact Package Unavailable')}: {exc}")
+        return
+
+    st.divider()
+    header_cols = st.columns([5, 1], vertical_alignment="center")
+    header_cols[0].subheader(tr("Artifact Package"))
+    if header_cols[1].button(
+        tr("Close"),
+        key=f"close_artifact_package_{task_id}",
+        use_container_width=True,
+    ):
+        st.session_state.pop("artifact_package_task_id", None)
+        return
+
+    st.caption(tr("Artifact Package Help"))
+    st.json(package)
+
+
 def _render_task_table(filtered_tasks, key_prefix):
     with st.container(key=f"task_table_header_{key_prefix}"):
-        header_cols = st.columns([1.1, 1.7, 3.0, 0.8, 2.4], vertical_alignment="center")
+        header_cols = st.columns([1.1, 1.7, 3.0, 0.8, 2.8], vertical_alignment="center")
         header_cols[0].caption(tr("Task Status"))
         header_cols[1].caption(tr("Task Updated At"))
         header_cols[2].caption(tr("Task Subject"))
@@ -1444,6 +1483,9 @@ def _render_task_table(filtered_tasks, key_prefix):
             has_scene_plan = os.path.isfile(
                 os.path.join(task["task_path"], "scene_plan.json")
             )
+            has_artifact_package = (
+                task_artifacts.has_local_ai_output_package(task_id)
+            )
             safe_task_key = "".join(ch if ch.isalnum() else "_" for ch in task_id)[:40]
 
             # 使用 Streamlit 原生 bordered container + columns 保留每行操作。
@@ -1453,7 +1495,7 @@ def _render_task_table(filtered_tasks, key_prefix):
                 key=f"task_row_{key_prefix}_{safe_task_key}", border=True
             ):
                 row_cols = st.columns(
-                    [1.1, 1.7, 3.0, 0.8, 2.4],
+                    [1.1, 1.7, 3.0, 0.8, 2.8],
                     vertical_alignment="center",
                 )
                 row_cols[0].write(_task_state_label(task["state"], has_video))
@@ -1462,7 +1504,7 @@ def _render_task_table(filtered_tasks, key_prefix):
                 row_cols[3].write(f"{task['progress']}%")
 
                 action_cols = row_cols[4].columns(
-                    6,
+                    7,
                     vertical_alignment="center",
                     gap="small",
                 )
@@ -1514,6 +1556,18 @@ def _render_task_table(filtered_tasks, key_prefix):
                         _select_scene_editor_task(task_id)
 
                 with action_cols[4]:
+                    artifacts_label = tr("Artifacts")
+                    if st.button(
+                        artifacts_label,
+                        key=f"artifacts_task_{key_prefix}_{task_id}",
+                        use_container_width=True,
+                        icon=":material/inventory_2:",
+                        help=artifacts_label,
+                        disabled=is_processing or not has_artifact_package,
+                    ):
+                        _select_artifact_package_task(task_id)
+
+                with action_cols[5]:
                     cancel_label = tr("Cancel Task")
                     if st.button(
                         cancel_label,
@@ -1528,7 +1582,7 @@ def _render_task_table(filtered_tasks, key_prefix):
                         else:
                             st.warning(tr("Cancellation Unavailable"))
 
-                with action_cols[5]:
+                with action_cols[6]:
                     delete_label = tr("Delete Task")
                     delete_help = (
                         f"{delete_label} ({tr('Task Status Processing')})"
@@ -1581,6 +1635,8 @@ def _render_task_manager_panel(tasks=None):
             _render_task_table(filtered_tasks, status_key)
 
     _render_scene_editor()
+
+    _render_artifact_package_view()
 
     _render_task_video_preview()
 

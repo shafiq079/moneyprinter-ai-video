@@ -41,6 +41,35 @@ def _log_record(file_path, message="generation finished"):
     }
 
 
+def test_task_history_exposes_local_ai_artifact_package_view():
+    tree = ast.parse(WEBUI_MAIN.read_text(encoding="utf-8"))
+    functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+    }
+
+    task_table_calls = {
+        _attribute_name(node.func)
+        for node in ast.walk(functions["_render_task_table"])
+        if isinstance(node, ast.Call)
+    }
+    artifact_view_calls = {
+        _attribute_name(node.func)
+        for node in ast.walk(functions["_render_artifact_package_view"])
+        if isinstance(node, ast.Call)
+    }
+    manager_calls = {
+        _attribute_name(node.func)
+        for node in ast.walk(functions["_render_task_manager_panel"])
+        if isinstance(node, ast.Call)
+    }
+
+    assert "_select_artifact_package_task" in task_table_calls
+    assert "task_artifacts.build_output_package" in artifact_view_calls
+    assert "_render_artifact_package_view" in manager_calls
+
+
 def test_generation_controls_expose_same_task_local_ai_rerender():
     tree = ast.parse(WEBUI_MAIN.read_text(encoding="utf-8"))
     function = next(

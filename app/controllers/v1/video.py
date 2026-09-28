@@ -36,6 +36,7 @@ from app.services import local_ai
 from app.services import material_upload as material_upload_service
 from app.services import state as sm
 from app.services import task as tm
+from app.services import task_artifacts
 from app.utils import file_security, utils
 
 # 统一在 V1 视频路由入口执行鉴权。verify_token 会在 api_key 为空时
@@ -100,9 +101,27 @@ def _resolve_path_within_directory(base_dir: str, unsafe_path: str, request_id: 
 
 
 def _public_task_data(task: dict) -> dict:
-    """复制任务状态并移除仅用于服务端进程协调的内部字段。"""
+    """复制任务状态、移除内部字段并补充可移植的本地 AI 产物索引。"""
     public_task = dict(task)
     public_task.pop("cross_post_owner", None)
+
+    task_id = str(task.get("task_id") or "").strip()
+    if task_id:
+        try:
+            if task_artifacts.has_local_ai_output_package(task_id):
+                public_task["artifact_package"] = (
+                    task_artifacts.build_output_package(
+                        task_id,
+                        task_state=task,
+                    )
+                )
+        except (OSError, ValueError) as exc:
+            # 产物索引属于附加可发现性信息。历史任务中的单个损坏文件不能让
+            # 状态查询本身变成 500；保留日志，让操作者仍可定位文件系统问题。
+            logger.warning(
+                "failed to build local AI artifact package: "
+                f"task_id={task_id}, error={type(exc).__name__}: {exc}"
+            )
     return public_task
 
 
