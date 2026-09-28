@@ -949,6 +949,101 @@ class TestLocalAISceneRegeneration(LocalAITestCase):
             original_plan.scenes[1].prompt,
         )
 
+    def test_scene_regeneration_rerenders_without_tts_or_caption_regeneration(self):
+        task_id = "scene-edit-keeps-audio-caption"
+        params, _ = self._prepare_task(task_id)
+        params = params.model_copy(update={"subtitle_enabled": True})
+        task.save_script_data(task_id, params.video_script, [], params)
+
+        audio_path = self.task_root / task_id / "audio.mp3"
+        subtitle_path = self.task_root / task_id / "subtitle.srt"
+        subtitle_path.write_text(
+            "1\n00:00:00,000 --> 00:00:01,900\nA first idea.\n\n",
+            encoding="utf-8",
+        )
+        final_path = self.task_root / task_id / "final-1.mp4"
+        combined_path = self.task_root / task_id / "combined-1.mp4"
+        final_path.write_bytes(b"existing-final")
+        combined_path.write_bytes(b"existing-combined")
+
+        state = MemoryState()
+        state.update_task(
+            task_id,
+            state=task.const.TASK_STATE_COMPLETE,
+            progress=100,
+            audio_file=str(audio_path),
+            audio_duration=2.0,
+            subtitle_path=str(subtitle_path),
+            videos=[str(final_path)],
+            combined_videos=[str(combined_path)],
+        )
+        replacement = FakeLocalVideoProvider()
+
+        with (
+            patch.object(task.sm, "state", state),
+            patch.object(task.local_ai, "is_public_source", return_value=True),
+            patch.object(
+                task.local_ai,
+                "prepare_provider",
+                return_value=replacement,
+            ),
+            patch.object(
+                task,
+                "generate_audio",
+                side_effect=AssertionError("visual regeneration must not regenerate audio"),
+            ) as generate_audio,
+            patch.object(
+                task,
+                "generate_subtitle",
+                side_effect=AssertionError(
+                    "visual regeneration must not regenerate subtitles"
+                ),
+            ) as generate_subtitle,
+            patch.object(
+                task.voice,
+                "tts",
+                side_effect=AssertionError("visual regeneration must not call TTS"),
+            ) as tts,
+            patch.object(
+                task.subtitle,
+                "create",
+                side_effect=AssertionError(
+                    "visual regeneration must not call caption generation"
+                ),
+            ) as caption_create,
+            patch.object(
+                task,
+                "generate_final_videos",
+                return_value=(
+                    [str(final_path)],
+                    [str(combined_path)],
+                    [],
+                ),
+            ) as render,
+        ):
+            result = task.regenerate_local_ai_scene(
+                task_id,
+                1,
+                prompt="A visual-only replacement for the first scene.",
+                seed=101,
+            )
+
+        self.assertEqual(replacement.generated_scene_ids, [1])
+        render.assert_called_once()
+        render_args = render.call_args.args
+        self.assertEqual(render_args[0], task_id)
+        self.assertEqual(render_args[3], str(audio_path))
+        self.assertEqual(render_args[4], str(subtitle_path))
+        self.assertEqual(render_args[5], 2.0)
+        self.assertTrue(render.call_args.kwargs["reuse_existing_generated_bgm"])
+        generate_audio.assert_not_called()
+        generate_subtitle.assert_not_called()
+        tts.assert_not_called()
+        caption_create.assert_not_called()
+        self.assertEqual(result["videos"], [str(final_path)])
+        self.assertEqual(state.get_task(task_id)["audio_file"], str(audio_path))
+        self.assertEqual(state.get_task(task_id)["subtitle_path"], str(subtitle_path))
+
     def test_failed_scene_edit_preserves_previous_active_asset_and_plan(self):
         task_id = "scene-edit-failure"
         _, original_plan = self._prepare_task(task_id)
