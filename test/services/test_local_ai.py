@@ -844,6 +844,57 @@ class TestLocalAIProvenance(LocalAITestCase):
         self.assertIn("generation_settings", record)
 
 
+class TestLocalAIStoragePreflight(LocalAITestCase):
+    def test_prepare_provider_checks_writable_storage_before_provider_preflight(self):
+        from app.services import local_ai
+
+        provider = FakeLocalVideoProvider()
+        with (
+            patch.object(
+                local_ai,
+                "create_provider",
+                return_value=provider,
+            ),
+            patch.object(
+                provider,
+                "preflight",
+            ) as provider_preflight,
+            patch.object(
+                local_ai.tempfile,
+                "NamedTemporaryFile",
+                side_effect=PermissionError("read-only"),
+            ),
+            self.assertRaises(local_ai.LocalAIStorageError),
+        ):
+            local_ai.prepare_provider("wan22_local")
+
+        provider_preflight.assert_not_called()
+
+    def test_preflight_status_returns_actionable_storage_error(self):
+        from app.services import local_ai
+
+        with (
+            patch.object(
+                local_ai,
+                "create_provider",
+                return_value=FakeLocalVideoProvider(),
+            ),
+            patch.object(
+                local_ai.tempfile,
+                "NamedTemporaryFile",
+                side_effect=PermissionError("read-only"),
+            ),
+        ):
+            status = local_ai.preflight_status("wan22_local")
+
+        self.assertFalse(status["ready"])
+        self.assertEqual(
+            status["error_type"],
+            "LocalAIStorageError",
+        )
+        self.assertIn("not writable", status["message"])
+
+
 class TestLocalAITaskIntegration(LocalAITestCase):
     def test_fake_source_is_disabled_outside_explicit_test_mode(self):
         from app.services import local_ai

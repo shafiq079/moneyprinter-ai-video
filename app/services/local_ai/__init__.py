@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 
 from .base import (
     GenerationResult,
@@ -17,12 +18,48 @@ from .ltx25 import (
     LTX25LocalProvider,
     LTX25WorkerError,
 )
+from app.utils import utils
+
 from .wan22 import (
     WAN22_SOURCE_ID,
     Wan22ConfigurationError,
     Wan22LocalProvider,
     Wan22WorkerError,
 )
+
+
+class LocalAIStorageError(RuntimeError):
+    """Raised when local AI task storage cannot safely accept generated assets."""
+
+
+def validate_output_storage() -> None:
+    """Prove task storage is writable before script/TTS/GPU work starts."""
+
+    try:
+        task_root = utils.task_dir()
+        os.makedirs(task_root, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix=".local-ai-preflight-",
+            suffix=".tmp",
+            dir=task_root,
+            delete=False,
+        ) as stream:
+            probe_path = stream.name
+            stream.write(b"local-ai-output-preflight")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.remove(probe_path)
+    except Exception as exc:
+        probe_path = locals().get("probe_path")
+        if probe_path:
+            try:
+                os.remove(probe_path)
+            except OSError:
+                pass
+        raise LocalAIStorageError(
+            "local AI task output storage is not writable"
+        ) from exc
 
 
 FAKE_SOURCE_ID = FakeLocalVideoProvider.provider_id
@@ -78,6 +115,7 @@ def prepare_provider(
     generation_mode: str = "fast",
 ) -> LocalVideoProvider:
     provider = create_provider(source, generation_mode=generation_mode)
+    validate_output_storage()
     provider.preflight()
     return provider
 
@@ -113,6 +151,7 @@ def preflight_status(
                 Wan22WorkerError,
                 LTX25ConfigurationError,
                 LTX25WorkerError,
+                LocalAIStorageError,
             ),
         ):
             message = str(exc)
@@ -162,6 +201,7 @@ __all__ = [
     "FAKE_SOURCE_ID",
     "GenerationResult",
     "LocalAICancellationRequested",
+    "LocalAIStorageError",
     "LTX25_SOURCE_ID",
     "LTX25LocalProvider",
     "LocalAISceneGenerationError",
@@ -182,4 +222,5 @@ __all__ = [
     "provider_base_seed",
     "provider_generation_settings",
     "scene_duration_limit",
+    "validate_output_storage",
 ]
