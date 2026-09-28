@@ -464,6 +464,56 @@ class TestVideoService(unittest.TestCase):
                 self.assertEqual(voice_source.close_calls, 1)
                 self.assertEqual(final_video.close_calls, 1)
 
+    def test_generate_video_preserves_voice_and_bgm_gain_controls(self):
+        """Local-AI footage uses this same composer, so audio gain controls must remain intact."""
+        params = vd.VideoParams(
+            video_subject="test",
+            subtitle_enabled=False,
+            voice_volume=0.65,
+            bgm_type="sonilo",
+            bgm_volume=0.15,
+        )
+        source_video = _FakeMoviePyClip()
+        voice_source = _FakeMoviePyClip()
+        bgm_source = _FakeMoviePyClip()
+        mixed_audio = _FakeMoviePyClip()
+        final_video = _FakeMoviePyClip()
+        source_video.with_audio_result = final_video
+
+        with (
+            patch.object(
+                vd,
+                "_open_video_clip_quietly",
+                return_value=source_video,
+            ),
+            patch.object(
+                vd,
+                "AudioFileClip",
+                side_effect=[voice_source, bgm_source],
+            ),
+            patch.object(vd.afx, "MultiplyVolume") as multiply_volume,
+            patch.object(vd.afx, "AudioFadeOut"),
+            patch.object(vd, "CompositeAudioClip", return_value=mixed_audio),
+            patch.object(vd, "_write_videofile_with_codec_fallback"),
+            patch.object(
+                vd, "_get_configured_video_codec", return_value="libx264"
+            ),
+        ):
+            result = vd.generate_video(
+                video_path="combined.mp4",
+                audio_path="voice.mp3",
+                subtitle_path="",
+                output_file="final.mp4",
+                params=params,
+                bgm_file_override="generated-bgm.wav",
+            )
+
+        self.assertTrue(result)
+        self.assertEqual(
+            [call.args[0] for call in multiply_volume.call_args_list],
+            [0.65, 0.15],
+        )
+
     def test_generate_video_chooses_looping_by_bgm_file_source(self):
         """默认曲库需要循环，任务层提供的时长适配文件不应依赖提供商名称。"""
         test_cases = [
