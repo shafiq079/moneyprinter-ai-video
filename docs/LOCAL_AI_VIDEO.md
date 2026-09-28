@@ -145,6 +145,22 @@ USD 10,000,000 require a paid license for commercial use except for the
 license's defined non-commercial cases. This project does not redistribute LTX
 model weights, and this note is not legal advice.
 
+## Local AI generation telemetry
+
+The generation manifest records CPU-safe wall-clock telemetry for local
+providers:
+
+- last/total runtime-load or runtime-reuse time and load count;
+- per-scene generation time;
+- per-scene validation time;
+- the same timings in version metadata so regenerated scene versions retain
+  their own generation history.
+
+Providers may expose an optional `runtime_telemetry()` dictionary. It is passed
+through the same metadata sanitizer before persistence; credential-like fields
+and host paths are removed. Real GPU memory metrics should be supplied only
+when the installed GPU runtime can measure them reliably.
+
 ## Deferred GPU benchmark harness
 
 The benchmark tooling can be developed and CI-tested without a GPU. Do not treat
@@ -175,6 +191,21 @@ product; checkpoint/repository paths are not added to the report.
 Actual default tuning, provider comparisons and hardware guidance remain
 deferred until those measurements are collected on real hardware.
 
+## No Voice and output artifacts
+
+The existing **No Voiceover** selection is a real local-AI production path. It
+does not call a speech provider. MoneyPrinterTurbo writes a deterministic silent
+timing track so the existing scene planner/composer has a duration reference;
+custom uploaded audio still takes precedence. If captions are enabled, No Voice
+uses the script-derived timing data rather than transcribing silence with
+Whisper.
+
+Completed local-AI tasks expose a portable artifact package through existing
+task/history/API surfaces. It uses safe task-relative references for final and
+combined videos, script, captions, audio, `scene_plan.json`,
+`generated_ai/generation_manifest.json`, and active generated scene clips.
+Host model/checkpoint paths and credentials are not part of this package.
+
 ## Local AI disk cleanup
 
 Generated scene versions are intentionally retained for comparison and rollback.
@@ -202,16 +233,21 @@ command is dry-run by default and supports `--task-id` plus policy overrides.
 
 ## Runtime and deployment boundaries
 
-- Wan model inference is serialized inside one MoneyPrinterTurbo process.
-- The Wan worker is persistent across compatible tasks so the model can be
-  reused instead of reloaded per scene.
-- Switching local model families can evict the previous family runtime.
-- This is **not** a multi-process GPU lock. Run local GPU inference through one
-  application worker process until a cross-process guard or dedicated GPU
-  service is implemented.
-- Real Wan inference, VRAM usage, generation speed and visual quality still need
-  validation on the exact deployment GPU. CPU CI validates contracts and mocked
-  runtime behavior only.
+- Wan and LTX keep their compatible local workers persistent so the heavyweight
+  runtime can be reused across scenes/tasks instead of reloaded per scene.
+- `LocalAIRuntimeManager` uses an in-process reentrant lock plus a
+  cross-process OS advisory lock keyed by configured CUDA device. Lock files are
+  stored under `storage/local_ai_locks/gpu-N.lock`.
+- The lock is reentrant for nested provider calls within the same task, so the
+  outer generation session can safely call runtime load/generation helpers.
+- Independent application worker processes targeting the same CUDA device are
+  serialized at this boundary; different device indices use different locks.
+- Switching local model families on the same device can still evict the
+  previous family runtime before the next family initializes.
+- CPU tests cover thread/process serialization and reentrancy. Real
+  multi-process CUDA contention, VRAM usage, generation speed and visual quality
+  still need validation on the exact deployment GPU before operational
+  throughput claims.
 
 ## Troubleshooting
 

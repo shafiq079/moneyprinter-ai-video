@@ -8,7 +8,7 @@ Read this file first in every new AI or developer session. `docs/SRS.md` is the 
 - **Branches:** `main` is the untouched, stable vendor baseline; `development` is the sole active branch and contains the accepted local-AI implementation work in progress. Create no other branches. Changes go directly onto `development`; after an accepted stabilization point, merge `development` into `main` with a normal merge commit and keep the two-branch policy.
 - **Product remote:** `https://github.com/shafiq079/moneyprinter-ai-video`. This CPU hardening pass started at `development` commit `269d5c0202492608e2a1309c94afcf1650bea3fc`; `main` remains the pinned vendor baseline `ad5496f1b729d1d7e361dd972015d26c08b0e052`. Use only these two branches. `origin` points to this product repository and `upstream` points to `harry0703/MoneyPrinterTurbo`. Do not use the older `shafiq079/MoneyPrinterTurbo` fork for this product.
 - **Old prototype:** `shafiq079/content-factory` `main` at `a1760488aae68b8c1c1076a26720a14f4368088f` is read-only reference. Its Next.js UI, FastAPI project API, SQLite queue, timeline v7 and renderer are **not** the new application.
-- **Completed:** SRS conversion, upstream revalidation and migration decisions; M1 fake-provider foundation; M2/M3 Wan integration and operator surface; M4 Scene Director; LTX 2.5 Fast/DFR; Phase 5 scene iteration; render-only rerender, cancellation, cleanup, provenance and security hardening. All are on `development`. Real Wan/LTX inference and Phase 6 quality measurements require GPU hardware and remain deferred.
+- **Completed:** SRS conversion, upstream revalidation and migration decisions; M1 fake-provider foundation; M2/M3 Wan integration and operator surface; M4 Scene Director; LTX 2.5 Fast/DFR; Phase 5 scene iteration; render-only rerender, cancellation, cleanup, provenance/security hardening, true No-Voice local-AI rendering, portable local-AI output packages, per-GPU cross-process runtime serialization, and persisted local-AI timing telemetry. All are on `development`. Real Wan/LTX inference and Phase 6 quality measurements require GPU hardware and remain deferred.
 
 ## Architecture to preserve
 
@@ -18,9 +18,9 @@ Read this file first in every new AI or developer session. `docs/SRS.md` is the 
 
 1. Upstream `harry0703/MoneyPrinterTurbo` moved on 27 September 2026 from the pinned vendor baseline `ad5496f1b729d1d7e361dd972015d26c08b0e052` to `8e259e9f072c9e08464f040cd658d4eb046a57d0`. The one new upstream commit changes Redis task traversal/cross-post recovery in `app/services/state.py`, `app/services/task.py` and their tests. It is **not merged** into this product during M4; keep the vendor baseline pinned and reconcile upstream deliberately at a stabilization point.
 2. Upstream already measures **written TTS audio** (with a duration ceiling) and probes custom audio in `task.py:generate_audio`; do not port Content Factory's narration measurement. Scene planning still needs to use that measured duration and maintain actual ordered scene-to-narration mapping.
-3. API task manager already has `max_queued_tasks`, existing provider preflight, task state, and some remote task recovery. Reuse these, but they do **not** provide local scene persistence, GPU serialization, or a resumable local inference workflow. An in-process GPU lock alone will not coordinate multiple API worker processes; either constrain the first deployment to one inference process or design a cross-process guard before claiming multi-process safety.
+3. API task manager already has `max_queued_tasks`, existing provider preflight, task state, and some remote task recovery. Local scene persistence and resumable local inference remain owned by the local-AI layer. `LocalAIRuntimeManager` now layers its in-process reentrant lock with an OS advisory file lock keyed by CUDA device under `storage/local_ai_locks/gpu-N.lock`, so independent MoneyPrinter worker processes serialize heavyweight local-AI work on the same configured GPU. This coordination contract is CPU-tested on Windows/POSIX paths, but real multi-process GPU behavior still needs hardware validation before throughput claims.
 4. Existing `download_videos()` accepts `search_terms` and `audio_duration` and returns local paths. It does **not** carry SceneSpec, fingerprints, versions, or restart semantics. The local route may need its own ordered task-level orchestration and a small material-layer adapter, rather than blindly feeding prompts through the stock keyword interface.
-5. `task.py:_run_pipeline` currently generates search terms **before** narration and enters `generate_audio()` for every full video. A genuinely no-voice mode (FR-051), scene plan after measured narration, and render-only/retry paths are **not already solved** by upstream. Custom audio is supported; a silent/no-voice path needs explicit design and tests. Avoid promising no-voice support based only on an empty `voice_name`.
+5. Upstream still enters the shared audio stage for a full video, but FR-051 is now implemented explicitly: selecting the `no-voice` sentinel bypasses generated TTS, creates only a deterministic silent timing track for the existing composer, and uses the script timeline for captions instead of transcribing silence with Whisper. Custom uploaded audio still takes precedence. Do not treat an empty/invalid `voice_name` as No Voice; only the explicit sentinel enters this path.
 6. Material records already use `script.json` and sanitized source metadata; reuse that practice. The local scene manifest is separate and must never leak model host paths or secrets. Upstream paid providers' remote task IDs do not substitute for local clip fingerprints.
 7. Upstream test path is `test/` (singular). Baseline CI now runs on pushes to both `main` and `development`, and on PRs. The SRS example `test/services/test_local_ai_*.py` matches the actual test root.
 8. The SRS is a requirements baseline, not an assertion that hardware or model APIs were validated. Wan/LTX inference, VRAM, visual quality and model licenses must be checked against installed revisions during their milestones. The SRS DOCX misplaced Sections 20.2–20.7 near its document map and ended with a v1.0 label; `docs/SRS.md` moves those subsections into Section 20 and fixes the closing label to v1.1.
@@ -38,7 +38,7 @@ The fake provider loads its runtime once for a multi-scene generation, writes te
 
 M2 adds the stable backend source ID `wan22_local` on top of the M1 scene/manifest contract. `app/services/local_ai/wan22.py` owns operator configuration, checkpoint/shard validation, safe model fingerprinting, preflight, persistent worker reuse and provider output validation. `app/services/local_ai/wan22_worker.py` is a small standalone worker entry point intended to run with a dedicated Python environment created from the official Wan2.2 requirements. It loads the official TI2V-5B pipeline locally, never downloads weights during a task, generates 24 fps local video, normalizes to video-only H.264 MP4, and writes into M1's temporary/versioned scene publication flow.
 
-The worker process remains persistent across compatible tasks. A model/code fingerprint is part of the runtime key so changing checkpoint/code inputs at the same paths evicts the old worker instead of silently reusing stale weights. `LocalAIRuntimeManager` serializes heavyweight local generation inside one MoneyPrinter process, holds a provider family across a scene batch to avoid Wan/LTX thrashing, and supports family eviction. This is deliberately **process-local**; do not claim multi-process GPU safety until a cross-process guard or dedicated single GPU worker topology is implemented.
+The worker process remains persistent across compatible tasks. A model/code fingerprint is part of the runtime key so changing checkpoint/code inputs at the same paths evicts the old worker instead of silently reusing stale weights. `LocalAIRuntimeManager` holds a provider family across a scene batch to avoid Wan/LTX thrashing and supports family eviction. The later FR-031 hardening layer adds a reentrant, per-CUDA-device OS advisory file lock in addition to the in-process lock, so multiple MoneyPrinter worker processes coordinate on the same configured GPU. This cross-process contract is CPU-tested; actual multi-process CUDA behavior remains part of the deferred GPU validation pass.
 
 Wan configuration is operator-owned through `[wan22_local]` / environment settings: repo path, checkpoint path, worker Python, CUDA device, seed and memory-related flags. These host paths are not added to public task payloads or manifests. The manifest stores safe provider/model metadata, deterministic per-scene seeds and input fingerprints. Scene failures expose provider, scene ID and a safe error code; completed scenes remain reusable. Task state now reports the active scene and total scene count while generation is running. The fake M1 provider remains test-only.
 
@@ -51,18 +51,32 @@ M3 exposed `wan22_local` through WebUI, CLI and API using the same provider/pref
 ## Current development boundary
 
 Phase 5 single-scene regeneration was CI verified on
-`ce5f299564cf3c7b4945f93e0c83bfe576191406`. Subsequent commits added
+`ce5f299564cf3c7b4945f93e0c83bfe576191406`. Subsequent development added
 version restore, render-only rerender, cooperative cancellation, safe cleanup,
-provenance and metadata redaction through the starting SHA above. The next
-hardware-dependent milestone is real Wan/LTX GPU validation and quality tuning;
-do not claim model quality or GPU performance from CPU fake-provider tests.
+provenance and metadata redaction. The CPU integration/hardening pass then
+stabilized those flows through `b875a5f83986b643f267393e8d241e23530cf591`.
 
-Development may continue without blocking on hardware. Phase 6 tooling provides
+Post-hardening CPU work completed FR-051 No Voice and FR-064 Output Package.
+`df2defccb65406c46b518e6606b84eceff5060fd` is a green CI head covering the
+No-Voice timing fixture plus the output-package/composer/OOM contract tests.
+FR-031 was then strengthened by
+`13d09945da416c72eb917baa65c1373e1112c644`: local GPU work now uses a
+reentrant per-CUDA-device OS advisory lock in addition to the in-process lock,
+so separate application worker processes coordinate through
+`storage/local_ai_locks/gpu-N.lock`. FR-038 timing telemetry is implemented on
+`aca48814e89880978b9d153e182adbca12147d08`: runtime-load/reuse time and
+per-scene generation/validation time are persisted in the generation manifest
+and logs, with an optional sanitized provider telemetry hook for later GPU
+memory metrics.
+
+Real Wan/LTX inference, CUDA behavior under actual multi-process contention,
+VRAM usage, generation speed and visual quality remain deferred until suitable
+GPU hardware is available. Phase 6 tooling provides
 `scripts/local_ai_benchmark.py`, which will later run identical prompts across
 Wan 2.2, LTX Fast and LTX Quality and record timing/media/GPU telemetry. Do not
-invent default-quality conclusions before those real measurements exist.
-Optional factual workflow and a larger editor remain non-blocking and should
-only be started for an explicit product need.
+invent model-quality, performance or recommended-GPU conclusions before those
+measurements exist. Optional factual workflow and a larger editor remain
+non-blocking and should only be started for an explicit product need.
 
 ## CPU integration and hardening pass
 
@@ -95,6 +109,15 @@ The final Python 3.11 full suite passed with **1407 passed, 19 skipped and
 Linux execution of the Windows smoke subset passed with
 **187 passed, 5 skipped and 70 subtests passed**. Check GitHub Actions at the
 latest `development` commit for the actual Windows runner result.
+
+After that pass, true No-Voice local-AI generation was completed using the
+existing explicit `no-voice` sentinel: generated TTS is skipped, a task-local
+silent timing track drives the existing composer, custom audio keeps precedence,
+and No-Voice captions use the deterministic script timeline rather than sending
+silence to Whisper. FR-064 output packaging now exposes discoverable,
+task-relative references for final/combined MP4s, script, captions, audio,
+`scene_plan.json`, `generation_manifest.json`, and active generated scene
+materials through existing task/history/API surfaces.
 
 ## Verification and working protocol
 
