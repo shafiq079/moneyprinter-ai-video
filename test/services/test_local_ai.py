@@ -12,9 +12,11 @@ from app.services.local_ai import (
     FAKE_SOURCE_ID,
     LocalAICancellationRequested,
     LocalAISceneGenerationError,
+    SceneSpec,
 )
 from app.services.local_ai.fake import FakeLocalVideoProvider
 from app.services.local_ai.orchestrator import generate_scene_materials
+from app.services.state import MemoryState
 from app.utils import utils
 
 
@@ -672,6 +674,89 @@ class TestLocalAIRenderOnlyRerender(LocalAITestCase):
                 proposed,
             )
 
+    def test_render_only_rerender_reuses_generated_bgm_without_new_audio_or_ai(self):
+        task_id = "render-only-bgm-reuse"
+        params, _ = self._prepare_render_task(task_id)
+        params.bgm_type = "sonilo"
+        params.bgm_volume = 0.1
+        params.video_music_prompt = "quiet instrumental"
+        task.save_script_data(task_id, params.video_script, [], params)
+        bgm_file = self.task_root / task_id / "sonilo-bgm-1.m4a"
+        subprocess.run(
+            [
+                utils.get_ffmpeg_binary(),
+                "-y",
+                "-i",
+                str(self.task_root / task_id / "audio.mp3"),
+                "-c:a",
+                "aac",
+                str(bgm_file),
+            ],
+            capture_output=True,
+            check=True,
+        )
+
+        with (
+            patch.object(task.local_ai, "is_public_source", return_value=True),
+            patch.object(
+                task.local_ai,
+                "prepare_provider",
+                side_effect=AssertionError("AI provider started"),
+            ),
+            patch.object(
+                task.voice, "tts", side_effect=AssertionError("narration regenerated")
+            ),
+            patch.object(
+                task.sonilo,
+                "generate_bgm",
+                side_effect=AssertionError("paid BGM requested"),
+            ),
+        ):
+            result = task.rerender_local_ai_task(task_id)
+
+        self.assertTrue(result["render_only"])
+        self.assertTrue(Path(result["videos"][0]).is_file())
+        self.assertTrue(bgm_file.is_file())
+        self.assertEqual(result["warnings"], [])
+
+    def test_failed_render_only_rerender_restores_previous_final_video(self):
+        task_id = "render-only-rollback"
+        self._prepare_render_task(task_id)
+        final = self.task_root / task_id / "final-1.mp4"
+        combined = self.task_root / task_id / "combined-1.mp4"
+        final.write_bytes(b"previous final")
+        combined.write_bytes(b"previous combined")
+        state = MemoryState()
+        state.update_task(
+            task_id,
+            state=task.const.TASK_STATE_COMPLETE,
+            progress=100,
+            videos=[str(final)],
+            combined_videos=[str(combined)],
+        )
+
+        def broken_render(*_args, **_kwargs):
+            final.write_bytes(b"incomplete replacement")
+            raise RuntimeError("render failed")
+
+        with (
+            patch.object(task.sm, "state", state),
+            patch.object(task.local_ai, "is_public_source", return_value=True),
+            patch.object(
+                task.local_ai,
+                "prepare_provider",
+                side_effect=AssertionError("AI provider started"),
+            ),
+            patch.object(task, "generate_final_videos", side_effect=broken_render),
+            self.assertRaisesRegex(RuntimeError, "render failed"),
+        ):
+            task.rerender_local_ai_task(task_id)
+
+        self.assertEqual(final.read_bytes(), b"previous final")
+        self.assertEqual(combined.read_bytes(), b"previous combined")
+        self.assertEqual(state.get_task(task_id)["state"], task.const.TASK_STATE_COMPLETE)
+        self.assertFalse(list((self.task_root / task_id).glob("*rerender-backup")))
+
 
 class TestLocalAISceneRegeneration(LocalAITestCase):
     def _prepare_task(self, task_id: str):
@@ -957,6 +1042,84 @@ class TestLocalAIStoragePreflight(LocalAITestCase):
 
 
 class TestLocalAITaskIntegration(LocalAITestCase):
+    def test_full_fake_pipeline_writes_video_state_and_safe_artifacts(self):
+        task_id = "full-fake-pipeline"
+        state = MemoryState()
+        params = VideoParams(
+            video_subject="A short local video",
+            video_script="Open the story. Finish the story.",
+            video_source=FAKE_SOURCE_ID,
+            video_aspect="9:16",
+            video_clip_duration=1,
+            local_ai_seed=17,
+            local_ai_visual_style="warm documentary",
+            subtitle_enabled=True,
+            bgm_type="random",
+            bgm_volume=0.1,
+            font_size=32,
+            n_threads=1,
+        )
+
+        def offline_tts(*, voice_file, **_kwargs):
+            audio = self.make_audio(task_id, 2.0)
+            self.assertEqual(str(audio), voice_file)
+            return object()
+
+        def offline_subtitle(*, subtitle_file, **_kwargs):
+            Path(subtitle_file).write_text(
+                "1\n00:00:00,100 --> 00:00:01,700\nOpen the story.\n\n",
+                encoding="utf-8",
+            )
+
+        with (
+            patch.dict("os.environ", {"MPT_ENABLE_LOCAL_AI_FAKE_PROVIDER": "1"}),
+            patch.object(task.sm, "state", state),
+            patch.object(task.voice, "tts", side_effect=offline_tts),
+            patch.object(task.voice, "create_subtitle", side_effect=offline_subtitle),
+            patch.object(task.material, "download_videos") as download_videos,
+        ):
+            result = task.start(task_id, params)
+
+        download_videos.assert_not_called()
+        self.assertEqual(state.get_task(task_id)["state"], task.const.TASK_STATE_COMPLETE)
+        self.assertEqual(result["warnings"], None)
+        self.assertTrue(Path(result["videos"][0]).is_file())
+        self.assertTrue(Path(result["subtitle_path"]).is_file())
+        self.assertTrue(Path(result["audio_file"]).is_file())
+        self.assertGreaterEqual(len(result["materials"]), 2)
+        self.assertEqual(
+            len(list((self.task_root / task_id).glob("generated_ai/scene-*/v001.mp4"))),
+            len(result["materials"]),
+        )
+
+        script = json.loads(
+            (self.task_root / task_id / "script.json").read_text(encoding="utf-8")
+        )
+        plan = json.loads(
+            (self.task_root / task_id / "scene_plan.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        manifest = json.loads(
+            (
+                self.task_root / task_id / "generated_ai" / "generation_manifest.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(script["script"], params.video_script)
+        self.assertEqual(len(plan["scenes"]), len(result["materials"]))
+        self.assertEqual(manifest["provider_id"], FAKE_SOURCE_ID)
+        self.assertEqual(len(script["local_ai_materials"]), len(result["materials"]))
+        self.assertEqual(
+            state.get_task(task_id)["local_ai_materials"],
+            script["local_ai_materials"],
+        )
+        self.assertTrue(
+            all(item["provider"] == FAKE_SOURCE_ID for item in script["local_ai_materials"])
+        )
+        self.assertNotIn(str(self.task_root), json.dumps(script))
+        self.assertNotIn(str(self.task_root), json.dumps(plan))
+        self.assertNotIn(str(self.task_root), json.dumps(manifest))
+
     def test_scene_failure_records_structured_recovery_fields(self):
         params = VideoParams(
             video_subject="test",
