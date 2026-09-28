@@ -1307,6 +1307,22 @@ def generate_final_videos(
             params=params,
             bgm_file_override=bgm_file_override,
         )
+        if local_ai.is_local_ai_source(params.video_source):
+            try:
+                video.validate_final_video_output(
+                    final_video_path,
+                    expected_aspect=str(
+                        getattr(params.video_aspect, "value", params.video_aspect)
+                    ),
+                    expected_duration=audio_duration,
+                    require_audio=True,
+                )
+            except video.FinalVideoValidationError:
+                try:
+                    os.remove(final_video_path)
+                except FileNotFoundError:
+                    pass
+                raise
         if (
             video_music_provider is not None
             and bgm_file_override

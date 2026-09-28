@@ -64,6 +64,78 @@ class TestVideoService(unittest.TestCase):
         vd._runtime_disabled_video_codecs.clear()
         vd._ffmpeg_encoder_exists.cache_clear()
 
+    def test_validate_final_video_output_accepts_expected_media(self):
+        with tempfile.NamedTemporaryFile(suffix=".mp4") as stream:
+            stream.write(b"final-video")
+            stream.flush()
+            clip = types.SimpleNamespace(
+                duration=5.1,
+                size=(1080, 1920),
+                audio=types.SimpleNamespace(duration=5.0),
+            )
+            with (
+                patch.object(
+                    vd,
+                    "_open_video_clip_quietly",
+                    return_value=clip,
+                ) as open_clip,
+                patch.object(vd, "close_clip") as close_clip,
+            ):
+                vd.validate_final_video_output(
+                    stream.name,
+                    expected_aspect="9:16",
+                    expected_duration=5.0,
+                )
+
+        open_clip.assert_called_once_with(stream.name, audio=True)
+        close_clip.assert_called_once_with(clip)
+
+    def test_validate_final_video_output_rejects_missing_audio(self):
+        with tempfile.NamedTemporaryFile(suffix=".mp4") as stream:
+            stream.write(b"final-video")
+            stream.flush()
+            clip = types.SimpleNamespace(
+                duration=5.0,
+                size=(1080, 1920),
+                audio=None,
+            )
+            with (
+                patch.object(vd, "_open_video_clip_quietly", return_value=clip),
+                patch.object(vd, "close_clip"),
+                self.assertRaisesRegex(
+                    vd.FinalVideoValidationError,
+                    "audio stream",
+                ),
+            ):
+                vd.validate_final_video_output(
+                    stream.name,
+                    expected_aspect="9:16",
+                    expected_duration=5.0,
+                )
+
+    def test_validate_final_video_output_rejects_wrong_duration(self):
+        with tempfile.NamedTemporaryFile(suffix=".mp4") as stream:
+            stream.write(b"final-video")
+            stream.flush()
+            clip = types.SimpleNamespace(
+                duration=3.0,
+                size=(1080, 1920),
+                audio=types.SimpleNamespace(duration=3.0),
+            )
+            with (
+                patch.object(vd, "_open_video_clip_quietly", return_value=clip),
+                patch.object(vd, "close_clip"),
+                self.assertRaisesRegex(
+                    vd.FinalVideoValidationError,
+                    "duration differs",
+                ),
+            ):
+                vd.validate_final_video_output(
+                    stream.name,
+                    expected_aspect="9:16",
+                    expected_duration=5.0,
+                )
+
     def test_generate_video_rejects_font_outside_directory_before_opening_media(self):
         """WebUI、CLI 或内部调用绕过 API 时，渲染层也必须阻断越界字体。"""
         with tempfile.TemporaryDirectory() as temp_dir:

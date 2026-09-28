@@ -77,6 +77,7 @@ fps = 30
 # 这里给视频素材多留一个很小的安全余量，避免音频末尾因为帧舍入出现黑屏、
 # 卡顿或最后一小段旁白没有画面的情况。
 _VIDEO_DURATION_SAFETY_MARGIN = 0.1
+_FINAL_VIDEO_DURATION_TOLERANCE_SECONDS = 0.5
 _MIN_MATERIAL_DIMENSION = 480
 # 消息类应用和部分编码器会把画面尺寸向下取整，例如 WhatsApp 会把 9:16 的
 # 素材压成 478x850，比 480 少两个像素。直接按 480 硬卡会让这类素材全部被
@@ -593,6 +594,81 @@ def _open_video_clip_quietly(video_path: str, audio: bool = False) -> VideoFileC
         )
 
     return clip
+
+
+class FinalVideoValidationError(ValueError):
+    """Raised when an encoded final output is not safe to publish as complete."""
+
+
+def validate_final_video_output(
+    output_file: str,
+    *,
+    expected_aspect: str,
+    expected_duration: float,
+    require_audio: bool = True,
+) -> None:
+    """Probe a final MP4 before task completion.
+
+    Local-AI scene clips are already validated before they become active
+    materials. The final composer is a separate encode boundary, so a truncated
+    or otherwise unreadable final MP4 must also be rejected before task state is
+    marked complete.
+    """
+
+    candidate = Path(output_file)
+    if not candidate.is_file() or candidate.stat().st_size <= 0:
+        raise FinalVideoValidationError("final video is missing or empty")
+
+    clip = None
+    try:
+        clip = _open_video_clip_quietly(str(candidate), audio=require_audio)
+        duration = float(clip.duration or 0)
+        width, height = (int(clip.size[0]), int(clip.size[1]))
+        audio = getattr(clip, "audio", None)
+        audio_duration = float(getattr(audio, "duration", 0) or 0)
+    except Exception as exc:
+        raise FinalVideoValidationError(
+            f"final video is not decodable: {type(exc).__name__}"
+        ) from exc
+    finally:
+        if clip is not None:
+            close_clip(clip)
+
+    if not math.isfinite(duration) or duration <= 0:
+        raise FinalVideoValidationError("final video has invalid duration")
+    expected_width, expected_height = VideoAspect(expected_aspect).to_resolution()
+    if (width, height) != (expected_width, expected_height):
+        raise FinalVideoValidationError(
+            "final video dimensions do not match the requested aspect"
+        )
+
+    target_duration = float(expected_duration or 0)
+    if (
+        target_duration > 0
+        and abs(duration - target_duration)
+        > _FINAL_VIDEO_DURATION_TOLERANCE_SECONDS
+    ):
+        raise FinalVideoValidationError(
+            "final video duration differs from the narration target"
+        )
+
+    if require_audio:
+        if audio is None or not math.isfinite(audio_duration) or audio_duration <= 0:
+            raise FinalVideoValidationError("final video has no usable audio stream")
+        if (
+            target_duration > 0
+            and audio_duration + _FINAL_VIDEO_DURATION_TOLERANCE_SECONDS
+            < target_duration
+        ):
+            raise FinalVideoValidationError(
+                "final video audio is shorter than the narration target"
+            )
+
+    logger.info(
+        "final video validation passed: "
+        f"duration={duration:.3f}s, dimensions={width}x{height}, "
+        f"audio_duration={audio_duration:.3f}s"
+    )
 
 
 def close_clip(clip):

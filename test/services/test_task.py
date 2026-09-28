@@ -187,6 +187,49 @@ class TestTaskService(unittest.TestCase):
             params.video_fit_mode,
         )
 
+    def test_generate_final_videos_validates_local_ai_final_output(self):
+        params = VideoParams(
+            video_subject="test",
+            video_source="wan22_local",
+            video_count=1,
+            subtitle_enabled=False,
+            bgm_type="",
+            bgm_volume=0,
+        )
+
+        validation_error = tm.video.FinalVideoValidationError(
+            "final video is not decodable"
+        )
+        with (
+            patch.object(tm.video, "combine_videos"),
+            patch.object(tm.video, "generate_video", return_value=True),
+            patch.object(
+                tm.video,
+                "validate_final_video_output",
+                side_effect=validation_error,
+            ) as validate_output,
+            patch.object(tm.sm.state, "update_task"),
+            self.assertRaises(tm.video.FinalVideoValidationError),
+        ):
+            tm.generate_final_videos(
+                task_id="local-ai-final-validation",
+                params=params,
+                downloaded_videos=["material.mp4"],
+                audio_file="audio.mp3",
+                subtitle_path="",
+                audio_duration=5,
+            )
+
+        validate_output.assert_called_once_with(
+            os.path.join(
+                utils.task_dir("local-ai-final-validation"),
+                "final-1.mp4",
+            ),
+            expected_aspect="9:16",
+            expected_duration=5,
+            require_audio=True,
+        )
+
     def test_generate_final_videos_uses_generated_sonilo_music(self):
         """Sonilo 必须针对每条拼接后的视频生成配乐，并传给最终混音。"""
         params = VideoParams(
