@@ -364,6 +364,23 @@ def _mark_task_failed(
     return failure
 
 
+def _local_ai_recovery_action(
+    *,
+    stage: str,
+    error_code: str = "",
+) -> str:
+    """Return a stable recovery hint for local-AI task failures."""
+
+    if stage == "preflight":
+        return "fix_provider_setup_and_retry"
+    code = str(error_code or "").lower()
+    if code in {"cuda_oom", "runtime_load_error"}:
+        return "adjust_gpu_settings_and_retry_scene"
+    if code in {"worker_exited", "worker_not_running"}:
+        return "restart_local_ai_worker_and_retry_scene"
+    return "retry_scene"
+
+
 def generate_script(task_id, params):
     logger.info("\n\n## generating video script")
     video_script = params.video_script.strip()
@@ -829,6 +846,12 @@ def get_video_materials(
                     "local_ai_provider": exc.provider_id,
                     "scene_id": exc.scene_id,
                     "local_ai_error_code": exc.error_code,
+                    "local_ai_error_type": exc.cause_type,
+                    "recoverable": True,
+                    "recovery_action": _local_ai_recovery_action(
+                        stage="materials",
+                        error_code=exc.error_code,
+                    ),
                 }
             _mark_task_failed(
                 task_id,
@@ -2224,6 +2247,14 @@ def _run_pipeline(
                 task_id,
                 "preflight",
                 f"local AI preflight failed: {type(exc).__name__}: {exc}",
+                details={
+                    "local_ai_provider": str(params.video_source),
+                    "local_ai_error_type": type(exc).__name__,
+                    "recoverable": True,
+                    "recovery_action": _local_ai_recovery_action(
+                        stage="preflight",
+                    ),
+                },
             )
 
     if (

@@ -896,6 +896,44 @@ class TestLocalAIStoragePreflight(LocalAITestCase):
 
 
 class TestLocalAITaskIntegration(LocalAITestCase):
+    def test_scene_failure_records_structured_recovery_fields(self):
+        params = VideoParams(
+            video_subject="test",
+            video_script="One scene.",
+            video_source=FAKE_SOURCE_ID,
+            video_aspect="9:16",
+            video_clip_duration=2,
+            subtitle_enabled=False,
+            bgm_type="",
+        )
+        provider = FakeLocalVideoProvider(fail_scene_ids={1})
+
+        with (
+            patch.object(task.sm.state, "update_task"),
+            patch.object(
+                task,
+                "_mark_task_failed",
+                return_value={"state": -1},
+            ) as failed,
+        ):
+            result = task.get_video_materials(
+                "structured-scene-failure",
+                params,
+                [],
+                1.0,
+                video_script=params.video_script,
+                local_ai_provider=provider,
+            )
+
+        self.assertIsNone(result)
+        details = failed.call_args.kwargs["details"]
+        self.assertEqual(details["local_ai_provider"], FAKE_SOURCE_ID)
+        self.assertEqual(details["scene_id"], 1)
+        self.assertTrue(details["recoverable"])
+        self.assertEqual(details["recovery_action"], "retry_scene")
+        self.assertEqual(details["local_ai_error_type"], "RuntimeError")
+
+
     def test_fake_source_is_disabled_outside_explicit_test_mode(self):
         from app.services import local_ai
 

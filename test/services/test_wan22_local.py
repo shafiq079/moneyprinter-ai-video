@@ -323,6 +323,15 @@ class TestWan22TaskIntegration(Wan22TestCase):
         generate_script.assert_not_called()
         self.assertEqual(failed.call_args.args[1], "preflight")
         self.assertIn("Wan22ConfigurationError", failed.call_args.args[2])
+        self.assertEqual(
+            failed.call_args.kwargs["details"],
+            {
+                "local_ai_provider": WAN22_SOURCE_ID,
+                "local_ai_error_type": "Wan22ConfigurationError",
+                "recoverable": True,
+                "recovery_action": "fix_provider_setup_and_retry",
+            },
+        )
 
     def test_task_material_path_uses_wan_scene_cap_seed_and_no_remote_download(self):
         class FakeWanProvider:
