@@ -462,6 +462,67 @@ class TestLocalAIGenerationManifest(LocalAITestCase):
         )
         self.assertEqual(Path(output_paths[1]).name, "v001.mp4")
 
+    def test_manifest_redacts_secrets_and_host_paths_from_metadata(self):
+        scene = SceneSpec(
+            scene_id=1,
+            narration_segment="test",
+            prompt="test",
+            target_duration=1.0,
+            aspect="9:16",
+            seed=42,
+            provider_settings={
+                "mode": "quality",
+                "api_key": "SCENE-SECRET-123",
+                "nested": {
+                    "access_token": "NESTED-TOKEN-456",
+                    "strength": 1.0,
+                },
+            },
+        )
+        manifest = generation_manifest.prepare_manifest(
+            "secret-redaction",
+            provider_id="ltx25_local",
+            model_fingerprint="ltx25-quality:sha256:test",
+            scenes=[scene],
+            provider_metadata={
+                "model": "LTX-2.5",
+                "mode": "quality",
+                "api_key": "PROVIDER-SECRET-789",
+                "checkpoint_path": "/private/models/model.safetensors",
+                "nested": {
+                    "password": "PASSWORD-SECRET",
+                    "device_index": 0,
+                },
+            },
+        )
+
+        serialized = json.dumps(manifest)
+        for forbidden in (
+            "SCENE-SECRET-123",
+            "NESTED-TOKEN-456",
+            "PROVIDER-SECRET-789",
+            "PASSWORD-SECRET",
+            "/private/models/model.safetensors",
+            "api_key",
+            "access_token",
+            "checkpoint_path",
+            "password",
+        ):
+            self.assertNotIn(forbidden, serialized)
+
+        record = generation_manifest.scene_record(manifest, 1)
+        self.assertEqual(record["provider_settings"]["mode"], "quality")
+        self.assertEqual(
+            record["provider_settings"]["nested"]["strength"],
+            1.0,
+        )
+        self.assertEqual(record["provider_metadata"]["model"], "LTX-2.5")
+        self.assertEqual(
+            record["provider_metadata"]["nested"]["device_index"],
+            0,
+        )
+
+
     def test_manifest_contains_only_task_relative_asset_paths(self):
         scenes = self.make_scenes(duration=1.0)
         provider = FakeLocalVideoProvider()

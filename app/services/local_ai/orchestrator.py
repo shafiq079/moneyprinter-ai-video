@@ -266,10 +266,13 @@ def regenerate_scene_material(
     record.update(scene.to_dict())
     record["provider_id"] = provider.provider_id
     record["model_fingerprint"] = provider.model_fingerprint
-    record["provider_metadata"] = (
+    record["provider_metadata"] = generation_manifest.sanitize_persisted_metadata(
         provider.safe_metadata()
         if callable(getattr(provider, "safe_metadata", None))
         else {}
+    )
+    record["provider_settings"] = generation_manifest.sanitize_persisted_metadata(
+        record.get("provider_settings") or {}
     )
     record["fingerprint"] = scene_fingerprint(
         scene,

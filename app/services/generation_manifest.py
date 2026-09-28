@@ -14,6 +14,51 @@ from app.utils import utils
 SCHEMA_VERSION = 1
 _MANIFEST_NAME = "generation_manifest.json"
 _VERSION_RE = re.compile(r"^v(\d+)\.mp4$")
+_SENSITIVE_METADATA_KEY_PARTS = (
+    "api_key",
+    "apikey",
+    "secret",
+    "token",
+    "password",
+    "credential",
+    "authorization",
+    "cookie",
+)
+_HOST_PATH_KEY_SUFFIXES = ("_path", "_dir", "_directory")
+_HOST_PATH_KEYS = {
+    "repo",
+    "repository",
+    "python_executable",
+    "checkpoint",
+    "checkpoint_file",
+}
+
+
+def _metadata_key_is_private(key: object) -> bool:
+    normalized = str(key or "").strip().lower()
+    if not normalized:
+        return False
+    if any(part in normalized for part in _SENSITIVE_METADATA_KEY_PARTS):
+        return True
+    if normalized in _HOST_PATH_KEYS:
+        return True
+    return normalized.endswith(_HOST_PATH_KEY_SUFFIXES)
+
+
+def sanitize_persisted_metadata(value: Any) -> Any:
+    """Remove secrets and host filesystem locations from persisted metadata."""
+
+    if isinstance(value, dict):
+        return {
+            str(key): sanitize_persisted_metadata(item)
+            for key, item in value.items()
+            if not _metadata_key_is_private(key)
+        }
+    if isinstance(value, (list, tuple)):
+        return [sanitize_persisted_metadata(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
 
 
 def manifest_path(task_id: str) -> Path:
@@ -76,6 +121,9 @@ def prepare_manifest(
         if isinstance(item, dict) and isinstance(item.get("scene_id"), int)
     }
 
+    safe_provider_metadata = sanitize_persisted_metadata(
+        dict(provider_metadata or {})
+    )
     records = []
     for scene in scenes:
         fingerprint = scene_fingerprint(
@@ -95,11 +143,15 @@ def prepare_manifest(
             if isinstance(key, str) and isinstance(value, dict)
         }
         unchanged = old.get("fingerprint") == fingerprint
+        scene_payload = scene.to_dict()
+        scene_payload["provider_settings"] = sanitize_persisted_metadata(
+            scene_payload.get("provider_settings") or {}
+        )
         record = {
-            **scene.to_dict(),
+            **scene_payload,
             "provider_id": str(provider_id),
             "model_fingerprint": str(model_fingerprint),
-            "provider_metadata": dict(provider_metadata or {}),
+            "provider_metadata": safe_provider_metadata,
             "fingerprint": fingerprint,
             "status": old.get("status", "pending") if unchanged else "pending",
             "active_asset": old.get("active_asset") if unchanged else None,
@@ -116,7 +168,7 @@ def prepare_manifest(
         "task_id": str(task_id),
         "provider_id": str(provider_id),
         "model_fingerprint": str(model_fingerprint),
-        "provider_metadata": dict(provider_metadata or {}),
+        "provider_metadata": safe_provider_metadata,
         "scenes": records,
     }
     save_manifest(task_id, manifest)
@@ -335,8 +387,12 @@ def local_ai_material_records(task_id: str) -> list[dict[str, Any]]:
                 "model_fingerprint": str(
                     record.get("model_fingerprint") or default_model
                 ),
-                "provider_metadata": dict(provider_metadata),
-                "generation_settings": dict(provider_settings),
+                "provider_metadata": sanitize_persisted_metadata(
+                    provider_metadata
+                ),
+                "generation_settings": sanitize_persisted_metadata(
+                    provider_settings
+                ),
                 "asset": active_asset,
                 "target_duration": float(record.get("target_duration") or 0.0),
                 "actual_duration": (
