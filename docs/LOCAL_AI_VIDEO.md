@@ -158,8 +158,10 @@ providers:
 
 Providers may expose an optional `runtime_telemetry()` dictionary. It is passed
 through the same metadata sanitizer before persistence; credential-like fields
-and host paths are removed. Real GPU memory metrics should be supplied only
-when the installed GPU runtime can measure them reliably.
+and host paths are removed. Runtime and scene log lines include safe task,
+provider, scene/stage and elapsed-time context so failures can be correlated
+without persisting checkpoint paths or credentials. Real GPU memory metrics
+should be supplied only when the installed GPU runtime can measure them reliably.
 
 ## Deferred GPU benchmark harness
 
@@ -205,6 +207,26 @@ task/history/API surfaces. It uses safe task-relative references for final and
 combined videos, script, captions, audio, `scene_plan.json`,
 `generated_ai/generation_manifest.json`, and active generated scene clips.
 Host model/checkpoint paths and credentials are not part of this package.
+
+## Final output validation and recovery
+
+For local-AI tasks, the final MP4 is validated after the existing composer writes
+it and before the task can be marked complete. The check requires a non-empty,
+decodable file, the expected output dimensions, duration within the configured
+validation tolerance of the **measured written narration audio**, and an audio
+stream that covers the narration target. The rounded duration used for scene
+planning is intentionally not used for this final integrity check.
+
+If this validation fails, the invalid final file is not published as a completed
+result. Task state reports a `video`-stage failure, identifies the selected
+local provider, marks the failure recoverable, and recommends
+`rerender_final_video`. Stored local scene clips remain available, so repairing
+the renderer/environment and rerendering does not require new Wan/LTX inference.
+
+Visual-only scene regeneration likewise reuses the existing narration and
+caption artifacts; it regenerates the requested scene and reruns composition
+without invoking TTS or caption generation. The shared MoneyPrinter composer
+continues to apply the configured narration and BGM gain controls.
 
 ## Local AI disk cleanup
 

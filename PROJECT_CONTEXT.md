@@ -8,7 +8,7 @@ Read this file first in every new AI or developer session. `docs/SRS.md` is the 
 - **Branches:** `main` is the untouched, stable vendor baseline; `development` is the sole active branch and contains the accepted local-AI implementation work in progress. Create no other branches. Changes go directly onto `development`; after an accepted stabilization point, merge `development` into `main` with a normal merge commit and keep the two-branch policy.
 - **Product remote:** `https://github.com/shafiq079/moneyprinter-ai-video`. This CPU hardening pass started at `development` commit `269d5c0202492608e2a1309c94afcf1650bea3fc`; `main` remains the pinned vendor baseline `ad5496f1b729d1d7e361dd972015d26c08b0e052`. Use only these two branches. `origin` points to this product repository and `upstream` points to `harry0703/MoneyPrinterTurbo`. Do not use the older `shafiq079/MoneyPrinterTurbo` fork for this product.
 - **Old prototype:** `shafiq079/content-factory` `main` at `a1760488aae68b8c1c1076a26720a14f4368088f` is read-only reference. Its Next.js UI, FastAPI project API, SQLite queue, timeline v7 and renderer are **not** the new application.
-- **Completed:** SRS conversion, upstream revalidation and migration decisions; M1 fake-provider foundation; M2/M3 Wan integration and operator surface; M4 Scene Director; LTX 2.5 Fast/DFR; Phase 5 scene iteration; render-only rerender, cancellation, cleanup, provenance/security hardening, true No-Voice local-AI rendering, portable local-AI output packages, per-GPU cross-process runtime serialization, and persisted local-AI timing telemetry. All are on `development`. Real Wan/LTX inference and Phase 6 quality measurements require GPU hardware and remain deferred.
+- **Completed:** SRS conversion, upstream revalidation and migration decisions; M1 fake-provider foundation; M2/M3 Wan integration and operator surface; M4 Scene Director; LTX 2.5 Fast/DFR; Phase 5 scene iteration; render-only rerender, cancellation, cleanup, provenance/security hardening, true No-Voice local-AI rendering, portable local-AI output packages, per-GPU cross-process runtime serialization, persisted local-AI timing telemetry, local-AI final-output validation, structured local-AI observability, visual-only regeneration/audio-caption reuse regression coverage, final audio gain-control regression coverage, and recoverable final-validation failure classification. All are on `development`. Real Wan/LTX inference and Phase 6 quality measurements require GPU hardware and remain deferred.
 
 ## Architecture to preserve
 
@@ -69,6 +69,18 @@ per-scene generation/validation time are persisted in the generation manifest
 and logs, with an optional sanitized provider telemetry hook for later GPU
 memory metrics.
 
+The later CPU integrity/observability pass is green through
+`9845dfb1ffaaff2e1e178c4e0059c42e80a955a6`. Local-AI final MP4s are now
+decoder-probed before task completion for non-empty media, expected dimensions,
+measured narration duration tolerance and an audio stream. Validation uses the
+actual written narration duration rather than the rounded planning duration.
+Invalid final files are rejected before completion and are classified in task
+state as recoverable `video` failures with `rerender_final_video` guidance
+and the selected local provider. Local-AI runtime/scene logs also include safe
+task/provider/scene/stage/timing context. Regression coverage locks visual-only
+scene regeneration to reuse existing narration/captions and preserves the
+existing narration/BGM gain controls in the shared final composer.
+
 Real Wan/LTX inference, CUDA behavior under actual multi-process contention,
 VRAM usage, generation speed and visual quality remain deferred until suitable
 GPU hardware is available. Phase 6 tooling provides
@@ -125,6 +137,6 @@ Baseline verification before M1 used Python 3.11 after `uv sync --frozen --pytho
 
 M1 is verified by GitHub Actions on commit `ef007c85ffc64d18366861fe7eab6246d3889d78`: Windows smoke tests passed, Python 3.11 tests/coverage passed, Python 3.13 tests/coverage passed, and Ruff passed in the Python 3.11 job.
 
-M2's production-provider implementation and subsequent hardening commits are CPU-tested only. Commit `258323657245be1b680a11f49d406fc40aefd40f` passed Windows smoke, Python 3.11 and Python 3.13 jobs with **1340 passed, 16 skipped, 10622 subtests passed** and about **80% total coverage**. The final code-only follow-up `e0a363bd82641c153f8485e48a09462b7c938bd5` adds only import-package metadata for the isolated Wan worker; its Python 3.11 full suite, Ruff and Windows smoke checks passed before this documentation update. There was no real GPU run, Wan inference, LTX inference or model benchmark.
+M2's production-provider implementation and subsequent hardening commits are CPU-tested only. Commit `258323657245be1b680a11f49d406fc40aefd40f` passed Windows smoke, Python 3.11 and Python 3.13 jobs with **1340 passed, 16 skipped, 10622 subtests passed** and about **80% total coverage**. The final code-only follow-up `e0a363bd82641c153f8485e48a09462b7c938bd5` adds only import-package metadata for the isolated Wan worker; its Python 3.11 full suite, Ruff and Windows smoke checks passed before this documentation update. Later CPU hardening CI runs also passed for final-media duration handling (`3a8337f02ecbf869f3d5a5ba2434cb7f114a37bc`, run `36464742520`), local-AI observability (`cda8ff7143c9f7660f0f1d7f3e11c63b218b699c`, run `36469373973`), visual-only scene regeneration (`bcb0771ad91c74c4d8a13663dd150c3b615da979`, run `36471448658`), audio gain controls (`1c4b921aefd8c811588f819e39915b64e07001e9`, run `36474601945`), and structured final-validation failures (`9845dfb1ffaaff2e1e178c4e0059c42e80a955a6`, run `36476314141`). There was no real GPU run, Wan inference, LTX inference or model benchmark.
 
 On the next session: fetch `origin/development`, inspect `git status`, read this file, `docs/SRS.md`, `docs/MIGRATION_MAP.md` and `docs/LOCAL_AI_VIDEO.md`. Recheck `upstream/main` before any deliberate upstream integration; do not silently merge it. Preserve upstream MIT `LICENSE`, do not commit model weights, keep the fake provider test-only, keep provider host paths out of persisted metadata, and use the existing `uv.lock` / CI commands for regression runs.
