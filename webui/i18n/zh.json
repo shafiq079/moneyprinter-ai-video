@@ -306,6 +306,7 @@
     "Local AI Seed Help": "用于可重复场景生成的基础随机种子。后续场景会依次递增。",
     "Local AI Visual Style": "视觉风格 / 导演方向",
     "Local AI Visual Style Help": "可选的场景创意方向，例如温暖的 35mm 纪录片、产品微距摄影或黏土定格动画。它不能覆盖旁白准确性或禁止文字/Logo 的约束。",
+    "Local AI Multiple Videos Help": "本地 AI 场景每个任务只生成一次，并在 {count} 个最终视频版本之间共享。增加此数量只会重新进行合成，不会成倍增加 Wan/LTX 场景推理；只有你明确重新生成场景时才会再次推理。",
     "Upload Local Files": "上传本地文件",
     "Please Upload Local Materials First": "请先上传至少一个本地素材文件。",
     "Unsupported Upload File Type": "上传的文件类型不受支持。",

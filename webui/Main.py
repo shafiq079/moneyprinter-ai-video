@@ -5826,6 +5826,12 @@ def _render_video_settings(panel, params):
                 key="video_count_select",
             )
             _set_runtime_config("ui", "video_count", params.video_count)
+            if local_ai.is_public_source(params.video_source):
+                st.caption(
+                    tr("Local AI Multiple Videos Help").format(
+                        count=params.video_count,
+                    )
+                )
 
             video_codec_options = [
                 (tr("Default Video Encoder"), DEFAULT_VIDEO_CODEC_OPTION),

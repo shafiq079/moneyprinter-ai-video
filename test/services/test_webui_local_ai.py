@@ -73,6 +73,10 @@ def test_ltx25_selection_shows_readiness_control_without_running_preflight():
             "GPU-intensive" in str(getattr(item, "value", ""))
             for item in app.caption
         )
+        assert any(
+            "generated once per task" in str(getattr(item, "value", ""))
+            for item in app.caption
+        )
         assert not app.exception
         preflight_status.assert_not_called()
 

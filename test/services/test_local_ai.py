@@ -1302,6 +1302,14 @@ class TestLocalAITaskIntegration(LocalAITestCase):
             state.get_task(task_id)["state"],
             task.const.TASK_STATE_COMPLETE,
         )
+        self.assertEqual(
+            state.get_task(task_id)["local_ai_variant_material_policy"],
+            "shared",
+        )
+        self.assertEqual(
+            state.get_task(task_id)["local_ai_output_variant_count"],
+            1,
+        )
         self.assertTrue(Path(result["audio_file"]).is_file())
         self.assertGreater(result["audio_duration"], 0)
         self.assertTrue(Path(result["subtitle_path"]).is_file())

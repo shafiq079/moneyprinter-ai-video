@@ -889,6 +889,11 @@ def get_video_materials(
             sm.state.update_task(
                 task_id,
                 local_ai_materials=provenance,
+                local_ai_variant_material_policy="shared",
+                local_ai_output_variant_count=max(
+                    int(getattr(params, "video_count", 1) or 1),
+                    1,
+                ),
             )
             return generated_materials
         except local_ai.LocalAICancellationRequested:
