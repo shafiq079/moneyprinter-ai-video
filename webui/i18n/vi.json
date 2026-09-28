@@ -418,6 +418,7 @@
     "OFox Upstream Vendor Help": "Nhà cung cấp thượng nguồn phục vụ việc tạo video OFox. BytePlus (quốc tế) là mặc định với chính sách nội dung nhất quán; Volcano Engine là nhà cung cấp Trung Quốc đại lục; Tự động để gateway OFox cân bằng tải giữa các nhà cung cấp.",
     "OFox Vendor BytePlus": "BytePlus (quốc tế, mặc định)",
     "OFox Vendor Volcengine": "Volcano Engine (Trung Quốc đại lục)",
-    "OFox Vendor Auto": "Tự động (gateway cân bằng tải)"
+    "OFox Vendor Auto": "Tự động (gateway cân bằng tải)",
+    "Local AI Multiple Videos Help": "Các cảnh AI cục bộ chỉ được tạo một lần cho mỗi tác vụ và được dùng chung cho cả {count} biến thể đầu ra cuối cùng. Tăng giá trị này chỉ chạy lại bước ghép video; không làm tăng số lần suy luận cảnh Wan/LTX trừ khi bạn chủ động tạo lại một cảnh."
   }
 }

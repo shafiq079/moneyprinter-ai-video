@@ -418,6 +418,7 @@
     "OFox Upstream Vendor Help": "Welcher Upstream-Anbieter die OFox-Videogenerierung bedient. BytePlus (international) ist der Standard mit einheitlicher Inhaltsrichtlinie; Volcano Engine ist der Festland-China-Anbieter; Auto lässt das OFox-Gateway die Last über die Anbieter verteilen.",
     "OFox Vendor BytePlus": "BytePlus (international, Standard)",
     "OFox Vendor Volcengine": "Volcano Engine (Festlandchina)",
-    "OFox Vendor Auto": "Auto (Gateway-Lastverteilung)"
+    "OFox Vendor Auto": "Auto (Gateway-Lastverteilung)",
+    "Local AI Multiple Videos Help": "Lokale KI-Szenen werden pro Aufgabe einmal erzeugt und von allen {count} finalen Ausgabevarianten gemeinsam verwendet. Eine Erhöhung dieses Werts führt die Komposition erneut aus; die Wan/LTX-Szeneninferenz wird nicht vervielfacht, außer du regenerierst ausdrücklich eine Szene."
   }
 }

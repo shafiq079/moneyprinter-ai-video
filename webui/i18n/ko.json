@@ -418,6 +418,7 @@
     "OFox Upstream Vendor Help": "OFox 영상 생성에 사용할 업스트림 공급사입니다. BytePlus(국제)가 기본값으로 콘텐츠 정책이 일관됩니다. Volcano Engine은 중국 본토 공급사이며, 자동은 OFox 게이트웨이가 공급사 간 부하를 분산합니다.",
     "OFox Vendor BytePlus": "BytePlus (국제, 기본값)",
     "OFox Vendor Volcengine": "Volcano Engine (중국 본토)",
-    "OFox Vendor Auto": "자동 (게이트웨이 부하 분산)"
+    "OFox Vendor Auto": "자동 (게이트웨이 부하 분산)",
+    "Local AI Multiple Videos Help": "로컬 AI 장면은 작업당 한 번만 생성되며 최종 출력 {count}개 변형에서 공유됩니다. 이 값을 늘리면 합성만 다시 실행되며, 장면을 명시적으로 다시 생성하지 않는 한 Wan/LTX 장면 추론 횟수는 늘어나지 않습니다."
   }
 }

@@ -418,6 +418,7 @@
     "OFox Upstream Vendor Help": "Tria qui genera els vídeos a través d'OFox. BytePlus (internacional) és l'opció per defecte i aplica una política de contingut uniforme. Volcano Engine és el proveïdor de la Xina continental. L'opció automàtica reparteix les peticions entre proveïdors.",
     "OFox Vendor BytePlus": "BytePlus (internacional, per defecte)",
     "OFox Vendor Volcengine": "Volcano Engine (Xina continental)",
-    "OFox Vendor Auto": "Automàtic (repartiment de peticions)"
+    "OFox Vendor Auto": "Automàtic (repartiment de peticions)",
+    "Local AI Multiple Videos Help": "Les escenes d'IA local es generen una vegada per tasca i es comparteixen entre les {count} variants finals de sortida. Augmentar aquest valor torna a executar la composició; no multiplica la inferència d'escenes de Wan/LTX tret que regeneris explícitament una escena."
   }
 }

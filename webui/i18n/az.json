@@ -418,6 +418,7 @@
     "OFox Upstream Vendor Help": "OFox ilə video yaratmanı təmin edən əsas xidmət provayderi. BytePlus (beynəlxalq) vahid məzmun siyasəti olan standart provayderdir; Volcano Engine materik Çindəki provayderdir; avtomatik seçim OFox şlüzünə yükü provayderlər arasında tarazlaşdırmağa imkan verir.",
     "OFox Vendor BytePlus": "BytePlus (beynəlxalq, standart)",
     "OFox Vendor Volcengine": "Volcano Engine (materik Çin)",
-    "OFox Vendor Auto": "Avtomatik (şlüzdə yükün tarazlaşdırılması)"
+    "OFox Vendor Auto": "Avtomatik (şlüzdə yükün tarazlaşdırılması)",
+    "Local AI Multiple Videos Help": "Yerli AI səhnələri hər tapşırıq üçün bir dəfə yaradılır və bütün {count} yekun çıxış variantı arasında paylaşılır. Bu dəyəri artırmaq yalnız kompozisiyanı yenidən işə salır; səhnəni açıq şəkildə yenidən yaratmadıqca Wan/LTX səhnə inferensiyasını artırmır."
   }
 }
