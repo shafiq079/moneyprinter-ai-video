@@ -193,6 +193,45 @@ product; checkpoint/repository paths are not added to the report.
 Actual default tuning, provider comparisons and hardware guidance remain
 deferred until those measurements are collected on real hardware.
 
+## Manual GPU validation pack
+
+After provisioning a CUDA host, model files and the isolated provider worker
+environments, run the end-to-end acceptance pack:
+
+```bash
+uv run python scripts/local_ai_gpu_validate.py
+```
+
+The default run validates `wan22_local`, `ltx25_local:fast` and
+`ltx25_local:quality`. Wan and LTX Fast are required. LTX Quality is reported
+as `SKIPPED` when its provider preflight is unavailable (for example, the
+detailing LoRA has not been provisioned). Use
+`--require-ltx-quality` when DFR is part of the deployment release gate.
+
+Each available target uses an offline fixed script and No Voice timing audio, so
+the validation command does not need a remote LLM/TTS or paid video provider.
+It keeps the generated MoneyPrinter task artifacts and checks:
+
+- provider/model/CUDA preflight plus safe worker Python, Torch, CUDA and NumPy versions;
+- at least two real generated and validated scene clips;
+- one initial runtime load/reuse operation across the multi-scene batch;
+- a validated final MP4 through the normal MoneyPrinter composer;
+- one versioned single-scene regeneration while the other active scenes remain unchanged;
+- render-only rerender with no generation-manifest change;
+- `nvidia-smi` peak memory/utilization sampling;
+- the portable local-AI output package.
+
+The machine-readable report is written to
+`storage/validation/local-ai-gpu/gpu-validation.json`. It records task IDs,
+safe provider/model fingerprints, worker/runtime versions, GPU measurements,
+PASS/FAIL/SKIPPED checks and task-relative artifact references. Model/checkpoint
+host paths and credentials are not added to the report.
+
+A green CPU CI result for this command's orchestration tests is **not** evidence
+of Wan/LTX inference quality or performance. Release evidence exists only after
+the command is run successfully on the actual deployment GPU with the intended
+model revisions.
+
 ## No Voice and output artifacts
 
 The existing **No Voiceover** selection is a real local-AI production path. It

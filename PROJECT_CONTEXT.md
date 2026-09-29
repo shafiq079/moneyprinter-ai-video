@@ -85,10 +85,25 @@ Real Wan/LTX inference, CUDA behavior under actual multi-process contention,
 VRAM usage, generation speed and visual quality remain deferred until suitable
 GPU hardware is available. Phase 6 tooling provides
 `scripts/local_ai_benchmark.py`, which will later run identical prompts across
-Wan 2.2, LTX Fast and LTX Quality and record timing/media/GPU telemetry. Do not
-invent model-quality, performance or recommended-GPU conclusions before those
-measurements exist. Optional factual workflow and a larger editor remain
-non-blocking and should only be started for an explicit product need.
+Wan 2.2, LTX Fast and LTX Quality and record timing/media/GPU telemetry.
+
+A manual one-command GPU acceptance pack is also implemented through
+`scripts/local_ai_gpu_validate.py` and
+`app/services/local_ai/gpu_validation.py`. It uses an offline supplied script,
+deterministic no-voice timing audio and the real local-provider/composer paths.
+For each target it checks provider preflight and safe worker Python/Torch/CUDA/
+NumPy versions, real multi-scene generation, one runtime load/reuse call for the
+initial scene batch, final validated MP4 output, one-scene versioned
+regeneration, render-only rerender with an unchanged generation manifest, GPU
+telemetry and the portable output package. Wan and LTX Fast are required by
+default. LTX Quality may be reported as `skipped` only when its preflight is
+unavailable; once preflight succeeds, a later failure is a validation failure.
+The pack has CPU-safe orchestration tests but has **not** been run against real
+Wan/LTX weights yet.
+
+Do not invent model-quality, performance or recommended-GPU conclusions before
+those real measurements exist. Optional factual workflow and a larger editor
+remain non-blocking and should only be started for an explicit product need.
 
 ## CPU integration and hardening pass
 
