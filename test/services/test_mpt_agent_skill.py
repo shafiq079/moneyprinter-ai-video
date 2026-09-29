@@ -365,7 +365,7 @@ class TestMptAgentSkill(unittest.TestCase):
         self.assertIsNotNone(cli_sources)
         # Local GPU providers require operator-managed model/runtime setup and are
         # deliberately not exposed through the self-installing Agent Skill.
-        cli_sources -= {"wan22_local", "ltx25_local"}
+        cli_sources -= {"wan22_local", "ltx25_local", "ltx25_hf"}
         self.assertEqual(set(mpt_agent.SUPPORTED_SOURCES), cli_sources)
 
     def test_seedance_source_requires_key_and_explicit_charge_confirmation(self):

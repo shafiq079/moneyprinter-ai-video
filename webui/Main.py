@@ -5486,7 +5486,7 @@ def _render_video_settings(panel, params):
                 "openai_image": tr("OpenAI Compatible Text-to-Image"),
                 "wan22_local": tr("Wan 2.2 Local"),
                 "ltx25_local": tr("LTX 2.5 Local"),
-                "ltx25_hf": tr("LTX 2.5 Hugging Face"),
+                "ltx25_hf": "LTX 2.5 Hugging Face",
                 "local": tr("Local file"),
             }
             saved_video_source_name = str(

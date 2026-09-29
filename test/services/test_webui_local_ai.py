@@ -27,7 +27,7 @@ def _video_source_groups():
 
 def test_public_local_ai_sources_are_registered_as_distinct_video_sources():
     groups = _video_source_groups()
-    assert groups["local_ai_video"] == ("wan22_local", "ltx25_local")
+    assert groups["local_ai_video"] == ("wan22_local", "ltx25_local", "ltx25_hf")
     assert "__local_ai_fake__" not in {
         source for group in groups.values() for source in group
     }
