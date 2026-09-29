@@ -147,7 +147,10 @@ def _preflight(repo: Path, device_id: int) -> dict[str, Any]:
 
     return {
         "ok": True,
+        "python_version": sys.version.split()[0],
         "torch_version": str(getattr(torch, "__version__", "")),
+        "cuda_version": str(getattr(torch.version, "cuda", "") or ""),
+        "numpy_version": str(getattr(np, "__version__", "")),
         "cuda_device_index": device_id,
     }
 

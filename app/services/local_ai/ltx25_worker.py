@@ -93,6 +93,7 @@ def _preflight(
     try:
         with _quiet_output():
             import torch
+            import numpy as np
     except Exception as exc:
         return {
             "ok": False,
@@ -125,7 +126,10 @@ def _preflight(
         }
     return {
         "ok": True,
+        "python_version": sys.version.split()[0],
         "torch_version": str(getattr(torch, "__version__", "")),
+        "cuda_version": str(getattr(torch.version, "cuda", "") or ""),
+        "numpy_version": str(getattr(np, "__version__", "")),
         "cuda_device_index": device_id,
     }
 

@@ -165,7 +165,16 @@ class TestWan22Configuration(Wan22TestCase):
 
     def test_preflight_uses_configured_worker_without_importing_gpu_stack_in_app(self):
         provider = Wan22LocalProvider(settings=self.settings)
-        response = "MPT_WAN22_JSON:" + json.dumps({"ok": True}) + "\n"
+        response = "MPT_WAN22_JSON:" + json.dumps(
+            {
+                "ok": True,
+                "python_version": "3.11.9",
+                "torch_version": "2.8.0+cu128",
+                "cuda_version": "12.8",
+                "numpy_version": "1.26.4",
+                "cuda_device_index": 0,
+            }
+        ) + "\n"
         completed = subprocess.CompletedProcess([], 0, stdout=response)
 
         with (
@@ -177,6 +186,12 @@ class TestWan22Configuration(Wan22TestCase):
         command = run.call_args.args[0]
         self.assertIn("--preflight", command)
         self.assertEqual(command[0], self.settings.python_executable)
+        metadata = provider.safe_metadata()
+        self.assertEqual(metadata["worker_python_version"], "3.11.9")
+        self.assertEqual(metadata["worker_torch_version"], "2.8.0+cu128")
+        self.assertEqual(metadata["worker_cuda_version"], "12.8")
+        self.assertEqual(metadata["worker_numpy_version"], "1.26.4")
+        self.assertEqual(metadata["cuda_device_index"], 0)
 
 
 class _OOMWorker(_FakeWorker):

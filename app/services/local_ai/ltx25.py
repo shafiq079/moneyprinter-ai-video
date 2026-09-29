@@ -529,6 +529,7 @@ class LTX25LocalProvider:
         )
         self.base_seed = self.settings.base_seed
         self._preflight_complete = False
+        self._preflight_metadata: dict[str, str | int] = {}
 
     def safe_metadata(self) -> dict[str, Any]:
         return {
@@ -538,6 +539,7 @@ class LTX25LocalProvider:
             "offload_mode": self.settings.offload_mode,
             "fp8_cast": self.settings.fp8_cast,
             "output_audio": "none",
+            **self._preflight_metadata,
         }
 
     def generation_settings(self) -> dict[str, object]:
@@ -583,6 +585,15 @@ class LTX25LocalProvider:
             )
         if completed.returncode not in (0, None):
             raise LTX25ConfigurationError("LTX 2.5 worker preflight failed")
+        self._preflight_metadata = {
+            "worker_python_version": str(response.get("python_version") or ""),
+            "worker_torch_version": str(response.get("torch_version") or ""),
+            "worker_cuda_version": str(response.get("cuda_version") or ""),
+            "worker_numpy_version": str(response.get("numpy_version") or ""),
+            "cuda_device_index": int(
+                response.get("cuda_device_index", self.settings.device_id)
+            ),
+        }
         self._preflight_complete = True
 
     @classmethod

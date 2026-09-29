@@ -176,7 +176,16 @@ class TestLTX25Configuration(LTX25TestCase):
 
     def test_preflight_uses_configured_worker_without_importing_gpu_stack(self):
         provider = LTX25LocalProvider(settings=self.settings)
-        response = "MPT_LTX25_JSON:" + json.dumps({"ok": True}) + "\n"
+        response = "MPT_LTX25_JSON:" + json.dumps(
+            {
+                "ok": True,
+                "python_version": "3.11.9",
+                "torch_version": "2.8.0+cu128",
+                "cuda_version": "12.8",
+                "numpy_version": "2.1.3",
+                "cuda_device_index": 0,
+            }
+        ) + "\n"
         completed = subprocess.CompletedProcess([], 0, stdout=response)
 
         with (
@@ -198,6 +207,12 @@ class TestLTX25Configuration(LTX25TestCase):
         self.assertEqual(command[0], self.settings.python_executable)
         self.assertIn("--generation-mode", command)
         self.assertIn("fast", command)
+        metadata = provider.safe_metadata()
+        self.assertEqual(metadata["worker_python_version"], "3.11.9")
+        self.assertEqual(metadata["worker_torch_version"], "2.8.0+cu128")
+        self.assertEqual(metadata["worker_cuda_version"], "12.8")
+        self.assertEqual(metadata["worker_numpy_version"], "2.1.3")
+        self.assertEqual(metadata["cuda_device_index"], 0)
 
     def test_quality_mode_requires_detailing_lora(self):
         with self.assertRaisesRegex(
