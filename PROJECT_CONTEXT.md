@@ -81,9 +81,20 @@ task/provider/scene/stage/timing context. Regression coverage locks visual-only
 scene regeneration to reuse existing narration/captions and preserves the
 existing narration/BGM gain controls in the shared final composer.
 
-Real Wan/LTX inference, CUDA behavior under actual multi-process contention,
-VRAM usage, generation speed and visual quality remain deferred until suitable
-GPU hardware is available. Phase 6 tooling provides
+Real Kaggle GPU validation has now proved LTX-2.5 distilled can generate valid
+MP4 output on a Tesla T4 with disk offload, but that configuration is too slow
+for practical scene production (a roughly two-second test took more than
+15 minutes). A temporary Kaggle FastAPI + Cloudflare path also proved the remote
+request/download shape end to end. These measurements apply only to that tested
+T4/offload setup.
+
+The next deployment path is `ltx25_hf`: an operator-owned Hugging Face ZeroGPU
+Space using the official optimized LTX-2.5 distilled Gradio implementation.
+MoneyPrinter accesses it through the provider-neutral scene contract and an
+isolated Hugging Face transport adapter. CPU tests may validate the adapter and
+task integration before GPU quota is available, but real ZeroGPU latency,
+quality and quota behavior remain unvalidated until an authenticated generation
+is run after quota reset. Phase 6 tooling provides
 `scripts/local_ai_benchmark.py`, which will later run identical prompts across
 Wan 2.2, LTX Fast and LTX Quality and record timing/media/GPU telemetry.
 

@@ -145,6 +145,59 @@ USD 10,000,000 require a paid license for commercial use except for the
 license's defined non-commercial cases. This project does not redistribute LTX
 model weights, and this note is not legal advice.
 
+## LTX 2.5 Hugging Face ZeroGPU source
+
+The stable source ID is `ltx25_hf`. It reuses MoneyPrinter's existing local-AI
+scene planning, generation manifest, scene regeneration, composer and final-output
+validation, but delegates scene inference to an operator-owned Hugging Face
+Gradio Space. Hugging Face-specific transport is isolated under
+`app/services/local_ai/remote_gpu/`; the task pipeline does not depend on
+Hugging Face APIs directly.
+
+The current MVP targets the official LTX-2.5 distilled ZeroGPU implementation.
+Create or duplicate a Gradio ZeroGPU Space, keep the optimized LTX pipeline in
+that Space, and give the generation button a stable API name:
+
+```python
+go.click(run, _INPUTS, _OUTPUTS, api_name="generate_scene")
+```
+
+Configure MoneyPrinter:
+
+```toml
+[ltx25_hf]
+space_url = "https://YOUR-SPACE.hf.space"
+api_name = "generate_scene"
+token_env = "HF_TOKEN"
+deployment_revision = "YOUR_SPACE_REVISION"
+seed = 42
+max_scene_duration = 5.0
+decoder = "conv"
+job_timeout_seconds = 900
+```
+
+Set the token only in the MoneyPrinter process environment:
+
+```text
+HF_TOKEN=hf_...
+```
+
+The provider requires an authenticated token so ZeroGPU usage is attributed to
+the caller account instead of the anonymous pool. The token is used only for
+HTTP authorization and is never written to scene plans, manifests or safe
+provider metadata.
+
+Readiness checks call the Space's Gradio API metadata endpoint and do not invoke
+the GPU. Actual generation submits a text-to-video request to the named endpoint,
+waits for the Gradio queue result, downloads the returned MP4 from the same Space
+origin, strips LTX native audio, trims the clip to the requested scene duration,
+and then runs the normal MoneyPrinter media validation.
+
+This remote provider is **Fast/Distilled only** for the MVP. MoneyPrinter keeps
+its own narration, captions and BGM authoritative. Real ZeroGPU latency, quota
+behavior and visual quality must be recorded only after an actual authenticated
+generation succeeds on the configured Space.
+
 ## Local AI generation telemetry
 
 The generation manifest records CPU-safe wall-clock telemetry for local

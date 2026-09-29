@@ -18,6 +18,12 @@ from .ltx25 import (
     LTX25LocalProvider,
     LTX25WorkerError,
 )
+from .ltx25_hf import (
+    LTX25_HF_SOURCE_ID,
+    LTX25HFConfigurationError,
+    LTX25HFProvider,
+)
+from .remote_gpu.huggingface import HuggingFaceRemoteError
 from app.utils import utils
 
 from .wan22 import (
@@ -63,8 +69,13 @@ def validate_output_storage() -> None:
 
 
 FAKE_SOURCE_ID = FakeLocalVideoProvider.provider_id
-_LOCAL_SOURCE_IDS = {FAKE_SOURCE_ID, WAN22_SOURCE_ID, LTX25_SOURCE_ID}
-_PUBLIC_SOURCE_IDS = (WAN22_SOURCE_ID, LTX25_SOURCE_ID)
+_LOCAL_SOURCE_IDS = {
+    FAKE_SOURCE_ID,
+    WAN22_SOURCE_ID,
+    LTX25_SOURCE_ID,
+    LTX25_HF_SOURCE_ID,
+}
+_PUBLIC_SOURCE_IDS = (WAN22_SOURCE_ID, LTX25_SOURCE_ID, LTX25_HF_SOURCE_ID)
 
 
 def is_local_ai_source(source: str | None) -> bool:
@@ -84,7 +95,7 @@ def is_source_enabled(source: str | None) -> bool:
 
     if source == FAKE_SOURCE_ID:
         return os.getenv("MPT_ENABLE_LOCAL_AI_FAKE_PROVIDER") == "1"
-    if source in {WAN22_SOURCE_ID, LTX25_SOURCE_ID}:
+    if source in {WAN22_SOURCE_ID, LTX25_SOURCE_ID, LTX25_HF_SOURCE_ID}:
         return True
     return False
 
@@ -106,6 +117,10 @@ def create_provider(
         return Wan22LocalProvider()
     if source == LTX25_SOURCE_ID:
         return LTX25LocalProvider(generation_mode=generation_mode)
+    if source == LTX25_HF_SOURCE_ID:
+        if generation_mode != "fast":
+            raise ValueError("LTX 2.5 Hugging Face supports fast mode only")
+        return LTX25HFProvider()
     raise ValueError(f"unknown local AI video source: {source}")
 
 
@@ -151,6 +166,8 @@ def preflight_status(
                 Wan22WorkerError,
                 LTX25ConfigurationError,
                 LTX25WorkerError,
+                LTX25HFConfigurationError,
+                HuggingFaceRemoteError,
                 LocalAIStorageError,
             ),
         ):
@@ -204,6 +221,8 @@ __all__ = [
     "LocalAIStorageError",
     "LTX25_SOURCE_ID",
     "LTX25LocalProvider",
+    "LTX25_HF_SOURCE_ID",
+    "LTX25HFProvider",
     "LocalAISceneGenerationError",
     "WAN22_SOURCE_ID",
     "Wan22LocalProvider",

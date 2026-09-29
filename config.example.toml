@@ -565,6 +565,23 @@ offload_mode = "cpu"
 # GPU/runtime is known to have enough memory for bf16 transformer weights.
 fp8_cast = true
 
+[ltx25_hf]
+# Remote LTX-2.5 Fast backend hosted in a Hugging Face Gradio ZeroGPU Space.
+# Add api_name="generate_scene" to the Space's Gradio click binding so this
+# endpoint remains stable across UI changes.
+space_url = ""
+api_name = "generate_scene"
+# Name of the environment variable that contains the caller HF token.
+# The token itself must never be stored in config.toml.
+token_env = "HF_TOKEN"
+# Change this whenever the deployed Space/model code changes so cached scene
+# fingerprints cannot silently reuse assets from a different deployment.
+deployment_revision = ""
+seed = 42
+max_scene_duration = 5.0
+decoder = "conv"
+job_timeout_seconds = 900
+
 # =============================================================================
 # Local AI Generated Asset Cleanup
 # =============================================================================

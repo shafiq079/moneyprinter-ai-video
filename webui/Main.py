@@ -138,7 +138,7 @@ VIDEO_SOURCE_GROUPS = {
         "muapi",
     ),
     "ai_image": ("openai_image",),
-    "local_ai_video": ("wan22_local", "ltx25_local"),
+    "local_ai_video": ("wan22_local", "ltx25_local", "ltx25_hf"),
     "local": ("local",),
 }
 # Upload-Post 的 API Key 与发布用户分别在两个页面管理，并且发布用户名称
@@ -5486,6 +5486,7 @@ def _render_video_settings(panel, params):
                 "openai_image": tr("OpenAI Compatible Text-to-Image"),
                 "wan22_local": tr("Wan 2.2 Local"),
                 "ltx25_local": tr("LTX 2.5 Local"),
+                "ltx25_hf": tr("LTX 2.5 Hugging Face"),
                 "local": tr("Local file"),
             }
             saved_video_source_name = str(
@@ -5584,7 +5585,32 @@ def _render_video_settings(panel, params):
                                 error=readiness["message"]
                             )
                         )
-            if params.video_source == local_ai.WAN22_SOURCE_ID:
+            if params.video_source == local_ai.LTX25_HF_SOURCE_ID:
+                st.caption(
+                    "LTX 2.5 runs remotely on your configured Hugging Face ZeroGPU Space."
+                )
+                params.local_ai_generation_mode = "fast"
+                if st.button(
+                    tr("Check LTX 2.5 Readiness"),
+                    key="ltx25_hf_readiness_button",
+                ):
+                    with st.spinner(tr("Checking LTX 2.5 Readiness")):
+                        readiness = local_ai.preflight_status(
+                            local_ai.LTX25_HF_SOURCE_ID,
+                            generation_mode="fast",
+                        )
+                    if readiness["ready"]:
+                        st.success(tr("LTX 2.5 Ready"))
+                    else:
+                        st.error(
+                            tr("LTX 2.5 Not Ready").format(
+                                error=readiness["message"]
+                            )
+                        )
+            if params.video_source in {
+                local_ai.WAN22_SOURCE_ID,
+                local_ai.LTX25_HF_SOURCE_ID,
+            }:
                 params.local_ai_generation_mode = "fast"
             if local_ai.is_public_source(params.video_source):
                 saved_local_seed = int(config.ui.get("local_ai_seed", 42) or 42)
@@ -8442,6 +8468,7 @@ def _render_generation_controls(
             "openai_image",
             "wan22_local",
             "ltx25_local",
+            "ltx25_hf",
             "local",
         ]:
             _remove_active_generation_task(task_id)

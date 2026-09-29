@@ -49,6 +49,7 @@ _CLI_VIDEO_SOURCES = (
     "openai_image",
     "wan22_local",
     "ltx25_local",
+    "ltx25_hf",
     "local",
 )
 
