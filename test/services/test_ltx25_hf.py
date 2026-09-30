@@ -6,7 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app.services import local_ai
+from app.models.schema import VideoParams
+from app.services import generation_manifest, local_ai, scene_planner, task
 from app.services.local_ai.base import SceneSpec
 from app.services.local_ai.ltx25_hf import (
     LTX25_HF_SOURCE_ID,
@@ -14,6 +15,7 @@ from app.services.local_ai.ltx25_hf import (
     LTX25HFProvider,
     LTX25HFSettings,
 )
+from app.services.state import MemoryState
 from app.utils import utils
 
 
@@ -172,6 +174,120 @@ class TestLTX25HFProvider(LTX25HFTestCase):
                 LTX25_HF_SOURCE_ID,
                 generation_mode="quality",
             )
+
+
+class TestLTX25HFFullPipeline(LTX25HFTestCase):
+    def test_twenty_second_multiscene_task_composes_without_real_gpu(self):
+        class OfflineSpace(_FakeHFBackend):
+            def generate(self, inputs, output_path):
+                self.generate_count += 1
+                self.last_inputs = dict(inputs)
+                duration = float(inputs["duration_s"]) + 0.25
+                command = [
+                    utils.get_ffmpeg_binary(),
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    f"color=c=blue:s={inputs['width']}x{inputs['height']}:r=2:d={duration}",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "ultrafast",
+                    "-pix_fmt",
+                    "yuv420p",
+                    str(output_path),
+                ]
+                subprocess.run(command, capture_output=True, check=True)
+
+        def task_dir(sub_dir=""):
+            destination = self.root / sub_dir if sub_dir else self.root
+            destination.mkdir(parents=True, exist_ok=True)
+            return str(destination)
+
+        def offline_tts(*, voice_file, **_kwargs):
+            subprocess.run(
+                [
+                    utils.get_ffmpeg_binary(),
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "anullsrc=channel_layout=stereo:sample_rate=44100",
+                    "-t",
+                    "20",
+                    "-c:a",
+                    "libmp3lame",
+                    voice_file,
+                ],
+                capture_output=True,
+                check=True,
+            )
+            return object()
+
+        def offline_subtitles(*, subtitle_file, **_kwargs):
+            Path(subtitle_file).write_text(
+                "1\n00:00:00,100 --> 00:00:19,500\nA quiet garden grows.\n\n",
+                encoding="utf-8",
+            )
+
+        params = VideoParams(
+            video_subject="A garden through a day",
+            video_script=(
+                "Sunlight reaches the garden. Leaves move in the breeze. "
+                "A flower opens. The garden rests at dusk."
+            ),
+            video_source=LTX25_HF_SOURCE_ID,
+            video_aspect="9:16",
+            video_clip_duration=5,
+            local_ai_generation_mode="fast",
+            local_ai_seed=77,
+            subtitle_enabled=True,
+            bgm_type="random",
+            bgm_volume=0.1,
+            n_threads=1,
+        )
+        state = MemoryState()
+        with (
+            patch.object(utils, "task_dir", side_effect=task_dir),
+            patch.object(task.sm, "state", state),
+            patch.object(LTX25HFSettings, "from_config", return_value=self.settings),
+            patch.object(LTX25HFProvider, "_backend_factory", OfflineSpace),
+            patch.dict(os.environ, {"TEST_HF_TOKEN": "hf_offline_test_only"}),
+            patch.object(task.voice, "tts", side_effect=offline_tts),
+            patch.object(task.voice, "create_subtitle", side_effect=offline_subtitles),
+            patch.object(
+                scene_planner.llm,
+                "generate_json_response",
+                side_effect=RuntimeError("offline"),
+            ),
+            patch.object(
+                task.material,
+                "download_videos",
+                side_effect=AssertionError("stock downloader called"),
+            ),
+        ):
+            result = task.start("hf-full-cpu", params)
+            plan = scene_planner.load_scene_plan("hf-full-cpu")
+            manifest = generation_manifest.load_manifest("hf-full-cpu")
+
+        self.assertEqual(
+            state.get_task("hf-full-cpu")["state"], task.const.TASK_STATE_COMPLETE
+        )
+        # MP3 encoder padding makes the measured narration slightly longer
+        # than 20 seconds, so the planner correctly requests one more scene.
+        self.assertEqual(len(plan.scenes), 5)
+        self.assertEqual(len(manifest["scenes"]), len(plan.scenes))
+        self.assertEqual(manifest["provider_id"], LTX25_HF_SOURCE_ID)
+        self.assertEqual(len(result["materials"]), len(plan.scenes))
+        self.assertEqual(
+            sum(backend.generate_count for backend in OfflineSpace.instances),
+            len(plan.scenes),
+        )
+        self.assertEqual(OfflineSpace.instances[0].last_inputs["width"], 832)
+        self.assertEqual(OfflineSpace.instances[0].last_inputs["height"], 1472)
+        self.assertTrue(Path(result["subtitle_path"]).is_file())
+        self.assertTrue(Path(result["videos"][0]).is_file())
 
 
 if __name__ == "__main__":

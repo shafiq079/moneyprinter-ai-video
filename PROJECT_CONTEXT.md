@@ -116,6 +116,21 @@ as an explicit opt-in target in addition to the local Wan/LTX targets. Remote
 benchmarks never sample the caller machine's `nvidia-smi`, and the HF target is
 not added to defaults so a benchmark cannot spend ZeroGPU quota accidentally.
 
+The 30 September 2026 CI checkpoint `79aa148107c92e6f09d8f62590af98475f11d93d`
+passed Windows smoke and both Python 3.11/3.13 jobs after the capability and
+high-resolution HF changes. An offline integration test now sends a scripted
+20-second task with simulated narration through the actual `ltx25_hf` adapter,
+replacing only the external Space with a CPU synthetic-video backend. It verifies
+five ordered scenes, subtitles/BGM, task artifacts and a validated 1080×1920
+final MP4. MP3 padding
+made the measured audio slightly longer than 20 seconds, so the five-scene
+plan is expected. This proves the application path without using HF quota; it
+does not prove that the current Space can successfully generate at the new
+832×1472 / 1472×832 working resolution. Before a 20–30-second real task,
+perform one deliberate two-second high-resolution scene smoke with the current
+Space revision and operator token, then assess its runtime/quota and output.
+Do not repeatedly retry or start a multi-scene task if that smoke fails.
+
 A manual one-command GPU acceptance pack is also implemented through
 `scripts/local_ai_gpu_validate.py` and
 `app/services/local_ai/gpu_validation.py`. It uses an offline supplied script,
