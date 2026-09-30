@@ -68,7 +68,7 @@ _CAPABILITIES = {
         generation_modes=("fast",),
         mode_labels=(("fast", "Fast / Distilled"),),
         aspect_ratios=("9:16", "16:9"),
-        generation_dimensions=(("9:16", 576, 1024), ("16:9", 1024, 576)),
+        generation_dimensions=(("9:16", 832, 1472), ("16:9", 1472, 832)),
         clip_durations=(2, 3, 4, 5),
         default_clip_duration=2,
     ),

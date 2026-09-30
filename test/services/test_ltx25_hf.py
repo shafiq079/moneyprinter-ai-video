@@ -44,7 +44,7 @@ class _FakeHFBackend:
             "-f",
             "lavfi",
             "-i",
-            "color=c=black:s=576x1024:r=24:d=2.1",
+            "color=c=black:s=832x1472:r=24:d=2.1",
             "-f",
             "lavfi",
             "-i",
@@ -139,8 +139,8 @@ class TestLTX25HFProvider(LTX25HFTestCase):
         self.assertEqual(backend.preflight_count, 1)
         self.assertEqual(backend.generate_count, 1)
         self.assertEqual(backend.last_inputs["prompt"], scene.prompt)
-        self.assertEqual(backend.last_inputs["height"], 1024)
-        self.assertEqual(backend.last_inputs["width"], 576)
+        self.assertEqual(backend.last_inputs["height"], 1472)
+        self.assertEqual(backend.last_inputs["width"], 832)
         self.assertEqual(backend.last_inputs["duration_s"], 2.0)
         self.assertEqual(backend.last_inputs["seed"], 99)
         self.assertEqual(result.provider_id, LTX25_HF_SOURCE_ID)

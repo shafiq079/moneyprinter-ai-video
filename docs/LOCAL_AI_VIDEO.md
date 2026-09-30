@@ -217,9 +217,13 @@ completed successfully: a requested 2.0-second landscape scene returned a
 768x512 MP4 through the full provider -> Gradio -> download -> normalization
 path. That first smoke run proved integration, but it also exposed that the
 early adapter treated orientation as aspect ratio: 768x512 is 3:2, not 16:9.
-The production mapping was therefore corrected to exact 1024x576 landscape and
-576x1024 portrait requests, and media validation now rejects materially wrong
-ratios instead of checking orientation only. The smoke run is not a latency or
+The first correction used exact 1024x576 / 576x1024 working canvases, but the
+quality target was then aligned with the official LTX-2.5 ZeroGPU demo's
+higher-resolution generation profile: 1472x832 landscape and 832x1472 portrait.
+Those /64-grid sizes are very close to 16:9 / 9:16 and preserve substantially
+more generated detail. MoneyPrinter's final compositor still emits the exact
+requested delivery canvas (1920x1080 or 1080x1920). Media validation remains
+ratio-aware and rejects materially wrong outputs. The smoke run is not a latency or
 visual-quality benchmark; no standardized timing measurement was captured.
 
 ## Local AI generation telemetry

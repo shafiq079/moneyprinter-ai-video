@@ -25,8 +25,8 @@ def test_public_capabilities_define_model_backend_and_safe_domains():
     assert hf.generation_modes == ("fast",)
     assert hf.aspect_ratios == ("9:16", "16:9")
     assert hf.clip_durations == (2, 3, 4, 5)
-    assert hf.dimensions_for("16:9") == (1024, 576)
-    assert hf.dimensions_for("9:16") == (576, 1024)
+    assert hf.dimensions_for("16:9") == (1472, 832)
+    assert hf.dimensions_for("9:16") == (832, 1472)
 
 
 def test_generation_request_accepts_only_supported_choices():

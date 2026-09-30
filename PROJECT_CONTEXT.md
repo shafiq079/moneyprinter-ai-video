@@ -104,10 +104,12 @@ completed a requested 2.0-second landscape scene and returned a 768x512 MP4
 through remote generation, download, FFmpeg normalization and media validation.
 That smoke run proved the real remote execution path but exposed an early aspect
 mapping defect: 768x512 is 3:2 rather than 16:9, and the old validator checked
-orientation only. The HF adapter now requests exact 1024x576 for 16:9 and
-576x1024 for 9:16, bumps its fingerprint version so old cached clips are not
-silently reused, and ratio-aware media validation rejects materially wrong
-outputs. The smoke run does **not** establish standardized latency, visual-quality
+orientation only. The HF adapter now uses the official LTX-2.5 ZeroGPU demo's higher-resolution
+/64-grid generation profile: 1472x832 for landscape and 832x1472 for portrait.
+These are near-16:9 / near-9:16 model working canvases; the shared MoneyPrinter
+composer produces the exact 1920x1080 / 1080x1920 delivery canvas. The adapter
+fingerprint is bumped so older lower-resolution cached clips are not silently
+reused, and ratio-aware media validation rejects materially wrong outputs. The smoke run does **not** establish standardized latency, visual-quality
 or quota-efficiency measurements because it did not capture benchmark timing.
 Phase 6 tooling now accepts `ltx25_hf:fast`
 as an explicit opt-in target in addition to the local Wan/LTX targets. Remote
