@@ -10,6 +10,7 @@ from .base import SceneSpec
 
 
 _DURATION_TOLERANCE_SECONDS = 0.25
+_ASPECT_RELATIVE_TOLERANCE = 0.03
 
 
 class LocalAIMediaValidationError(ValueError):
@@ -24,13 +25,21 @@ class VideoProbe:
 
 
 def _aspect_matches(width: int, height: int, aspect: str) -> bool:
-    if aspect == "9:16":
-        return height > width
-    if aspect == "16:9":
-        return width > height
-    if aspect == "1:1":
-        return abs(width - height) / max(width, height) <= 0.05
-    return False
+    if width <= 0 or height <= 0:
+        return False
+
+    targets = {
+        "9:16": 9 / 16,
+        "16:9": 16 / 9,
+        "1:1": 1.0,
+    }
+    target = targets.get(aspect)
+    if target is None:
+        return False
+
+    actual = width / height
+    tolerance = 0.05 if aspect == "1:1" else _ASPECT_RELATIVE_TOLERANCE
+    return abs(actual - target) / target <= tolerance
 
 
 def validate_video_clip(path: Path, scene: SceneSpec) -> VideoProbe:

@@ -213,10 +213,14 @@ and then runs the normal MoneyPrinter media validation.
 This remote provider is **Fast/Distilled only** for the MVP. MoneyPrinter keeps
 its own narration, captions and BGM authoritative. On 30 September 2026 an
 authenticated MoneyPrinter smoke run against the operator-owned ZeroGPU Space
-completed successfully: a requested 2.0-second 16:9 scene returned a validated
+completed successfully: a requested 2.0-second landscape scene returned a
 768x512 MP4 through the full provider -> Gradio -> download -> normalization
-path. That smoke run proves integration, not a latency or visual-quality claim;
-no standardized timing measurement was captured.
+path. That first smoke run proved integration, but it also exposed that the
+early adapter treated orientation as aspect ratio: 768x512 is 3:2, not 16:9.
+The production mapping was therefore corrected to exact 1024x576 landscape and
+576x1024 portrait requests, and media validation now rejects materially wrong
+ratios instead of checking orientation only. The smoke run is not a latency or
+visual-quality benchmark; no standardized timing measurement was captured.
 
 ## Local AI generation telemetry
 

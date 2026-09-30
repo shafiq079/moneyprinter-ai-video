@@ -22,7 +22,7 @@ from .remote_gpu.huggingface import (
 
 LTX25_HF_SOURCE_ID = "ltx25_hf"
 LTX25_HF_MODEL_NAME = "LTX-2.5"
-_ADAPTER_VERSION = "mpt-ltx25-hf:v1"
+_ADAPTER_VERSION = "mpt-ltx25-hf:v2"
 
 
 class LTX25HFConfigurationError(RuntimeError):
@@ -169,9 +169,9 @@ def _model_fingerprint(settings: LTX25HFSettings) -> str:
 
 def _dimensions(aspect: str) -> tuple[int, int]:
     if aspect == "16:9":
-        return 768, 512
+        return 1024, 576
     if aspect == "9:16":
-        return 512, 768
+        return 576, 1024
     if aspect == "1:1":
         return 640, 640
     raise LTX25HFConfigurationError(f"unsupported LTX Hugging Face aspect: {aspect}")

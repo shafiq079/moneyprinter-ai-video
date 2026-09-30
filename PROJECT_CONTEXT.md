@@ -100,11 +100,16 @@ The `ltx25_hf` deployment path is now integration-validated against the
 operator-owned Hugging Face ZeroGPU Space using the optimized LTX-2.5 distilled
 Gradio implementation. On 30 September 2026 MoneyPrinter preflight reported the
 named `generate_scene` endpoint ready, then an authenticated provider smoke run
-completed a requested 2.0-second 16:9 scene and returned a validated 768x512 MP4
+completed a requested 2.0-second landscape scene and returned a 768x512 MP4
 through remote generation, download, FFmpeg normalization and media validation.
-This proves the real remote execution path; it does **not** establish standardized
-latency, visual-quality or quota-efficiency measurements because that smoke run
-did not capture benchmark timing. Phase 6 tooling now accepts `ltx25_hf:fast`
+That smoke run proved the real remote execution path but exposed an early aspect
+mapping defect: 768x512 is 3:2 rather than 16:9, and the old validator checked
+orientation only. The HF adapter now requests exact 1024x576 for 16:9 and
+576x1024 for 9:16, bumps its fingerprint version so old cached clips are not
+silently reused, and ratio-aware media validation rejects materially wrong
+outputs. The smoke run does **not** establish standardized latency, visual-quality
+or quota-efficiency measurements because it did not capture benchmark timing.
+Phase 6 tooling now accepts `ltx25_hf:fast`
 as an explicit opt-in target in addition to the local Wan/LTX targets. Remote
 benchmarks never sample the caller machine's `nvidia-smi`, and the HF target is
 not added to defaults so a benchmark cannot spend ZeroGPU quota accidentally.
