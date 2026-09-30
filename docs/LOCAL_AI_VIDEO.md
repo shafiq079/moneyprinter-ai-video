@@ -115,6 +115,12 @@ deterministic CPU-safe visual plan rather than failing the video task. The M1
 fake provider always uses the deterministic path so CI never depends on an
 external LLM.
 
+For the OpenAI-compatible LLM adapter, the optional Scene Director request has
+a 90-second timeout and no automatic SDK retry. This prevents a stalled remote
+LLM from holding scene planning for the SDK's default 30-minute retry window.
+After a timeout, the saved deterministic plan still allows video generation to
+continue. Other LLM adapters retain their existing provider timeout behavior.
+
 In the WebUI, the current local-AI task exposes a read-only **Scene Plan**
 expander once the plan exists. It shows the visual bible and the final prompt
 sent for each scene without exposing model/checkpoint host paths.

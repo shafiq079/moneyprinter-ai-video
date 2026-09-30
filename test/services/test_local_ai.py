@@ -231,6 +231,13 @@ class TestScenePlan(LocalAITestCase):
             )
 
         generate.assert_called_once()
+        self.assertEqual(
+            generate.call_args.kwargs,
+            {
+                "timeout_seconds": scene_planner.SCENE_DIRECTOR_LLM_TIMEOUT_SECONDS,
+                "max_retries": scene_planner.SCENE_DIRECTOR_LLM_MAX_RETRIES,
+            },
+        )
         self.assertEqual(first.source, "configured_llm")
         self.assertEqual(second, first)
         self.assertTrue(scene_planner.scene_plan_path("director-cache").is_file())
@@ -265,6 +272,26 @@ class TestScenePlan(LocalAITestCase):
         self.assertTrue(all(scene.prompt for scene in plan.scenes))
         persisted = scene_planner.load_scene_plan("director-fallback")
         self.assertEqual(persisted, plan)
+
+    def test_director_timeout_uses_deterministic_persisted_fallback(self):
+        with patch.object(
+            scene_planner.llm,
+            "generate_json_response",
+            side_effect=ValueError("Request timed out."),
+        ) as generate:
+            plan = scene_planner.get_or_create_scene_plan(
+                "director-timeout",
+                "The garden wakes. A butterfly lands.",
+                video_subject="A garden at sunrise",
+                audio_duration=4.0,
+                max_scene_duration=2.0,
+                aspect="9:16",
+            )
+
+        self.assertEqual(generate.call_args.kwargs["timeout_seconds"], 90.0)
+        self.assertEqual(generate.call_args.kwargs["max_retries"], 0)
+        self.assertEqual(plan.source, "deterministic_fallback")
+        self.assertEqual(scene_planner.load_scene_plan("director-timeout"), plan)
 
     def test_scene_plan_does_not_repeat_full_script_when_scenes_outnumber_sentences(self):
         script = "First point. Second point."

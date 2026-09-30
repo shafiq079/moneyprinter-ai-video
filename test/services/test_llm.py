@@ -32,6 +32,57 @@ RUN_INTEGRATION_TESTS = os.environ.get("MPT_RUN_INTEGRATION_TESTS", "").lower() 
 
 
 class TestScriptPromptOptions(unittest.TestCase):
+    def test_scene_director_limits_openai_compatible_request_only_when_requested(self):
+        settings = {
+            "llm_provider": "openai",
+            "openai_api_key": "test-key",
+            "openai_base_url": "https://example.test/v1",
+            "openai_model_name": "test-model",
+        }
+        completion = types.SimpleNamespace(
+            choices=[
+                types.SimpleNamespace(
+                    message=types.SimpleNamespace(content='{"ok": true}')
+                )
+            ]
+        )
+        client = types.SimpleNamespace(
+            chat=types.SimpleNamespace(
+                completions=types.SimpleNamespace(create=lambda **kwargs: completion)
+            )
+        )
+        with (
+            patch.object(llm, "OpenAI", return_value=client) as openai_client,
+            patch.object(llm, "ChatCompletion", types.SimpleNamespace),
+        ):
+            self.assertEqual(
+                llm.generate_json_response(
+                    "Plan scenes",
+                    app_config=settings,
+                    timeout_seconds=90.0,
+                    max_retries=0,
+                ),
+                {"ok": True},
+            )
+            self.assertEqual(
+                llm._generate_response("Say hello", app_config=settings),
+                '{"ok": true}',
+            )
+
+        self.assertEqual(
+            openai_client.call_args_list[0].kwargs,
+            {
+                "api_key": "test-key",
+                "base_url": "https://example.test/v1",
+                "timeout": 90.0,
+                "max_retries": 0,
+            },
+        )
+        self.assertEqual(
+            openai_client.call_args_list[1].kwargs,
+            {"api_key": "test-key", "base_url": "https://example.test/v1"},
+        )
+
     def test_normalize_text_response_preserves_internal_newlines(self):
         """
         归一化只清理首尾空白，不能删除正文内部的换行。双换行用于区分脚本

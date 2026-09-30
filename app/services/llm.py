@@ -254,7 +254,13 @@ def _extract_qwen_generation_text(response) -> str:
     return _normalize_text_response(text, "qwen")
 
 
-def _generate_response(prompt: str, app_config=None) -> str:
+def _generate_response(
+    prompt: str,
+    app_config=None,
+    *,
+    timeout_seconds: float | None = None,
+    max_retries: int | None = None,
+) -> str:
     try:
         # WebUI 在视频生成期间允许用户准备下一条文案。调用方可以传入提交瞬间
         # 的配置快照，确保模型请求重试期间不会因为后台任务结束并应用新配置，
@@ -615,10 +621,12 @@ def _generate_response(prompt: str, app_config=None) -> str:
             else:
                 raise Exception(f"[{llm_provider}] returned an empty response")
 
-        client = OpenAI(
-            api_key=api_key,
-            base_url=base_url,
-        )
+        client_options = {}
+        if timeout_seconds is not None:
+            client_options["timeout"] = timeout_seconds
+        if max_retries is not None:
+            client_options["max_retries"] = max_retries
+        client = OpenAI(api_key=api_key, base_url=base_url, **client_options)
 
         response = client.chat.completions.create(
             model=model_name, messages=[{"role": "user", "content": prompt}]
@@ -829,10 +837,21 @@ def _strip_code_fence(text: str) -> str:
     return t.strip()
 
 
-def generate_json_response(prompt: str, app_config=None) -> dict:
+def generate_json_response(
+    prompt: str,
+    app_config=None,
+    *,
+    timeout_seconds: float | None = None,
+    max_retries: int | None = None,
+) -> dict:
     """Generate one JSON object through the configured MoneyPrinter LLM provider."""
 
-    response = _generate_response(prompt=prompt, app_config=app_config)
+    options = {}
+    if timeout_seconds is not None:
+        options["timeout_seconds"] = timeout_seconds
+    if max_retries is not None:
+        options["max_retries"] = max_retries
+    response = _generate_response(prompt=prompt, app_config=app_config, **options)
     if not response:
         raise ValueError("LLM returned an empty JSON response")
     if response.startswith("Error:"):

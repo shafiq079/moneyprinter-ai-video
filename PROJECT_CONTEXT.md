@@ -137,6 +137,19 @@ perform one deliberate two-second high-resolution scene smoke with the current
 Space revision and operator token, then assess its runtime/quota and output.
 Do not repeatedly retry or start a multi-scene task if that smoke fails.
 
+On 30 September the operator subsequently generated valid 832×1472 portrait
+clips through that Space: 2 seconds in 23.35 seconds and 3 seconds in 30.92
+seconds (single-run benchmarks, not quality or quota measurements). The first
+real WebUI task spent 12 minutes on the configured OpenAI-compatible Scene
+Director LLM and then failed its first Space submission at the 60-second HTTP
+request timeout; the 3-second benchmark later succeeded, so that Space failure
+is not yet reproducible. A second WebUI task waited 30 minutes for the LLM
+SDK's default timeout and two retries, then honored the user's cancellation.
+For this optional Scene Director call the OpenAI-compatible adapter now uses
+a 90-second timeout with no SDK retry and persists the existing deterministic
+fallback plan if it fails. Continue real workflow testing after pulling this
+fix; investigate another Space submission failure only if it recurs.
+
 A manual one-command GPU acceptance pack is also implemented through
 `scripts/local_ai_gpu_validate.py` and
 `app/services/local_ai/gpu_validation.py`. It uses an offline supplied script,
