@@ -100,6 +100,19 @@ def test_parse_target_supports_wan_and_ltx_modes():
         "ltx25_local",
         "quality",
     )
+    assert parse_target("ltx25_hf") == BenchmarkTarget(
+        "ltx25_hf",
+        "fast",
+    )
+
+
+def test_parse_target_rejects_huggingface_quality():
+    try:
+        parse_target("ltx25_hf:quality")
+    except ValueError as exc:
+        assert "fast mode only" in str(exc)
+    else:
+        raise AssertionError("Hugging Face quality benchmark should be rejected")
 
 
 def test_parse_target_rejects_wan_quality():
@@ -171,6 +184,37 @@ def test_benchmark_target_records_repeats_and_safe_gpu_summary():
         assert result.gpu["device_name"] == "Fake GPU"
         assert result.gpu["peak_memory_used_mb"] == 4096.0
         assert result.generation_mean_seconds is not None
+
+
+def test_remote_benchmark_does_not_sample_the_codespace_gpu():
+    with tempfile.TemporaryDirectory() as temp:
+        provider = _FakeProvider("ltx25_hf", "fast")
+        provider.uses_local_gpu = False
+
+        def factory(provider_id, generation_mode="fast"):
+            assert provider_id == "ltx25_hf"
+            return provider
+
+        def fail_sampler(*_args, **_kwargs):
+            raise AssertionError("remote benchmark must not sample local GPU")
+
+        result = benchmark_target(
+            BenchmarkTarget("ltx25_hf", "fast"),
+            prompt="Remote benchmark scene",
+            duration=2.0,
+            aspect="16:9",
+            seed=42,
+            repeats=1,
+            output_dir=Path(temp),
+            provider_factory=factory,
+            sampler_factory=fail_sampler,
+        )
+
+        assert result.status == "success"
+        assert result.gpu == {
+            "measurement_scope": "remote_backend",
+            "samples": 0,
+        }
 
 
 def test_benchmark_suite_writes_json_and_keeps_provider_failures_isolated():

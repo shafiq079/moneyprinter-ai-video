@@ -139,14 +139,16 @@ def parse_target(value: str) -> BenchmarkTarget:
 
     provider_id = provider_id.strip()
     generation_mode = generation_mode.strip().lower()
-    if provider_id not in {"wan22_local", "ltx25_local"}:
+    if provider_id not in {"wan22_local", "ltx25_local", "ltx25_hf"}:
         raise ValueError(
-            "benchmark provider must be wan22_local or ltx25_local"
+            "benchmark provider must be wan22_local, ltx25_local, or ltx25_hf"
         )
     if generation_mode not in {"fast", "quality"}:
         raise ValueError("benchmark mode must be fast or quality")
     if provider_id == "wan22_local" and generation_mode != "fast":
         raise ValueError("Wan 2.2 benchmark supports fast mode only")
+    if provider_id == "ltx25_hf" and generation_mode != "fast":
+        raise ValueError("LTX 2.5 Hugging Face benchmark supports fast mode only")
     return BenchmarkTarget(
         provider_id=provider_id,
         generation_mode=generation_mode,
@@ -245,6 +247,10 @@ class GpuSampler:
         self._thread = None
 
 
+def _provider_uses_local_gpu(provider: Any) -> bool:
+    return bool(getattr(provider, "uses_local_gpu", True))
+
+
 def _provider_device_index(provider: Any) -> int:
     settings = getattr(provider, "settings", None)
     value = getattr(settings, "device_id", 0)
@@ -322,8 +328,7 @@ def benchmark_target(
         provider.preflight()
         result.preflight_seconds = time.perf_counter() - started
 
-        device_index = _provider_device_index(provider)
-        with sampler_factory(device_index) as sampler:
+        def run_iterations() -> None:
             started = time.perf_counter()
             provider.load_runtime()
             result.load_seconds = time.perf_counter() - started
@@ -368,7 +373,18 @@ def benchmark_target(
                         height=int(validated.height),
                     )
                 )
-            result.gpu = sampler.summary.to_dict()
+
+        if _provider_uses_local_gpu(provider):
+            device_index = _provider_device_index(provider)
+            with sampler_factory(device_index) as sampler:
+                run_iterations()
+                result.gpu = sampler.summary.to_dict()
+        else:
+            run_iterations()
+            result.gpu = {
+                "measurement_scope": "remote_backend",
+                "samples": 0,
+            }
 
         result.status = "success"
         result.finalize()

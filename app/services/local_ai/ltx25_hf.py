@@ -215,6 +215,7 @@ def _normalize_video(
 class LTX25HFProvider:
     provider_id = LTX25_HF_SOURCE_ID
     backend_id = "huggingface_zerogpu"
+    uses_local_gpu = False
 
     _backend_factory = HuggingFaceGradioBackend
 

@@ -88,15 +88,18 @@ for practical scene production (a roughly two-second test took more than
 request/download shape end to end. These measurements apply only to that tested
 T4/offload setup.
 
-The next deployment path is `ltx25_hf`: an operator-owned Hugging Face ZeroGPU
-Space using the official optimized LTX-2.5 distilled Gradio implementation.
-MoneyPrinter accesses it through the provider-neutral scene contract and an
-isolated Hugging Face transport adapter. CPU tests may validate the adapter and
-task integration before GPU quota is available, but real ZeroGPU latency,
-quality and quota behavior remain unvalidated until an authenticated generation
-is run after quota reset. Phase 6 tooling provides
-`scripts/local_ai_benchmark.py`, which will later run identical prompts across
-Wan 2.2, LTX Fast and LTX Quality and record timing/media/GPU telemetry.
+The `ltx25_hf` deployment path is now integration-validated against the
+operator-owned Hugging Face ZeroGPU Space using the optimized LTX-2.5 distilled
+Gradio implementation. On 30 September 2026 MoneyPrinter preflight reported the
+named `generate_scene` endpoint ready, then an authenticated provider smoke run
+completed a requested 2.0-second 16:9 scene and returned a validated 768x512 MP4
+through remote generation, download, FFmpeg normalization and media validation.
+This proves the real remote execution path; it does **not** establish standardized
+latency, visual-quality or quota-efficiency measurements because that smoke run
+did not capture benchmark timing. Phase 6 tooling now accepts `ltx25_hf:fast`
+as an explicit opt-in target in addition to the local Wan/LTX targets. Remote
+benchmarks never sample the caller machine's `nvidia-smi`, and the HF target is
+not added to defaults so a benchmark cannot spend ZeroGPU quota accidentally.
 
 A manual one-command GPU acceptance pack is also implemented through
 `scripts/local_ai_gpu_validate.py` and

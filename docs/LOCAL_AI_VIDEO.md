@@ -194,9 +194,12 @@ origin, strips LTX native audio, trims the clip to the requested scene duration,
 and then runs the normal MoneyPrinter media validation.
 
 This remote provider is **Fast/Distilled only** for the MVP. MoneyPrinter keeps
-its own narration, captions and BGM authoritative. Real ZeroGPU latency, quota
-behavior and visual quality must be recorded only after an actual authenticated
-generation succeeds on the configured Space.
+its own narration, captions and BGM authoritative. On 30 September 2026 an
+authenticated MoneyPrinter smoke run against the operator-owned ZeroGPU Space
+completed successfully: a requested 2.0-second 16:9 scene returned a validated
+768x512 MP4 through the full provider -> Gradio -> download -> normalization
+path. That smoke run proves integration, not a latency or visual-quality claim;
+no standardized timing measurement was captured.
 
 ## Local AI generation telemetry
 
@@ -243,8 +246,26 @@ reported GPU memory use and utilization. Results are written to
 fingerprints are recorded through the same safe metadata surfaces used by the
 product; checkpoint/repository paths are not added to the report.
 
+The remote Hugging Face target is intentionally not part of the default target
+set because invoking it consumes external ZeroGPU quota. Benchmark it only when
+an operator explicitly wants to spend quota:
+
+```bash
+uv run python scripts/local_ai_benchmark.py \\
+  --target ltx25_hf:fast \\
+  --duration 2 \\
+  --aspect 16:9 \\
+  --seed 42 \\
+  --repeats 1 \\
+  --output-dir storage/benchmarks/ltx25-hf
+```
+
+For remote targets the local process does not sample `nvidia-smi`; the report
+marks GPU measurement scope as `remote_backend`. Provider-side GPU telemetry
+must come from a safe remote telemetry surface if one is added later.
+
 Actual default tuning, provider comparisons and hardware guidance remain
-deferred until those measurements are collected on real hardware.
+deferred until standardized measurements are collected.
 
 ## Manual GPU validation pack
 

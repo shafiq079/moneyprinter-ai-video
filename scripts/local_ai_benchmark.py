@@ -26,8 +26,9 @@ DEFAULT_TARGETS = (
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Benchmark local AI video providers with the same scene prompt. "
-            "This command requires a configured CUDA environment for real runs."
+            "Benchmark AI video providers with the same scene prompt. "
+            "Local targets require configured CUDA; remote targets use their "
+            "configured backend."
         )
     )
     parser.add_argument(
@@ -37,7 +38,8 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PROVIDER[:MODE]",
         help=(
             "benchmark target; repeat for multiple targets. "
-            "Defaults to Wan 2.2, LTX Fast, and LTX Quality."
+            "Defaults to Wan 2.2, local LTX Fast, and local LTX Quality. "
+            "Remote ltx25_hf must be selected explicitly to avoid spending quota."
         ),
     )
     parser.add_argument(
