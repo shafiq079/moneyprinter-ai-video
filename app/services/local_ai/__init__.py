@@ -3,6 +3,14 @@ from __future__ import annotations
 import os
 import tempfile
 
+from .capabilities import (
+    LocalAICapability,
+    LocalAICapabilityError,
+    MAX_USER_SEED,
+    public_capabilities,
+    source_capability,
+    validate_generation_request,
+)
 from .base import (
     GenerationResult,
     LocalAICancellationRequested,
@@ -217,6 +225,9 @@ def provider_generation_settings(provider: LocalVideoProvider) -> dict[str, obje
 __all__ = [
     "FAKE_SOURCE_ID",
     "GenerationResult",
+    "LocalAICapability",
+    "LocalAICapabilityError",
+    "MAX_USER_SEED",
     "LocalAICancellationRequested",
     "LocalAIStorageError",
     "LTX25_SOURCE_ID",
@@ -240,6 +251,9 @@ __all__ = [
     "prepare_provider",
     "provider_base_seed",
     "provider_generation_settings",
+    "public_capabilities",
+    "source_capability",
+    "validate_generation_request",
     "scene_duration_limit",
     "validate_output_storage",
 ]

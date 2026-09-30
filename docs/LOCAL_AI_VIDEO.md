@@ -145,6 +145,23 @@ USD 10,000,000 require a paid license for commercial use except for the
 license's defined non-commercial cases. This project does not redistribute LTX
 model weights, and this note is not legal advice.
 
+## Capability-driven local AI controls
+
+The WebUI does not expose arbitrary model parameters for local/remote AI video.
+Each public AI source declares a product-safe capability profile containing the
+model, execution backend, supported generation modes, aspect ratios, derived
+generation resolution, clip-duration choices, seed range and prompt-guidance
+limit. The same capability contract is checked by task preflight so API or CLI
+requests cannot bypass the supported domain.
+
+Users choose an aspect ratio such as 9:16 or 16:9; they do not type raw width
+and height values. MoneyPrinter derives the tested generation dimensions for the
+selected model/backend and shows them beside the ratio. Unsupported modes,
+durations and seed values are not offered by the WebUI and are rejected before
+provider startup. The visual prompt field is guidance for the Scene Director;
+MoneyPrinter still produces per-scene prompts from the script, and those scene
+prompts remain editable through the existing scene-regeneration flow.
+
 ## LTX 2.5 Hugging Face ZeroGPU source
 
 The stable source ID is `ltx25_hf`. It reuses MoneyPrinter's existing local-AI

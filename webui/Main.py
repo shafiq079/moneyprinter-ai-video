@@ -5509,6 +5509,33 @@ def _render_video_settings(panel, params):
             )
             _set_runtime_config("app", "video_source", params.video_source)
 
+            local_ai_capability = (
+                local_ai.source_capability(params.video_source)
+                if local_ai.is_public_source(params.video_source)
+                else None
+            )
+            if local_ai_capability is not None:
+                st.caption(
+                    f"Model: {local_ai_capability.model_label} · "
+                    f"Backend: {local_ai_capability.backend_label}"
+                )
+                params.local_ai_generation_mode = stable_selectbox(
+                    tr("Local AI Generation Mode"),
+                    options=list(local_ai_capability.generation_modes),
+                    default_value=_saved_ui_choice(
+                        "local_ai_generation_mode",
+                        list(local_ai_capability.generation_modes),
+                        local_ai_capability.generation_modes[0],
+                    ),
+                    key="local_ai_generation_mode_select",
+                    format_func=local_ai_capability.mode_label,
+                    disabled=len(local_ai_capability.generation_modes) == 1,
+                    help=tr("Local AI Generation Mode Help"),
+                )
+                _set_runtime_config(
+                    "ui", "local_ai_generation_mode", params.local_ai_generation_mode
+                )
+
             loomloom_video_capability = None
             if params.video_source == "loomloom":
                 # 尽早读取缓存，使下方画面比例控件直接受当前 Profile 约束。
@@ -5547,27 +5574,6 @@ def _render_video_settings(panel, params):
                         )
             if params.video_source == local_ai.LTX25_SOURCE_ID:
                 st.caption(tr("LTX 2.5 Local Help"))
-                params.local_ai_generation_mode = stable_selectbox(
-                    tr("Local AI Generation Mode"),
-                    options=["fast", "quality"],
-                    default_value=_saved_ui_choice(
-                        "local_ai_generation_mode",
-                        ["fast", "quality"],
-                        "fast",
-                    ),
-                    key="local_ai_generation_mode_select",
-                    format_func=lambda value: (
-                        tr("LTX Fast Distilled")
-                        if value == "fast"
-                        else tr("LTX Quality DFR")
-                    ),
-                    help=tr("Local AI Generation Mode Help"),
-                )
-                _set_runtime_config(
-                    "ui",
-                    "local_ai_generation_mode",
-                    params.local_ai_generation_mode,
-                )
                 if st.button(
                     tr("Check LTX 2.5 Readiness"),
                     key="ltx25_local_readiness_button",
@@ -5589,7 +5595,6 @@ def _render_video_settings(panel, params):
                 st.caption(
                     "LTX 2.5 runs remotely on your configured Hugging Face ZeroGPU Space."
                 )
-                params.local_ai_generation_mode = "fast"
                 if st.button(
                     tr("Check LTX 2.5 Readiness"),
                     key="ltx25_hf_readiness_button",
@@ -5597,7 +5602,7 @@ def _render_video_settings(panel, params):
                     with st.spinner(tr("Checking LTX 2.5 Readiness")):
                         readiness = local_ai.preflight_status(
                             local_ai.LTX25_HF_SOURCE_ID,
-                            generation_mode="fast",
+                            generation_mode=params.local_ai_generation_mode,
                         )
                     if readiness["ready"]:
                         st.success(tr("LTX 2.5 Ready"))
@@ -5607,18 +5612,17 @@ def _render_video_settings(panel, params):
                                 error=readiness["message"]
                             )
                         )
-            if params.video_source in {
-                local_ai.WAN22_SOURCE_ID,
-                local_ai.LTX25_HF_SOURCE_ID,
-            }:
-                params.local_ai_generation_mode = "fast"
             if local_ai.is_public_source(params.video_source):
                 saved_local_seed = int(config.ui.get("local_ai_seed", 42) or 42)
                 params.local_ai_seed = int(
                     st.number_input(
                         tr("Local AI Seed"),
-                        min_value=0,
-                        value=max(0, saved_local_seed),
+                        min_value=local_ai_capability.seed_min,
+                        max_value=local_ai_capability.seed_max,
+                        value=min(
+                            max(local_ai_capability.seed_min, saved_local_seed),
+                            local_ai_capability.seed_max,
+                        ),
                         step=1,
                         key="local_ai_seed_input",
                         help=tr("Local AI Seed Help"),
@@ -5636,10 +5640,15 @@ def _render_video_settings(panel, params):
                         max_length=2000,
                     ),
                     key="local_ai_visual_style_input",
-                    max_chars=2000,
+                    max_chars=local_ai_capability.prompt_max_chars,
                     height=90,
                     help=tr("Local AI Visual Style Help"),
                 ).strip()
+                st.caption(
+                    "Use this as visual prompt guidance. MoneyPrinter creates "
+                    "scene-specific prompts from your script, and you can edit "
+                    "individual scene prompts before regenerating a scene."
+                )
                 _set_runtime_config(
                     "ui",
                     "local_ai_visual_style",
@@ -5732,6 +5741,15 @@ def _render_video_settings(panel, params):
                 (tr("Portrait"), VideoAspect.portrait.value),
                 (tr("Landscape"), VideoAspect.landscape.value),
             ]
+            if local_ai_capability is not None:
+                ratio_labels = {
+                    VideoAspect.portrait.value: tr("Portrait"),
+                    VideoAspect.landscape.value: tr("Landscape"),
+                }
+                video_aspect_ratios = [
+                    (ratio_labels[value], value)
+                    for value in local_ai_capability.aspect_ratios
+                ]
             if loomloom_video_capability is not None:
                 ratio_labels = {value: label for label, value in video_aspect_ratios}
                 video_aspect_ratios = [
@@ -5756,9 +5774,14 @@ def _render_video_settings(panel, params):
                     video_aspect_ratios[default_aspect_index][1],
                 ),
                 key=f"video_aspect_for_{params.video_source}",
-                format_func=lambda value: dict(
-                    (v, label) for label, v in video_aspect_ratios
-                )[value],
+                format_func=lambda value: (
+                    f"{dict((v, label) for label, v in video_aspect_ratios)[value]} "
+                    f"· {value} · "
+                    f"{local_ai_capability.dimensions_for(value)[0]}×"
+                    f"{local_ai_capability.dimensions_for(value)[1]}"
+                    if local_ai_capability is not None
+                    else dict((v, label) for label, v in video_aspect_ratios)[value]
+                ),
             )
             params.video_aspect = VideoAspect(selected_aspect_ratio)
             _set_runtime_config(
@@ -5790,7 +5813,9 @@ def _render_video_settings(panel, params):
 
             # MiniMax H3 的远端时长范围是 4～15 秒。选择秘塔时使用完整能力
             # 范围，既避免 2/3 秒被按 4 秒计费，也让 WebUI 与 CLI、服务层一致。
-            if params.video_source == "metaso_minimax":
+            if local_ai_capability is not None:
+                video_clip_durations = list(local_ai_capability.clip_durations)
+            elif params.video_source == "metaso_minimax":
                 video_clip_durations = list(
                     range(
                         metaso_minimax.DEFAULT_MIN_DURATION_SECONDS,
@@ -5812,9 +5837,13 @@ def _render_video_settings(panel, params):
                 default_value=_saved_ui_choice(
                     "video_clip_duration",
                     video_clip_durations,
-                    5
-                    if params.video_source in {"metaso_minimax", "muapi"}
-                    else 3,
+                    (
+                        local_ai_capability.default_clip_duration
+                        if local_ai_capability is not None
+                        else 5
+                        if params.video_source in {"metaso_minimax", "muapi"}
+                        else 3
+                    ),
                 ),
                 key="video_clip_duration_select",
                 help=tr("Clip Duration Help"),

@@ -2327,6 +2327,14 @@ def _run_pipeline(
         and local_ai.is_local_ai_source(params.video_source)
     ):
         try:
+            if local_ai.is_public_source(params.video_source):
+                local_ai.validate_generation_request(
+                    params.video_source,
+                    generation_mode=params.local_ai_generation_mode,
+                    aspect=params.video_aspect,
+                    clip_duration=params.video_clip_duration,
+                    seed=params.local_ai_seed,
+                )
             prepared_local_ai_provider = local_ai.prepare_provider(
                 params.video_source,
                 generation_mode=params.local_ai_generation_mode,

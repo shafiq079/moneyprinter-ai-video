@@ -88,6 +88,14 @@ for practical scene production (a roughly two-second test took more than
 request/download shape end to end. These measurements apply only to that tested
 T4/offload setup.
 
+A capability-driven local-AI UX layer now keeps user choices inside supported
+model/backend domains. Public local-AI sources declare model/backend identity,
+allowed modes, aspect ratios, derived generation dimensions, clip-duration
+choices, seed bounds and prompt-guidance limits. The WebUI uses that contract to
+show only valid choices, and task preflight validates the same contract so API
+or CLI callers cannot bypass it. Users choose an aspect ratio rather than raw
+width/height; model-specific generation dimensions are derived automatically.
+
 The `ltx25_hf` deployment path is now integration-validated against the
 operator-owned Hugging Face ZeroGPU Space using the optimized LTX-2.5 distilled
 Gradio implementation. On 30 September 2026 MoneyPrinter preflight reported the
