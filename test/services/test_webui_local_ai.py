@@ -66,7 +66,7 @@ def test_ltx25_selection_shows_readiness_control_without_running_preflight():
         visual_style_inputs = [
             item
             for item in app.text_area
-            if getattr(item, "label", "") == "Visual style / direction"
+            if getattr(item, "label", "") == "Visual prompt / direction"
         ]
         assert len(visual_style_inputs) == 1
         assert any(
