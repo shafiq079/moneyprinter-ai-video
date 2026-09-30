@@ -115,6 +115,12 @@ Phase 6 tooling now accepts `ltx25_hf:fast`
 as an explicit opt-in target in addition to the local Wan/LTX targets. Remote
 benchmarks never sample the caller machine's `nvidia-smi`, and the HF target is
 not added to defaults so a benchmark cannot spend ZeroGPU quota accidentally.
+The HF provider settings are read from the `[ltx25_hf]` section of the local,
+Git-ignored `config.toml`. A preflight failure exposed that this section was
+documented but not registered in `app/config/config.py`; the config loader and
+save path are now wired, with regression coverage. Authentication continues to
+read only the `token_env` environment variable (normally `HF_TOKEN`), supplied
+by an operator secret; do not add a token value to `config.toml`.
 
 The 30 September 2026 CI checkpoint `79aa148107c92e6f09d8f62590af98475f11d93d`
 passed Windows smoke and both Python 3.11/3.13 jobs after the capability and

@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from app.config import config
 from app.models.schema import VideoParams
 from app.services import generation_manifest, local_ai, scene_planner, task
 from app.services.local_ai.base import SceneSpec
@@ -92,6 +93,30 @@ class LTX25HFTestCase(unittest.TestCase):
 
 
 class TestLTX25HFProvider(LTX25HFTestCase):
+    def test_space_settings_load_from_config_without_storing_token(self):
+        with (
+            patch.dict(
+                config.ltx25_hf,
+                {
+                    "space_url": self.settings.space_url,
+                    "api_name": self.settings.api_name,
+                    "token_env": "TEST_HF_TOKEN",
+                    "deployment_revision": self.settings.deployment_revision,
+                },
+                clear=True,
+            ),
+            patch.dict(os.environ, {"TEST_HF_TOKEN": "hf_test"}, clear=True),
+            patch.object(LTX25HFProvider, "_backend_factory", _FakeHFBackend),
+        ):
+            settings = LTX25HFSettings.from_config()
+            provider = LTX25HFProvider(settings=settings)
+            provider.preflight()
+
+        self.assertEqual(settings.space_url, self.settings.space_url)
+        self.assertEqual(settings.deployment_revision, self.settings.deployment_revision)
+        self.assertEqual(_FakeHFBackend.instances[-1].kwargs["token"], "hf_test")
+        self.assertNotIn("hf_test", repr(settings) + json.dumps(provider.safe_metadata()))
+
     def test_metadata_and_fingerprint_never_persist_token(self):
         with patch.dict(os.environ, {"TEST_HF_TOKEN": "hf_super_secret"}):
             provider = LTX25HFProvider(settings=self.settings)
