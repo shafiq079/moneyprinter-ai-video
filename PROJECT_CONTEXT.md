@@ -115,6 +115,17 @@ Phase 6 tooling now accepts `ltx25_hf:fast`
 as an explicit opt-in target in addition to the local Wan/LTX targets. Remote
 benchmarks never sample the caller machine's `nvidia-smi`, and the HF target is
 not added to defaults so a benchmark cannot spend ZeroGPU quota accidentally.
+
+For the first full WebUI garden test on 1 October, a 90-second optional Scene
+Director LLM timeout correctly fell back to a deterministic seven-scene plan;
+the remote Space generated and persisted scenes 1–3, then returned a Gradio
+error event for scene 4. The Space's shared container logs did not identify
+that request's cause. The Gradio client now classifies known error events into
+safe quota, memory, timeout and unavailability reason codes and logs only the
+reason and payload shape; unknown or empty events stay `generation_failed`.
+The WebUI Task Manager's Regenerate control still loads settings for a new
+task ID; it is not a same-task resume action. Do not claim the scene-4 failure
+was a quota event without a subsequent specific diagnostic.
 The HF provider settings are read from the `[ltx25_hf]` section of the local,
 Git-ignored `config.toml`. A preflight failure exposed that this section was
 documented but not registered in `app/config/config.py`; the config loader and

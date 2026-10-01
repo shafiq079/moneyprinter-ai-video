@@ -2,10 +2,12 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from app.services.local_ai.remote_gpu.huggingface import (
     HuggingFaceGradioBackend,
     HuggingFaceRemoteError,
+    _gradio_error_reason,
 )
 
 
@@ -75,6 +77,84 @@ class _Session:
 
 
 class TestHuggingFaceGradioBackend(unittest.TestCase):
+    def test_gradio_error_reason_only_reports_allowlisted_categories(self):
+        self.assertEqual(
+            _gradio_error_reason(json.dumps({"message": "CUDA out of memory"})),
+            ("remote_out_of_memory", "object"),
+        )
+        self.assertEqual(
+            _gradio_error_reason(json.dumps({"message": "GPU unavailable"})),
+            ("remote_unavailable", "object"),
+        )
+        self.assertEqual(
+            _gradio_error_reason(json.dumps({"message": "request timed out"})),
+            ("remote_generation_timeout", "object"),
+        )
+        self.assertEqual(
+            _gradio_error_reason(json.dumps({"message": "/home/operator/private"})),
+            ("generation_failed", "object"),
+        )
+
+    def test_gradio_error_classifies_quota_without_leaking_remote_payload(self):
+        class ErrorSession(_Session):
+            def request(self, method, url, **kwargs):
+                if "/gradio_api/call/generate_scene/" in url:
+                    return _Response(
+                        lines=[
+                            "event: error",
+                            "data: "
+                            + json.dumps(
+                                {
+                                    "error": "ZeroGPU quota exceeded; token=hf_private; "
+                                    "checkpoint=/home/operator/models/private.safetensors",
+                                }
+                            ),
+                            "",
+                        ]
+                    )
+                return super().request(method, url, **kwargs)
+
+        backend = HuggingFaceGradioBackend(
+            space_url="https://owner-space.hf.space",
+            api_name="generate_scene",
+            token="hf_test_token",
+            session=ErrorSession(),
+        )
+        with patch(
+            "app.services.local_ai.remote_gpu.huggingface.logger.warning"
+        ) as warning:
+            with self.assertRaises(HuggingFaceRemoteError) as raised:
+                backend._wait_for_result("event-123")
+
+        self.assertEqual(raised.exception.code, "quota_or_rate_limited")
+        self.assertNotIn("hf_private", str(raised.exception))
+        self.assertNotIn("/home/operator", str(raised.exception))
+        self.assertNotIn("hf_private", str(warning.call_args))
+        self.assertNotIn("/home/operator", str(warning.call_args))
+        self.assertIn("error_code=quota_or_rate_limited", str(warning.call_args))
+
+    def test_gradio_error_without_reason_remains_generic(self):
+        class ErrorSession(_Session):
+            def request(self, method, url, **kwargs):
+                if "/gradio_api/call/generate_scene/" in url:
+                    return _Response(lines=["event: error", "data: null", ""])
+                return super().request(method, url, **kwargs)
+
+        backend = HuggingFaceGradioBackend(
+            space_url="https://owner-space.hf.space",
+            api_name="generate_scene",
+            token="hf_test_token",
+            session=ErrorSession(),
+        )
+        with patch(
+            "app.services.local_ai.remote_gpu.huggingface.logger.warning"
+        ) as warning:
+            with self.assertRaises(HuggingFaceRemoteError) as raised:
+                backend._wait_for_result("event-123")
+
+        self.assertEqual(raised.exception.code, "generation_failed")
+        self.assertIn("payload_kind=empty", str(warning.call_args))
+
     def test_preflight_and_generation_use_authenticated_named_endpoint(self):
         session = _Session()
         backend = HuggingFaceGradioBackend(

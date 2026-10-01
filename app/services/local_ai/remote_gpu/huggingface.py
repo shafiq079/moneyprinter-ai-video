@@ -2,12 +2,62 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urljoin, urlparse
 
 import requests
+from loguru import logger
+
+
+def _gradio_error_reason(raw_data: str) -> tuple[str, str]:
+    """Classify an SSE failure without exposing Space data or machine paths."""
+
+    try:
+        payload = json.loads(raw_data)
+    except (TypeError, ValueError):
+        payload = raw_data
+
+    messages: list[str] = []
+
+    def collect(value: Any) -> None:
+        if isinstance(value, str):
+            messages.append(value[:2048])
+        elif isinstance(value, dict):
+            for key in ("error", "message", "detail", "type"):
+                if key in value:
+                    collect(value[key])
+        elif isinstance(value, list):
+            for item in value[:3]:
+                collect(item)
+
+    collect(payload)
+    detail = " ".join(messages).lower()
+    if re.search(r"\b(quota|rate.limit|too many requests|gpu time limit)\b", detail):
+        reason = "quota_or_rate_limited"
+    elif re.search(r"\b(out of memory|cuda oom|memory exhausted)\b", detail):
+        reason = "remote_out_of_memory"
+    elif re.search(r"\b(timed? out|timeout)\b", detail):
+        reason = "remote_generation_timeout"
+    elif re.search(r"\b(no gpu available|gpu unavailable|space unavailable)\b", detail):
+        reason = "remote_unavailable"
+    else:
+        reason = "generation_failed"
+
+    # Only the shape and an allowlisted reason reach logs. Gradio error data can
+    # contain prompt text, local file paths, URLs, tokens, or exception traces.
+    payload_kind = (
+        "empty"
+        if not raw_data or payload is None
+        else "object"
+        if isinstance(payload, dict)
+        else "list"
+        if isinstance(payload, list)
+        else "text"
+    )
+    return reason, payload_kind
 
 
 class HuggingFaceRemoteError(RuntimeError):
@@ -177,9 +227,14 @@ class HuggingFaceGradioBackend:
             current_event = ""
             data_lines = []
             if event == "error":
+                reason, payload_kind = _gradio_error_reason(raw_data)
+                logger.warning(
+                    "Hugging Face Gradio generation error: "
+                    f"error_code={reason}, payload_kind={payload_kind}"
+                )
                 raise HuggingFaceRemoteError(
-                    "Hugging Face Space generation failed",
-                    code="generation_failed",
+                    f"Hugging Face Space generation failed: {reason}",
+                    code=reason,
                 )
             if event == "complete":
                 try:

@@ -216,6 +216,16 @@ waits for the Gradio queue result, downloads the returned MP4 from the same Spac
 origin, strips LTX native audio, trims the clip to the requested scene duration,
 and then runs the normal MoneyPrinter media validation.
 
+If Gradio sends a generation error, the client records its payload shape and a
+safe reason code when the response identifies a quota/rate limit, remote memory
+exhaustion, timeout, or unavailable GPU. The task's scene manifest also stores
+the reason code. Raw Gradio error text is never persisted or printed because it
+may contain tokens, prompts, or machine paths. An empty or unrecognized Gradio
+error remains `generation_failed`; check the Space's container logs for the
+corresponding request in that case. The Task Manager's **Regenerate** action
+continues to load the old settings into a new task; it does not resume the old
+task ID or automatically reuse its clips.
+
 This remote provider is **Fast/Distilled only** for the MVP. MoneyPrinter keeps
 its own narration, captions and BGM authoritative. On 30 September 2026 an
 authenticated MoneyPrinter smoke run against the operator-owned ZeroGPU Space
