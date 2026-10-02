@@ -66,6 +66,7 @@ def test_task_history_exposes_local_ai_artifact_package_view():
     }
 
     assert "_select_artifact_package_task" in task_table_calls
+    assert "webui_task.submit_local_ai_resume" in task_table_calls
     assert "task_artifacts.build_output_package" in artifact_view_calls
     assert "_render_artifact_package_view" in manager_calls
 
@@ -625,6 +626,70 @@ def test_scheduling_failure_is_saved_as_terminal_task_state():
     assert task["failed_stage"] == "scheduling"
     assert task["error"] == "RuntimeError: worker unavailable"
     webui_task.sm.state.delete_task(task_id)
+
+
+def test_resume_queues_original_task_id_and_resets_stale_cancellation():
+    task_id = "failed-local-ai-resume"
+    params = VideoParams(video_subject="Retry", video_source="ltx25_hf")
+    webui_task.sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_CANCELLED,
+        progress=43,
+        cancel_requested=True,
+        failed_stage="materials",
+        error="Task cancelled by user",
+    )
+    context = {"params": params}
+    try:
+        with (
+            patch.object(webui_task.tm, "load_local_ai_resume_context", return_value=context),
+            patch.object(webui_task._task_manager, "add_task") as add_task,
+        ):
+            webui_task.submit_local_ai_resume(task_id, capture_logs=False)
+        submission = add_task.call_args
+        assert submission.kwargs["task_id"] == task_id
+        assert submission.kwargs["resume_context"] is context
+        assert submission.kwargs["params"] is params
+        queued = webui_task.sm.state.get_task(task_id)
+        assert queued["state"] == const.TASK_STATE_PROCESSING
+        assert queued["cancel_requested"] is False
+        assert queued["failed_stage"] is None
+        assert queued["current_stage"] == "resume_queued"
+    finally:
+        webui_task.sm.state.delete_task(task_id)
+
+
+def test_resume_queue_failure_restores_original_failed_state():
+    task_id = "resume-queue-failure"
+    webui_task.sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_FAILED,
+        progress=43,
+        failed_stage="materials",
+        error="remote quota exceeded",
+    )
+    try:
+        with (
+            patch.object(
+                webui_task.tm,
+                "load_local_ai_resume_context",
+                return_value={"params": VideoParams(video_subject="Retry")},
+            ),
+            patch.object(
+                webui_task._task_manager,
+                "add_task",
+                side_effect=RuntimeError("queue unavailable"),
+            ),
+            pytest.raises(RuntimeError, match="queue unavailable"),
+        ):
+            webui_task.submit_local_ai_resume(task_id, capture_logs=False)
+        restored = webui_task.sm.state.get_task(task_id)
+        assert restored["state"] == const.TASK_STATE_FAILED
+        assert restored["failed_stage"] == "materials"
+        assert restored["progress"] == 43
+        assert restored["error"] == "remote quota exceeded"
+    finally:
+        webui_task.sm.state.delete_task(task_id)
 
 
 def test_worker_logs_are_available_without_streamlit_session_state():

@@ -223,8 +223,15 @@ the reason code. Raw Gradio error text is never persisted or printed because it
 may contain tokens, prompts, or machine paths. An empty or unrecognized Gradio
 error remains `generation_failed`; check the Space's container logs for the
 corresponding request in that case. The Task Manager's **Regenerate** action
-continues to load the old settings into a new task; it does not resume the old
-task ID or automatically reuse its clips.
+continues to load the old settings into a new task. The separate **Resume**
+action continues a failed or interrupted local-AI task under the same task ID
+when its saved script, audio, scene plan and manifest exist. It reuses narration,
+subtitles and valid scene clips, validates each saved clip against the current
+provider fingerprint, then generates only missing, failed or invalid scenes
+before rendering the final MP4. Existing generated BGM is reused. Resume is
+unavailable when the required saved inputs are missing; use Regenerate to start
+a new task. After a WebUI restart, an incomplete saved scene manifest is still
+listed as a failed task, with Resume available from Task Manager.
 
 This remote provider is **Fast/Distilled only** for the MVP. MoneyPrinter keeps
 its own narration, captions and BGM authoritative. On 30 September 2026 an

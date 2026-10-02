@@ -22,6 +22,7 @@ _task_manager = InMemoryTaskManager(
 )
 _task_logs: dict[str, deque[str]] = {}
 _task_logs_lock = threading.RLock()
+_resume_submission_lock = threading.RLock()
 _MAX_LOG_TASKS = 20
 _MAX_LOG_RECORDS_PER_TASK = 1000
 # Streamlit 无法由后台线程直接推送组件更新，只能通过 Fragment 轮询。0.5 秒
@@ -59,6 +60,7 @@ def _run_generation(
     voxcpm_reference_audio: bytes | None = None,
     voxcpm_prompt_audio: bytes | None = None,
     voxcpm_prompt_text: str = "",
+    resume_context: dict | None = None,
 ) -> dict:
     """
     在后台线程中执行现有视频流水线。
@@ -90,6 +92,7 @@ def _run_generation(
                 voxcpm_reference_audio=voxcpm_reference_audio,
                 voxcpm_prompt_audio=voxcpm_prompt_audio,
                 voxcpm_prompt_text=voxcpm_prompt_text,
+                resume_context=resume_context,
             )
     except Exception as exc:
         # tm.start 已负责把流水线异常转换成失败状态；这里额外保护日志 sink、
@@ -425,6 +428,44 @@ def submit_local_ai_rerender(
             render_only_rerender_error="render-only rerender could not be scheduled",
         )
         raise
+
+
+def submit_local_ai_resume(task_id: str, capture_logs: bool = True) -> None:
+    """Queue a failed local-AI task under its original ID and saved settings."""
+
+    with _resume_submission_lock:
+        context = tm.load_local_ai_resume_context(task_id)
+        previous = sm.state.get_task(task_id) or {}
+        sm.state.update_task(
+            task_id,
+            state=const.TASK_STATE_PROCESSING,
+            progress=max(0, int(previous.get("progress", 0) or 0)),
+            current_stage="resume_queued",
+            cancel_requested=False,
+            cancelled=False,
+            failed_stage=None,
+            error=None,
+        )
+        try:
+            _task_manager.add_task(
+                _run_generation,
+                task_id=task_id,
+                params=context["params"],
+                capture_logs=capture_logs,
+                resume_context=context,
+            )
+        except Exception:
+            sm.state.update_task(
+                task_id,
+                state=previous.get("state", const.TASK_STATE_FAILED),
+                progress=previous.get("progress", 0),
+                current_stage=None,
+                cancel_requested=previous.get("cancel_requested", False),
+                cancelled=previous.get("cancelled", False),
+                failed_stage=previous.get("failed_stage"),
+                error=previous.get("error"),
+            )
+            raise
 
 
 def submit_generation(

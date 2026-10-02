@@ -12,6 +12,14 @@ Read this file first in every new AI or developer session. `docs/SRS.md` is the 
 
 ## Architecture to preserve
 
+Task Manager has a separate **Resume** action for failed local-AI tasks with
+saved script/audio/scene plan/manifest. It queues work under the same task ID,
+skips script/LLM/TTS/captions, revalidates and reuses completed scene versions,
+generates missing/failed scenes, and composes the final video. **Regenerate**
+still loads old settings to create a new task. Resume requires persisted inputs
+and cannot recover a task that failed before those inputs existed. A changed
+provider model fingerprint invalidates cached clips as designed.
+
 `app/services/task.py` orchestrates script, search terms, narration/custom audio, captions, materials, final render and optional publishing. `app/services/material.py:download_videos()` handles stock and remote generated material; local AI bypasses it. The WebUI is `webui/Main.py`, requests are `app/models/schema.py:VideoParams`, API controllers live under `app/controllers/`, and CLI is `cli.py`. Keep upstream TTS, captions, BGM and MoviePy/FFmpeg composition. `wan22_local` and `ltx25_local` are distinct local AI video material sources implemented under `app/services/local_ai/`; the task-local scene plan and atomic generation manifest own persisted scene clips. Runtime management sits below the existing task manager.
 
 ## Current-upstream revalidation and SRS refinements

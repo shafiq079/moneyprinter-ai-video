@@ -977,6 +977,26 @@ def _scan_history_tasks(limit=30):
         script_data = _safe_load_task_script(task_path)
         params_data = script_data.get("params", {}) if script_data else {}
         video_file = _find_final_task_video(task_path)
+        history_state = const.TASK_STATE_COMPLETE if video_file else None
+        if (
+            not video_file
+            and isinstance(params_data, dict)
+            and local_ai.is_public_source(params_data.get("video_source"))
+        ):
+            manifest_path = os.path.join(
+                task_path, "generated_ai", "generation_manifest.json"
+            )
+            if os.path.isfile(manifest_path):
+                try:
+                    with open(manifest_path, encoding="utf-8") as stream:
+                        manifest_data = json.load(stream)
+                    scenes = manifest_data.get("scenes", [])
+                    if scenes and any(
+                        scene.get("status") != "ready" for scene in scenes
+                    ):
+                        history_state = const.TASK_STATE_FAILED
+                except (OSError, ValueError, AttributeError, TypeError):
+                    logger.debug(f"cannot inspect local AI history: {name}")
         subject = (
             params_data.get("video_subject")
             or script_data.get("script", "")[:40]
@@ -986,7 +1006,7 @@ def _scan_history_tasks(limit=30):
             {
                 "task_id": name,
                 "subject": subject,
-                "state": const.TASK_STATE_COMPLETE if video_file else None,
+                "state": history_state,
                 "progress": 100 if video_file else 0,
                 "mtime": mtime,
                 "task_path": task_path,
@@ -1458,7 +1478,7 @@ def _render_artifact_package_view() -> None:
 
 def _render_task_table(filtered_tasks, key_prefix):
     with st.container(key=f"task_table_header_{key_prefix}"):
-        header_cols = st.columns([1.1, 1.7, 3.0, 0.8, 2.8], vertical_alignment="center")
+        header_cols = st.columns([1.1, 1.7, 3.0, 0.8, 3.4], vertical_alignment="center")
         header_cols[0].caption(tr("Task Status"))
         header_cols[1].caption(tr("Task Updated At"))
         header_cols[2].caption(tr("Task Subject"))
@@ -1483,6 +1503,24 @@ def _render_task_table(filtered_tasks, key_prefix):
             has_scene_plan = os.path.isfile(
                 os.path.join(task["task_path"], "scene_plan.json")
             )
+            saved_params = _safe_load_task_script(task["task_path"]).get("params")
+            saved_source = (
+                saved_params.get("video_source")
+                if isinstance(saved_params, dict)
+                else None
+            )
+            can_resume = (
+                not is_busy
+                and _task_state_filter_key(task) in {"failed", "history"}
+                and has_restore_data
+                and has_scene_plan
+                and os.path.isfile(
+                    os.path.join(
+                        task["task_path"], "generated_ai", "generation_manifest.json"
+                    )
+                )
+                and local_ai.is_public_source(saved_source)
+            )
             has_artifact_package = (
                 task_artifacts.has_local_ai_output_package(task_id)
             )
@@ -1495,7 +1533,7 @@ def _render_task_table(filtered_tasks, key_prefix):
                 key=f"task_row_{key_prefix}_{safe_task_key}", border=True
             ):
                 row_cols = st.columns(
-                    [1.1, 1.7, 3.0, 0.8, 2.8],
+                    [1.1, 1.7, 3.0, 0.8, 3.4],
                     vertical_alignment="center",
                 )
                 row_cols[0].write(_task_state_label(task["state"], has_video))
@@ -1504,7 +1542,7 @@ def _render_task_table(filtered_tasks, key_prefix):
                 row_cols[3].write(f"{task['progress']}%")
 
                 action_cols = row_cols[4].columns(
-                    7,
+                    8,
                     vertical_alignment="center",
                     gap="small",
                 )
@@ -1544,6 +1582,23 @@ def _render_task_table(filtered_tasks, key_prefix):
                         _queue_task_restore(task_id)
 
                 with action_cols[3]:
+                    resume_label = tr("Resume Task")
+                    if st.button(
+                        resume_label,
+                        key=f"resume_task_{key_prefix}_{task_id}",
+                        use_container_width=True,
+                        icon=":material/play_arrow:",
+                        help=tr("Resume Task Help"),
+                        disabled=not can_resume,
+                    ):
+                        try:
+                            webui_task.submit_local_ai_resume(task_id)
+                        except Exception as exc:
+                            st.error(f"{tr('Resume Task Failed')}: {exc}")
+                        else:
+                            st.toast(tr("Resume Task Queued"))
+
+                with action_cols[4]:
                     scenes_label = tr("Scenes")
                     if st.button(
                         scenes_label,
@@ -1555,7 +1610,7 @@ def _render_task_table(filtered_tasks, key_prefix):
                     ):
                         _select_scene_editor_task(task_id)
 
-                with action_cols[4]:
+                with action_cols[5]:
                     artifacts_label = tr("Artifacts")
                     if st.button(
                         artifacts_label,
@@ -1567,7 +1622,7 @@ def _render_task_table(filtered_tasks, key_prefix):
                     ):
                         _select_artifact_package_task(task_id)
 
-                with action_cols[5]:
+                with action_cols[6]:
                     cancel_label = tr("Cancel Task")
                     if st.button(
                         cancel_label,
@@ -1582,7 +1637,7 @@ def _render_task_table(filtered_tasks, key_prefix):
                         else:
                             st.warning(tr("Cancellation Unavailable"))
 
-                with action_cols[6]:
+                with action_cols[7]:
                     delete_label = tr("Delete Task")
                     delete_help = (
                         f"{delete_label} ({tr('Task Status Processing')})"

@@ -1,4 +1,5 @@
 import json
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -1268,6 +1269,155 @@ class _OOMFakeProvider(FakeLocalVideoProvider):
 
 
 class TestLocalAITaskIntegration(LocalAITestCase):
+    def test_resume_uses_saved_custom_audio_even_if_generated_audio_exists(self):
+        task_id = "resume-custom-audio"
+        generated = self.make_audio(task_id, 1.9)
+        custom = generated.with_name("custom.mp3")
+        shutil.copy2(generated, custom)
+        params = VideoParams(
+            video_subject="Custom narration",
+            video_script="A short scene.",
+            video_source=FAKE_SOURCE_ID,
+            custom_audio_file=str(custom),
+        )
+        (generated.parent / "script.json").write_text(
+            json.dumps({"script": params.video_script, "params": params.model_dump(mode="json")}),
+            encoding="utf-8",
+        )
+        plan = scene_planner.get_or_create_scene_plan(
+            task_id,
+            params.video_script,
+            audio_duration=2.0,
+            max_scene_duration=2.0,
+            aspect="9:16",
+            use_llm=False,
+        )
+        generation_manifest.prepare_manifest(
+            task_id,
+            provider_id=FAKE_SOURCE_ID,
+            model_fingerprint="fake-fingerprint",
+            scenes=list(plan.scenes),
+        )
+        with patch.object(task.sm, "state", MemoryState()):
+            context = task.load_local_ai_resume_context(task_id)
+        self.assertEqual(context["audio_file"], str(custom))
+
+    def test_resume_failed_task_reuses_first_three_scenes_and_saved_inputs(self):
+        task_id = "resume-at-scene-four"
+        state = MemoryState()
+        params = VideoParams(
+            video_subject="Garden",
+            video_script="The garden wakes. Flowers open. A butterfly lands. The sun rises.",
+            video_source=FAKE_SOURCE_ID,
+            video_aspect="9:16",
+            video_clip_duration=1,
+            subtitle_enabled=True,
+            bgm_type="random",
+            bgm_volume=0.1,
+            font_size=32,
+            n_threads=1,
+        )
+        original_generate = FakeLocalVideoProvider.generate
+        calls = []
+        fail_fourth = True
+
+        def generate(provider, scene, output_path):
+            nonlocal fail_fourth
+            calls.append(scene.scene_id)
+            if scene.scene_id == 4 and fail_fourth:
+                fail_fourth = False
+                raise RuntimeError("synthetic remote quota rejection")
+            return original_generate(provider, scene, output_path)
+
+        def offline_tts(*, voice_file, **_kwargs):
+            self.assertEqual(str(self.make_audio(task_id, 3.9)), voice_file)
+            return object()
+
+        def offline_subtitle(*, subtitle_file, **_kwargs):
+            Path(subtitle_file).write_text(
+                "1\n00:00:00,100 --> 00:00:03,900\nGarden.\n\n",
+                encoding="utf-8",
+            )
+
+        with (
+            patch.dict("os.environ", {"MPT_ENABLE_LOCAL_AI_FAKE_PROVIDER": "1"}),
+            patch.object(task.sm, "state", state),
+            patch.object(FakeLocalVideoProvider, "generate", new=generate),
+            patch.object(task.voice, "tts", side_effect=offline_tts) as tts,
+            patch.object(task.voice, "create_subtitle", side_effect=offline_subtitle) as sub,
+            patch.object(task.material, "download_videos") as downloader,
+        ):
+            failed = task.start(task_id, params)
+            self.assertEqual(failed["state"], task.const.TASK_STATE_FAILED)
+            self.assertEqual(calls, [1, 2, 3, 4])
+            manifest = generation_manifest.load_manifest(task_id)
+            self.assertEqual(
+                [record["status"] for record in manifest["scenes"]],
+                ["ready", "ready", "ready", "failed"],
+            )
+            originals = [
+                record["active_asset"] for record in manifest["scenes"][:3]
+            ]
+            context = task.load_local_ai_resume_context(task_id)
+            with patch.object(task.sm, "state", MemoryState()):
+                restarted_context = task.load_local_ai_resume_context(task_id)
+                self.assertEqual(restarted_context["script"], context["script"])
+            state.patch_task(
+                task_id, state=task.const.TASK_STATE_PROCESSING, cancel_requested=True
+            )
+            cancelled = task.start(
+                task_id, context["params"], resume_context=context
+            )
+            self.assertEqual(cancelled["state"], task.const.TASK_STATE_CANCELLED)
+            self.assertEqual(calls, [1, 2, 3, 4])
+            state.patch_task(
+                task_id,
+                cancel_requested=False,
+                cancelled=False,
+                failed_stage=None,
+                error=None,
+            )
+            with patch.object(
+                task.scene_planner,
+                "get_or_create_scene_plan",
+                side_effect=AssertionError("planning repeated"),
+            ):
+                resumed = task.start(task_id, context["params"], resume_context=context)
+
+        self.assertEqual(calls, [1, 2, 3, 4, 4])
+        tts.assert_called_once()
+        sub.assert_called_once()
+        downloader.assert_not_called()
+        self.assertTrue(Path(resumed["videos"][0]).is_file())
+        self.assertEqual(state.get_task(task_id)["state"], task.const.TASK_STATE_COMPLETE)
+        manifest = generation_manifest.load_manifest(task_id)
+        self.assertEqual([s["active_asset"] for s in manifest["scenes"][:3]], originals)
+        self.assertTrue(all(s["status"] == "ready" for s in manifest["scenes"]))
+        self.assertEqual(
+            sorted(p.name for p in (self.task_root / task_id / "generated_ai" / "scene-004").glob("v*.mp4")),
+            ["v001.mp4"],
+        )
+
+        # If a later render retry fails, its previous good final output stays.
+        final_path = Path(resumed["videos"][0])
+        previous_bytes = final_path.read_bytes()
+        state.patch_task(task_id, state=task.const.TASK_STATE_FAILED)
+        with (
+            patch.dict("os.environ", {"MPT_ENABLE_LOCAL_AI_FAKE_PROVIDER": "1"}),
+            patch.object(task.sm, "state", state),
+            patch.object(
+                task,
+                "generate_final_videos",
+                side_effect=RuntimeError("synthetic composer failure"),
+            ),
+        ):
+            context = task.load_local_ai_resume_context(task_id)
+            failed_render = task.start(
+                task_id, context["params"], resume_context=context
+            )
+        self.assertEqual(failed_render["state"], task.const.TASK_STATE_FAILED)
+        self.assertEqual(final_path.read_bytes(), previous_bytes)
+
     def test_full_fake_pipeline_writes_video_state_and_safe_artifacts(self):
         task_id = "full-fake-pipeline"
         state = MemoryState()

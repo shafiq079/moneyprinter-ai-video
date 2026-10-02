@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 from pathlib import Path
@@ -56,6 +57,8 @@ def _button_by_key_prefix(app, key_prefix):
 def test_headless_play_renders_and_closes_browser_preview(headless_task_app):
     app, video_file = headless_task_app
 
+    assert _button_by_key_prefix(app, "resume_task_all_headless-test").disabled
+
     _button_by_key_prefix(app, "play_task_all_headless-test").click()
     app.run()
 
@@ -84,3 +87,29 @@ def test_headless_open_folder_shows_host_mapped_path(headless_task_app):
     assert any(
         f"./storage/{expected_folder}" in toast.value for toast in app.get("toast")
     )
+
+
+def test_headless_failed_local_ai_task_exposes_separate_resume_action(
+    headless_task_app,
+):
+    app, video_file = headless_task_app
+    task_dir = video_file.parent.parent / "headless-failed"
+    (task_dir / "generated_ai").mkdir(parents=True)
+    (task_dir / "script.json").write_text(
+        json.dumps({"script": "A garden scene.", "params": {"video_source": "ltx25_hf"}}),
+        encoding="utf-8",
+    )
+    (task_dir / "scene_plan.json").write_text("{}", encoding="utf-8")
+    (task_dir / "generated_ai" / "generation_manifest.json").write_text(
+        json.dumps({"scenes": [{"scene_id": 4, "status": "failed"}]}),
+        encoding="utf-8",
+    )
+
+    app.run()
+    resume = _button_by_key_prefix(app, "resume_task_all_headless-failed")
+    assert not resume.disabled
+    with patch("app.services.webui_task.submit_local_ai_resume") as submit:
+        resume.click()
+        app.run()
+    assert not app.exception
+    submit.assert_called_once_with("headless-failed")
