@@ -20,10 +20,11 @@ from app.utils import utils
 SCENE_PLAN_SCHEMA_VERSION = 1
 SCENE_DIRECTOR_VERSION = "scene-director-v1"
 # The OpenAI-compatible client otherwise waits 10 minutes per attempt and retries
-# twice. Scene planning has a safe deterministic fallback, so keep this optional
-# request short enough to let the video workflow continue.
-SCENE_DIRECTOR_LLM_TIMEOUT_SECONDS = 90.0
+# twice. Allow queued and reasoning-capable models three minutes for the optional
+# visual plan, then use the deterministic fallback rather than retrying.
+SCENE_DIRECTOR_LLM_TIMEOUT_SECONDS = 180.0
 SCENE_DIRECTOR_LLM_MAX_RETRIES = 0
+SCENE_DIRECTOR_MAX_STREAM_SECONDS = 900.0
 _SENTENCE_RE = re.compile(r"[^.!?。！？]+[.!?。！？]?", re.UNICODE)
 _ALLOWED_BEATS = {"hook", "setup", "build", "reveal", "payoff", "cta", "ending"}
 _PROMPT_LIMIT = 1800
@@ -749,6 +750,8 @@ def get_or_create_scene_plan(
                 ),
                 timeout_seconds=SCENE_DIRECTOR_LLM_TIMEOUT_SECONDS,
                 max_retries=SCENE_DIRECTOR_LLM_MAX_RETRIES,
+                stream_response=True,
+                max_stream_seconds=SCENE_DIRECTOR_MAX_STREAM_SECONDS,
             )
             plan = _normalize_director_payload(
                 payload,

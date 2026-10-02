@@ -164,10 +164,24 @@ Director LLM and then failed its first Space submission at the 60-second HTTP
 request timeout; the 3-second benchmark later succeeded, so that Space failure
 is not yet reproducible. A second WebUI task waited 30 minutes for the LLM
 SDK's default timeout and two retries, then honored the user's cancellation.
-For this optional Scene Director call the OpenAI-compatible adapter now uses
-a 90-second timeout with no SDK retry and persists the existing deterministic
-fallback plan if it fails. Continue real workflow testing after pulling this
-fix; investigate another Space submission failure only if it recurs.
+For this optional Scene Director call the OpenAI-compatible adapter initially
+used a 90-second timeout with no SDK retry and persisted the existing
+deterministic fallback plan if it failed. Investigate another Space submission
+failure only if it recurs.
+
+After NVIDIA Nemotron 3 Super returned a valid seven-scene plan in 82.1 seconds
+with reasoning off but the provider-default request timed out at 90 seconds,
+the Scene Director request timeout was raised to 180 seconds without changing
+the configured model's reasoning defaults. On NVIDIA's hosted
+`integrate.api.nvidia.com` endpoint, only the Scene Director opts into streamed
+chat completions. Final-answer tokens are assembled into the usual JSON; any
+reasoning deltas count as activity but are never logged or persisted. An
+inactivity gap of 180 seconds (including the initial queue wait) or a total
+stream duration of 15 minutes triggers the existing deterministic fallback.
+Other OpenAI-compatible hosts retain the previous non-streaming request shape
+with the new 180-second client timeout. Stream activity means only that tokens
+arrived; it cannot prove that a silent/queued remote model is making progress.
+Resume keeps the saved plan and does not call the Scene Director again.
 
 A manual one-command GPU acceptance pack is also implemented through
 `scripts/local_ai_gpu_validate.py` and

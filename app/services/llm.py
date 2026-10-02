@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 from time import perf_counter
 from typing import List
+from urllib.parse import urlsplit
 
 from loguru import logger
 from openai import AzureOpenAI, OpenAI
@@ -217,6 +218,57 @@ def _extract_chat_completion_text(response, llm_provider: str) -> str:
     return _normalize_text_response(content, llm_provider)
 
 
+def _collect_streamed_chat_text(
+    stream,
+    llm_provider: str,
+    *,
+    started_at: float,
+    idle_timeout_seconds: float,
+    max_stream_seconds: float,
+) -> str:
+    """Collect the final answer; reasoning tokens only establish stream activity."""
+    content_parts = []
+    last_token_at = started_at
+    last_log_at = started_at
+    chunks_received = 0
+    try:
+        for chunk in stream:
+            now = perf_counter()
+            if now - started_at > max_stream_seconds:
+                raise TimeoutError("Scene Director stream exceeded its maximum duration")
+            if now - last_token_at > idle_timeout_seconds:
+                raise TimeoutError("Scene Director stream stopped producing tokens")
+
+            choices = getattr(chunk, "choices", None)
+            delta = getattr(choices[0], "delta", None) if choices else None
+            if delta is None:
+                continue
+            content = getattr(delta, "content", None)
+            reasoning = getattr(delta, "reasoning_content", None) or getattr(
+                delta, "reasoning", None
+            )
+            content = content if isinstance(content, str) else ""
+            reasoning = reasoning if isinstance(reasoning, str) else ""
+            if not content and not reasoning:
+                continue  # A keepalive or metadata event is not model progress.
+            last_token_at = now
+            chunks_received += 1
+            if content:
+                content_parts.append(content)
+            if chunks_received == 1 or now - last_log_at >= 60:
+                logger.info(
+                    "Scene Director stream activity: "
+                    f"provider={llm_provider}, elapsed_seconds={now - started_at:.0f}, "
+                    f"chunks_received={chunks_received}"
+                )
+                last_log_at = now
+    finally:
+        close = getattr(stream, "close", None)
+        if callable(close):
+            close()
+    return _normalize_text_response("".join(content_parts), llm_provider)
+
+
 def _get_response_field(value, key: str):
     """兼容 dict 和 SDK 响应对象的字段读取。"""
     if isinstance(value, dict):
@@ -260,6 +312,8 @@ def _generate_response(
     *,
     timeout_seconds: float | None = None,
     max_retries: int | None = None,
+    stream_response: bool = False,
+    max_stream_seconds: float = 900.0,
 ) -> str:
     try:
         # WebUI 在视频生成期间允许用户准备下一条文案。调用方可以传入提交瞬间
@@ -628,9 +682,29 @@ def _generate_response(
             client_options["max_retries"] = max_retries
         client = OpenAI(api_key=api_key, base_url=base_url, **client_options)
 
-        response = client.chat.completions.create(
-            model=model_name, messages=[{"role": "user", "content": prompt}]
+        # NVIDIA's hosted chat endpoint streams partial deltas, including
+        # reasoning activity. For this opt-in Scene Director request, a token
+        # resets the inactivity clock; ordinary completions and other custom
+        # OpenAI-compatible hosts retain their existing request shape.
+        nvidia_stream = (
+            stream_response
+            and urlsplit(base_url).scheme == "https"
+            and urlsplit(base_url).hostname == "integrate.api.nvidia.com"
         )
+        started_at = perf_counter()
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "user", "content": prompt}],
+            **({"stream": True} if nvidia_stream else {}),
+        )
+        if nvidia_stream:
+            return _collect_streamed_chat_text(
+                response,
+                llm_provider,
+                started_at=started_at,
+                idle_timeout_seconds=timeout_seconds or 180.0,
+                max_stream_seconds=max_stream_seconds,
+            )
         if response:
             if isinstance(response, ChatCompletion):
                 return _extract_chat_completion_text(response, llm_provider)
@@ -843,6 +917,8 @@ def generate_json_response(
     *,
     timeout_seconds: float | None = None,
     max_retries: int | None = None,
+    stream_response: bool = False,
+    max_stream_seconds: float = 900.0,
 ) -> dict:
     """Generate one JSON object through the configured MoneyPrinter LLM provider."""
 
@@ -851,6 +927,9 @@ def generate_json_response(
         options["timeout_seconds"] = timeout_seconds
     if max_retries is not None:
         options["max_retries"] = max_retries
+    if stream_response:
+        options["stream_response"] = True
+        options["max_stream_seconds"] = max_stream_seconds
     response = _generate_response(prompt=prompt, app_config=app_config, **options)
     if not response:
         raise ValueError("LLM returned an empty JSON response")

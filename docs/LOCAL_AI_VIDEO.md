@@ -3,6 +3,16 @@
 This fork adds self-hosted AI video generation to MoneyPrinterTurbo while keeping
 the original script, narration, subtitle, music and final composition pipeline.
 
+The optional Scene Director uses the configured LLM's default reasoning mode.
+It waits up to 180 seconds without a model token before falling back to the
+deterministic visual plan. NVIDIA's hosted chat API streams this request, so
+reasoning or final-answer tokens keep a working request alive for up to 15
+minutes total; the final JSON is assembled only after the stream finishes.
+No reasoning text is logged or saved. Other configured LLM endpoints keep their
+existing response format and use the 180-second client timeout. A quiet
+provider cannot tell us whether it is queued, computing without streaming,
+or stalled. Resume of a failed local-AI task reuses its saved plan.
+
 ## Wan 2.2 local source
 
 The stable source ID is `wan22_local`. It targets the official

@@ -237,6 +237,8 @@ class TestScenePlan(LocalAITestCase):
             {
                 "timeout_seconds": scene_planner.SCENE_DIRECTOR_LLM_TIMEOUT_SECONDS,
                 "max_retries": scene_planner.SCENE_DIRECTOR_LLM_MAX_RETRIES,
+                "stream_response": True,
+                "max_stream_seconds": scene_planner.SCENE_DIRECTOR_MAX_STREAM_SECONDS,
             },
         )
         self.assertEqual(first.source, "configured_llm")
@@ -289,7 +291,7 @@ class TestScenePlan(LocalAITestCase):
                 aspect="9:16",
             )
 
-        self.assertEqual(generate.call_args.kwargs["timeout_seconds"], 90.0)
+        self.assertEqual(generate.call_args.kwargs["timeout_seconds"], 180.0)
         self.assertEqual(generate.call_args.kwargs["max_retries"], 0)
         self.assertEqual(plan.source, "deterministic_fallback")
         self.assertEqual(scene_planner.load_scene_plan("director-timeout"), plan)

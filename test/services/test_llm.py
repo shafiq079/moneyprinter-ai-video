@@ -7,7 +7,7 @@ import types
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from pydantic import ValidationError
 
@@ -32,6 +32,97 @@ RUN_INTEGRATION_TESTS = os.environ.get("MPT_RUN_INTEGRATION_TESTS", "").lower() 
 
 
 class TestScriptPromptOptions(unittest.TestCase):
+    def test_nvidia_scene_director_keeps_stream_open_during_reasoning(self):
+        settings = {
+            "llm_provider": "openai",
+            "openai_api_key": "test-key",
+            "openai_base_url": "https://integrate.api.nvidia.com/v1",
+            "openai_model_name": "nvidia/nemotron-3-super-120b-a12b",
+        }
+
+        def chunk(*, content=None, reasoning_content=None):
+            return types.SimpleNamespace(
+                choices=[
+                    types.SimpleNamespace(
+                        delta=types.SimpleNamespace(
+                            content=content,
+                            reasoning_content=reasoning_content,
+                        )
+                    )
+                ]
+            )
+
+        stream = [
+            chunk(reasoning_content="reasoning token"),
+            chunk(reasoning_content="more reasoning"),
+            chunk(content='<think>reasoning in content</think>\n{"scenes":'),
+            chunk(content=" []}"),
+        ]
+        create = Mock(return_value=stream)
+        client = types.SimpleNamespace(
+            chat=types.SimpleNamespace(
+                completions=types.SimpleNamespace(create=create)
+            )
+        )
+        with (
+            patch.object(llm, "OpenAI", return_value=client) as openai_client,
+            patch.object(llm, "perf_counter", side_effect=[0, 1, 150, 300, 301]),
+        ):
+            result = llm.generate_json_response(
+                "Plan scenes",
+                app_config=settings,
+                timeout_seconds=180,
+                max_retries=0,
+                stream_response=True,
+                max_stream_seconds=900,
+            )
+
+        self.assertEqual(result, {"scenes": []})
+        self.assertEqual(openai_client.call_args.kwargs["timeout"], 180)
+        self.assertEqual(openai_client.call_args.kwargs["max_retries"], 0)
+        self.assertEqual(create.call_args.kwargs["stream"], True)
+        self.assertNotIn("extra_body", create.call_args.kwargs)
+
+    def test_stream_keepalive_does_not_extend_idle_timeout(self):
+        class FakeStream:
+            closed = False
+
+            def __iter__(self):
+                for _ in range(3):
+                    yield types.SimpleNamespace(choices=[])
+
+            def close(self):
+                self.closed = True
+
+        stream = FakeStream()
+        with patch.object(llm, "perf_counter", side_effect=[30, 60, 181]):
+            with self.assertRaisesRegex(TimeoutError, "stopped producing tokens"):
+                llm._collect_streamed_chat_text(
+                    stream,
+                    "openai",
+                    started_at=0,
+                    idle_timeout_seconds=180,
+                    max_stream_seconds=900,
+                )
+        self.assertTrue(stream.closed)
+
+    def test_stream_is_bounded_even_with_continuous_model_tokens(self):
+        def chunks():
+            for text in ("a", "b"):
+                yield types.SimpleNamespace(
+                    choices=[types.SimpleNamespace(delta=types.SimpleNamespace(content=text))]
+                )
+
+        with patch.object(llm, "perf_counter", side_effect=[10, 901]):
+            with self.assertRaisesRegex(TimeoutError, "maximum duration"):
+                llm._collect_streamed_chat_text(
+                    chunks(),
+                    "openai",
+                    started_at=0,
+                    idle_timeout_seconds=180,
+                    max_stream_seconds=900,
+                )
+
     def test_scene_director_limits_openai_compatible_request_only_when_requested(self):
         settings = {
             "llm_provider": "openai",
@@ -61,6 +152,7 @@ class TestScriptPromptOptions(unittest.TestCase):
                     app_config=settings,
                     timeout_seconds=90.0,
                     max_retries=0,
+                    stream_response=True,
                 ),
                 {"ok": True},
             )
