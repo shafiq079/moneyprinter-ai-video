@@ -1,9 +1,10 @@
 import warnings
 from enum import Enum
 from typing import Any, List, Literal, Optional, Union
+from urllib.parse import urlsplit
 
 import pydantic
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.config import config
 
@@ -88,6 +89,53 @@ class MaterialInfo:
     source_info: Optional[dict[str, Any]] = None
 
 
+class FactualSource(BaseModel):
+    """User-supplied evidence; URLs are citations, never fetched by the server."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    title: str = Field(min_length=1, max_length=160)
+    url: str = Field(max_length=1000)
+    excerpt: str = Field(min_length=20, max_length=2000)
+
+    @field_validator("title", "excerpt")
+    @classmethod
+    def nonempty_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("source text cannot be blank")
+        return value
+
+    @field_validator("excerpt")
+    @classmethod
+    def long_enough_excerpt(cls, value: str) -> str:
+        if len(value) < 20:
+            raise ValueError("supporting excerpt must be at least 20 characters")
+        return value
+
+    @field_validator("url")
+    @classmethod
+    def public_citation_url(cls, value: str) -> str:
+        value = value.strip()
+        try:
+            parsed = urlsplit(value)
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("source URL must be a public HTTPS URL") from exc
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or port not in (None, 443)
+            or parsed.hostname.lower() in {"localhost", "127.0.0.1", "::1"}
+        ):
+            raise ValueError("source URL must be public HTTPS without credentials or query")
+        return value
+
+
 class VideoParams(BaseModel):
     """
     {
@@ -103,8 +151,12 @@ class VideoParams(BaseModel):
     }
     """
 
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     video_subject: str
     video_script: str = ""  # Script used to generate the video
+    content_mode: Literal["creative", "factual"] = "creative"
+    factual_sources: List[FactualSource] = Field(default_factory=list, max_length=6)
     video_terms: Optional[str | list] = None  # Keywords used to generate the video
     video_aspect: Optional[VideoAspect] = VideoAspect.portrait.value
     video_fit_mode: VideoFitMode = VideoFitMode.cover

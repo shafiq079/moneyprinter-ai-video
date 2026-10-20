@@ -199,6 +199,9 @@ def build_output_package(
         state.get("audio_file") or root / "audio.mp3",
     )
     scene_plan = _task_relative_existing_file(task_id, root / "scene_plan.json")
+    factual_review = _task_relative_existing_file(
+        task_id, root / "factual_review.json"
+    )
     generation_manifest = _task_relative_existing_file(
         task_id,
         root / "generated_ai" / "generation_manifest.json",
@@ -228,6 +231,7 @@ def build_output_package(
         "final_videos": final_videos,
         "combined_videos": combined_videos,
         "script": script_file,
+        "factual_review": factual_review,
         "captions": subtitle_file,
         "audio": audio_file,
         "scene_plan": scene_plan,

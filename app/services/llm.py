@@ -683,7 +683,7 @@ def _generate_response(
         client = OpenAI(api_key=api_key, base_url=base_url, **client_options)
 
         # NVIDIA's hosted chat endpoint streams partial deltas, including
-        # reasoning activity. For this opt-in Scene Director request, a token
+        # reasoning activity. For opt-in long-running JSON requests, a token
         # resets the inactivity clock; ordinary completions and other custom
         # OpenAI-compatible hosts retain their existing request shape.
         nvidia_stream = (

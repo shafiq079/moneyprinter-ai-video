@@ -108,7 +108,9 @@ def _public_task_data(task: dict) -> dict:
     task_id = str(task.get("task_id") or "").strip()
     if task_id:
         try:
-            if task_artifacts.has_local_ai_output_package(task_id):
+            if task_artifacts.has_local_ai_output_package(task_id) or (
+                pathlib.Path(utils.task_dir(task_id)) / "factual_review.json"
+            ).is_file():
                 public_task["artifact_package"] = (
                     task_artifacts.build_output_package(
                         task_id,

@@ -321,6 +321,19 @@ Batch manifests:
         help="complete script; skips LLM script generation when provided",
     )
     content_group.add_argument(
+        "--content-mode",
+        choices=("creative", "factual"),
+        default="creative",
+        help="factual requires cited excerpts and reviews the script before media work",
+    )
+    content_group.add_argument(
+        "--factual-source",
+        action="append",
+        default=[],
+        metavar="'HTTPS URL | title | supporting excerpt'",
+        help="repeat for up to six factual sources; no pages are fetched",
+    )
+    content_group.add_argument(
         "--video-terms",
         default=None,
         help="comma-separated material search terms; generated automatically when omitted",
@@ -946,6 +959,7 @@ def build_video_params(args: argparse.Namespace) -> VideoParams:
     # 避免执行 ``cli.py -h`` 时产生配置初始化日志。
     from app.config import config
     from app.models.schema import MaterialInfo, VideoParams
+    from app.services.factual_content import parse_source_line
 
     ui_config = config.ui
 
@@ -968,6 +982,8 @@ def build_video_params(args: argparse.Namespace) -> VideoParams:
     params_kwargs = {
         "video_subject": args.video_subject.strip(),
         "video_script": args.video_script,
+        "content_mode": args.content_mode,
+        "factual_sources": [parse_source_line(line) for line in args.factual_source],
         "video_terms": video_terms,
         "video_source": args.video_source,
         "video_materials": video_materials,
@@ -1225,6 +1241,9 @@ def _validate_batch_task_params(
     metaso_minimax_charge_confirmed: bool,
     muapi_charge_confirmed: bool,
 ) -> None:
+    from app.services.factual_content import validate_sources
+
+    validate_sources(params)
     if not params.video_subject.strip() and not params.video_script.strip():
         raise ValueError("one of video_subject or video_script is required")
 
@@ -1523,6 +1542,10 @@ def _validate_cli_files(
     from app.models import const
     from app.services import bgm as bgm_service
     from app.utils import utils
+
+    from app.services.factual_content import validate_sources
+
+    validate_sources(params)
 
     # FFmpeg 探测已经移到 app/services/task.py 的共享任务流水线（task.start）
     # 里统一做硬性检查：探测失败会让任务以 preflight 阶段失败结束，run_cli()

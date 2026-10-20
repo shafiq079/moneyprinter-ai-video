@@ -46,6 +46,7 @@ from app.models.schema import (
 from app.services import bgm as bgm_service
 from app.services import (
     cache_manager,
+    factual_content,
     generation_manifest,
     llm,
     local_ai,
@@ -1855,6 +1856,14 @@ def _apply_restored_params(params):
     # 文案与高级脚本设置。
     st.session_state["video_subject"] = params.get("video_subject") or ""
     st.session_state["video_script"] = params.get("video_script") or ""
+    _set_stable_widget_value(
+        "content_mode_select", params.get("content_mode") or "creative"
+    )
+    st.session_state["factual_sources_input"] = "\n".join(
+        f"{item['url']} | {item['title']} | {item['excerpt']}"
+        for item in params.get("factual_sources") or []
+        if isinstance(item, dict)
+    )
     st.session_state["video_terms"] = str(video_terms)
     _set_stable_widget_value(
         "script_language_select", params.get("video_language") or ""
@@ -5002,14 +5011,20 @@ def _render_local_script_generation(params):
     with st.spinner(tr("Generating Video Script and Keywords")):
 
         def generate_script_and_terms(app_config_snapshot):
-            script = llm.generate_script(
-                video_subject=params.video_subject,
-                language=params.video_language,
-                paragraph_number=params.paragraph_number,
-                video_script_prompt=params.video_script_prompt,
-                custom_system_prompt=params.custom_system_prompt,
-                app_config=app_config_snapshot,
-            )
+            if params.content_mode == "factual":
+                sources = factual_content.validate_sources(params)
+                script = factual_content.generate_script(
+                    params, sources, app_config=app_config_snapshot
+                )
+            else:
+                script = llm.generate_script(
+                    video_subject=params.video_subject,
+                    language=params.video_language,
+                    paragraph_number=params.paragraph_number,
+                    video_script_prompt=params.video_script_prompt,
+                    custom_system_prompt=params.custom_system_prompt,
+                    app_config=app_config_snapshot,
+                )
             terms = llm.generate_terms(
                 params.video_subject,
                 script,
@@ -5019,10 +5034,16 @@ def _render_local_script_generation(params):
             )
             return script, terms
 
-        script, terms = _run_llm_read_operation(
-            "generate_script_and_terms",
-            generate_script_and_terms,
-        )
+        try:
+            script, terms = _run_llm_read_operation(
+                "generate_script_and_terms",
+                generate_script_and_terms,
+            )
+        except ValueError as exc:
+            if params.content_mode != "factual":
+                raise
+            st.error(str(exc))
+            return
         if "Error: " in script:
             st.error(tr(script))
         elif "Error: " in terms:
@@ -5373,6 +5394,38 @@ def _render_script_settings(panel, params):
                     label_visibility="collapsed",
                 ).strip()
 
+            params.content_mode = stable_selectbox(
+                tr("Content Mode"),
+                options=["creative", "factual"],
+                default_value="creative",
+                key="content_mode_select",
+            )
+            if params.content_mode == "factual":
+                raw_sources = st.text_area(
+                    tr("Factual Sources"),
+                    key="factual_sources_input",
+                    height=140,
+                    help=tr("Factual Sources Help"),
+                    placeholder="https://example.org/article | Article title | An excerpt supporting a claim.",
+                )
+                try:
+                    params.factual_sources = [
+                        factual_content.parse_source_line(line)
+                        for line in raw_sources.splitlines()
+                        if line.strip()
+                    ]
+                    factual_content.validate_sources(params)
+                    st.session_state.pop("factual_source_error", None)
+                except ValueError:
+                    params.factual_sources = []
+                    st.session_state["factual_source_error"] = tr(
+                        "Factual Sources Invalid"
+                    )
+                    st.warning(st.session_state["factual_source_error"])
+            else:
+                params.factual_sources = []
+                st.session_state.pop("factual_source_error", None)
+
             video_languages = [
                 (tr("Auto Detect"), ""),
             ]
@@ -5475,15 +5528,25 @@ def _render_script_settings(panel, params):
                         icon=":material/preview:",
                         use_container_width=True,
                     ):
-                        render_script_prompt_preview(
-                            llm.build_script_prompt(
-                                video_subject=params.video_subject,
-                                language=params.video_language,
-                                paragraph_number=params.paragraph_number,
-                                video_script_prompt=params.video_script_prompt,
-                                custom_system_prompt=params.custom_system_prompt,
+                        if params.content_mode == "factual":
+                            try:
+                                sources = factual_content.validate_sources(params)
+                            except ValueError:
+                                st.error(tr("Factual Sources Invalid"))
+                            else:
+                                render_script_prompt_preview(
+                                    factual_content.build_script_prompt(params, sources)
+                                )
+                        else:
+                            render_script_prompt_preview(
+                                llm.build_script_prompt(
+                                    video_subject=params.video_subject,
+                                    language=params.video_language,
+                                    paragraph_number=params.paragraph_number,
+                                    video_script_prompt=params.video_script_prompt,
+                                    custom_system_prompt=params.custom_system_prompt,
+                                )
                             )
-                        )
 
             # 模型发现只增强视频素材，不改变用户明确选择的文案 Provider。
             if _effective_script_generation_backend() == "loomloom":
@@ -8526,6 +8589,16 @@ def _render_generation_controls(
             st.error(tr("Video Script and Subject Cannot Both Be Empty"))
             st.stop()
 
+        if params.content_mode == "factual":
+            try:
+                factual_content.validate_sources(params)
+                if st.session_state.get("factual_source_error"):
+                    raise ValueError("invalid source line")
+            except ValueError:
+                _remove_active_generation_task(task_id)
+                st.error(tr("Factual Sources Invalid"))
+                st.stop()
+
         voxcpm_reference_audio = None
         voxcpm_prompt_audio = None
         voxcpm_prompt_text = ""
@@ -8863,7 +8936,10 @@ def _render_generation_controls(
         try:
             st.toast(tr("Generating Video"))
             logger.info(tr("Start Generating Video"))
-            logger.info(utils.to_json(params))
+            logged_params = params.model_dump(mode="json")
+            if params.content_mode == "factual":
+                logged_params["factual_sources"] = "<user supplied evidence>"
+            logger.info(utils.to_json(logged_params))
             webui_task.submit_generation(
                 task_id=task_id,
                 params=params,

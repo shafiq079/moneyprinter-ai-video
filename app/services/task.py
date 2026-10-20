@@ -17,6 +17,7 @@ from app.config import config
 from app.models import const
 from app.models.schema import VideoConcatMode, VideoParams
 from app.services import bgm as bgm_service
+from app.services import factual_content
 from app.services import generation_manifest, local_ai, scene_planner
 from app.services import (
     elevenlabs_music,
@@ -2393,6 +2394,11 @@ def _run_pipeline(
         )
     _raise_if_cancelled(task_id, "queued")
 
+    try:
+        factual_sources = factual_content.validate_sources(params)
+    except factual_content.FactualReviewBlocked as exc:
+        return _mark_task_failed(task_id, "factual_review", str(exc))
+
     prepared_local_ai_provider = None
     if (
         stop_at in {"materials", "video"}
@@ -2539,11 +2545,31 @@ def _run_pipeline(
     _raise_if_cancelled(task_id, "preflight")
 
     # 1. Generate script
-    video_script = (
-        resume_context["script"]
-        if resume_context is not None
-        else generate_script(task_id, params)
-    )
+    try:
+        if resume_context is not None:
+            video_script = resume_context["script"]
+        elif factual_sources:
+            video_script = params.video_script.strip() or factual_content.generate_script(
+                params, factual_sources
+            )
+            factual_content.review_script(task_id, video_script, factual_sources)
+            sm.state.update_task(task_id, factual_review_status="approved")
+        else:
+            video_script = generate_script(task_id, params)
+    except factual_content.FactualReviewBlocked as exc:
+        return _mark_task_failed(task_id, "factual_review", str(exc))
+    except Exception as exc:
+        if not factual_sources:
+            raise
+        logger.warning(
+            f"factual script preparation failed: task_id={task_id}, "
+            f"error_type={type(exc).__name__}"
+        )
+        return _mark_task_failed(
+            task_id,
+            "factual_review",
+            f"factual script preparation unavailable ({type(exc).__name__})",
+        )
     if not video_script or "Error: " in video_script:
         error = (
             video_script.removeprefix("Error: ").strip()

@@ -204,6 +204,23 @@ offer a download alongside their headless browser preview. CPU Streamlit tests
 cover both paths without remote inference. Task generation/recovery contracts
 and Regenerate semantics are unchanged.
 
+## Phase 7 first slice: optional factual mode
+
+Phase 6 local Wan/LTX hardware benchmarking remains deferred because no local
+GPU is available. The operator's seven-scene HF ZeroGPU result validates the
+remote LTX Fast task and resume path, but does not establish local GPU defaults.
+The next CPU-safe feature slice adds an opt-in `content_mode=factual` with 1–6
+operator-supplied HTTPS source excerpts. Factual scripting uses those excerpts;
+the configured LLM then reviews the supplied/generated script before narration
+or video materials. Unsupported/uncertain claims block the task at
+`factual_review` rather than spending video quota. A task-local
+`factual_review.json` records the decision and citations; the output package
+points to it. Creative mode retains its old path. WebUI, CLI, API and batch
+parameters share the same `VideoParams` contract. The app does not fetch or
+authenticate source pages; automated evidence alignment is not independent
+fact-checking. See `docs/FACTUAL_MODE.md`. Content Factory research remains
+reference only. Automatic discovery/retrieval is a separate future slice.
+
 A manual one-command GPU acceptance pack is also implemented through
 `scripts/local_ai_gpu_validate.py` and
 `app/services/local_ai/gpu_validation.py`. It uses an offline supplied script,
@@ -219,8 +236,8 @@ The pack has CPU-safe orchestration tests but has **not** been run against real
 Wan/LTX weights yet.
 
 Do not invent model-quality, performance or recommended-GPU conclusions before
-those real measurements exist. Optional factual workflow and a larger editor
-remain non-blocking and should only be started for an explicit product need.
+those real measurements exist. The factual first slice remains optional;
+automatic discovery and a larger editor are not required for creative videos.
 
 ## CPU integration and hardening pass
 
