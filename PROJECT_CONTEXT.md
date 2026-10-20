@@ -1,6 +1,6 @@
 # MoneyPrinter AI Video — Project Context
 
-Read this file first in every new AI or developer session. `docs/SRS.md` is the full product specification; `docs/MIGRATION_MAP.md` is the file-level porting decision. Update this handoff with every accepted milestone.
+Read this file first in every new AI or developer session. `docs/SRS.md` is the full product specification; `docs/MIGRATION_MAP.md` is the file-level porting decision. Update this handoff with every accepted milestone. Local desktop Codex setup and two-machine sync instructions are in `AGENTS.md` and `docs/LOCAL_CODEX_SETUP.md`.
 
 ## Canonical product and repository state
 
@@ -206,10 +206,19 @@ and Regenerate semantics are unchanged.
 
 ## Phase 7 first slice: optional factual mode
 
+This CPU-only first slice is implemented on `development` in commit
+`889fdd5fcdd7bf1b22925b6c7e1a48232082bbcd` (following the resumed-video
+WebUI fix `093e9ec`). The reported local verification for the slice was
+Python 3.11 full-suite **1474 passed, 19 skipped, 10744 subtests passed** plus
+Ruff. Check GitHub Actions for the current commit; do not treat that prior
+local result as a claim about any later changes. The next development task
+should be selected with the operator after reviewing this first slice, rather
+than assuming automatic research ingestion is authorized.
+
 Phase 6 local Wan/LTX hardware benchmarking remains deferred because no local
 GPU is available. The operator's seven-scene HF ZeroGPU result validates the
 remote LTX Fast task and resume path, but does not establish local GPU defaults.
-The next CPU-safe feature slice adds an opt-in `content_mode=factual` with 1–6
+This CPU-safe feature slice added an opt-in `content_mode=factual` with 1–6
 operator-supplied HTTPS source excerpts. Factual scripting uses those excerpts;
 the configured LLM then reviews the supplied/generated script before narration
 or video materials. Unsupported/uncertain claims block the task at
