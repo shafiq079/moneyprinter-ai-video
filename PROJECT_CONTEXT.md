@@ -183,6 +183,27 @@ with the new 180-second client timeout. Stream activity means only that tokens
 arrived; it cannot prove that a silent/queued remote model is making progress.
 Resume keeps the saved plan and does not call the Scene Director again.
 
+On 4 October 2026 UTC, the operator completed the first real seven-scene
+`ltx25_hf` WebUI garden task (`06853305-0932-4149-a3e2-0598eeab4a83`) across
+quota-limited resumes. The initial run saved scenes 1–3; the next resume reused
+them and generated scenes 4–6; the final resume reused scenes 1–6, generated
+scene 7, and composed a validated 20.270-second, 1080×1920 MP4 with narration
+and subtitles. The operator shared the finished video for visual review. The
+butterfly and sunlit water droplets are present but small in the wide portrait
+frame. This validates the remote HF LTX Fast path and same-task recovery on the
+operator's Space; it does not validate local Wan/LTX checkpoints or establish
+comparative quality, throughput, VRAM or quota requirements. This resumed task
+used its saved deterministic visual plan; the separately tested NVIDIA Nemotron
+seven-scene response was not substituted into it.
+
+The successful resume initially left the main WebUI result panel pointed at the
+earlier task selection, so the final file existed but was not displayed there.
+The Task Manager Resume action now selects the resumed ID for the existing
+generation-result player after queueing succeeds; completed history tasks also
+offer a download alongside their headless browser preview. CPU Streamlit tests
+cover both paths without remote inference. Task generation/recovery contracts
+and Regenerate semantics are unchanged.
+
 A manual one-command GPU acceptance pack is also implemented through
 `scripts/local_ai_gpu_validate.py` and
 `app/services/local_ai/gpu_validation.py`. It uses an offline supplied script,

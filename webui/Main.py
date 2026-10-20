@@ -1596,7 +1596,12 @@ def _render_task_table(filtered_tasks, key_prefix):
                         except Exception as exc:
                             st.error(f"{tr('Resume Task Failed')}: {exc}")
                         else:
+                            _add_active_generation_task(
+                                task_id, subject=task["subject"]
+                            )
+                            st.session_state["current_generation_task_id"] = task_id
                             st.toast(tr("Resume Task Queued"))
+                            st.rerun(scope="app")
 
                 with action_cols[4]:
                     scenes_label = tr("Scenes")
@@ -1723,6 +1728,16 @@ def _render_task_video_preview():
         st.session_state.pop("task_preview_video_file", None)
         return
     st.video(preview_file)
+    with open(preview_file, "rb") as video_file:
+        st.download_button(
+            tr("Download Video"),
+            data=video_file,
+            file_name=os.path.basename(preview_file),
+            mime="video/mp4",
+            key=f"download_task_video_preview_{task_name}",
+            icon=":material/download:",
+            on_click="ignore",
+        )
 
 
 @st.fragment(run_every="2s")

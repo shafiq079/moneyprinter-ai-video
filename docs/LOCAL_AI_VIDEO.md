@@ -241,7 +241,11 @@ provider fingerprint, then generates only missing, failed or invalid scenes
 before rendering the final MP4. Existing generated BGM is reused. Resume is
 unavailable when the required saved inputs are missing; use Regenerate to start
 a new task. After a WebUI restart, an incomplete saved scene manifest is still
-listed as a failed task, with Resume available from Task Manager.
+listed as a failed task, with Resume available from Task Manager. A successful
+Resume displays the completed video and download in the normal generation
+result panel. After restarting the WebUI, open the completed task with **Play**
+in Task Manager; on a headless server this shows a browser preview and Download
+Video control.
 
 This remote provider is **Fast/Distilled only** for the MVP. MoneyPrinter keeps
 its own narration, captions and BGM authoritative. On 30 September 2026 an

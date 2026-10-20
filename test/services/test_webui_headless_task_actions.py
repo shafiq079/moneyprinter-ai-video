@@ -13,6 +13,7 @@ from app.config import config
 # 导入期就要解析 FFmpeg 可执行文件（依赖 sys.platform 选择平台二进制），numpy 也
 # 会按 sys.platform 决定是否调用 os.uname()。这些解析必须先于下面的 fixture 完成，
 # 否则在 Windows 上模拟无桌面服务器时会去找 Linux 版 FFmpeg 或直接抛 AttributeError。
+from app.models import const
 from app.services import material as _material  # noqa: F401
 from app.services import state as sm
 from app.utils import utils
@@ -58,13 +59,22 @@ def test_headless_play_renders_and_closes_browser_preview(headless_task_app):
     app, video_file = headless_task_app
 
     assert _button_by_key_prefix(app, "resume_task_all_headless-test").disabled
+    assert not app.session_state["current_generation_task_id"]
 
-    _button_by_key_prefix(app, "play_task_all_headless-test").click()
-    app.run()
+    downloads = []
+
+    def capture_download(label, data, **kwargs):
+        if str(kwargs.get("key", "")).startswith("download_task_video_preview_"):
+            downloads.append((label, data.read(), kwargs["file_name"]))
+
+    with patch("streamlit.download_button", side_effect=capture_download):
+        _button_by_key_prefix(app, "play_task_all_headless-test").click()
+        app.run()
 
     assert not app.exception
     assert app.session_state["task_preview_video_file"] == str(video_file.resolve())
     assert len(app.get("video")) == 1
+    assert downloads == [("Download Video", b"test video payload", "final-1.mp4")]
 
     _button_by_key_prefix(app, "close_task_video_preview").click()
     app.run()
@@ -113,3 +123,19 @@ def test_headless_failed_local_ai_task_exposes_separate_resume_action(
         app.run()
     assert not app.exception
     submit.assert_called_once_with("headless-failed")
+    assert app.session_state["current_generation_task_id"] == "headless-failed"
+
+    # The resume worker completes under the original ID. Its result must
+    # appear on the main page without requiring a new Generate submission.
+    final_video = task_dir / "final-1.mp4"
+    final_video.write_bytes(b"resumed final video")
+    sm.state.update_task(
+        "headless-failed",
+        state=const.TASK_STATE_COMPLETE,
+        progress=100,
+        videos=[str(final_video)],
+    )
+    app.run()
+    assert not app.exception
+    assert len(app.get("video")) == 1
+    assert any("Video Generation Completed" in item.value for item in app.success)
