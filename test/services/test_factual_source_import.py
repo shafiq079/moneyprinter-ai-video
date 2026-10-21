@@ -183,3 +183,40 @@ def test_webui_import_requires_click_and_populates_reviewable_source_field():
             item for item in app.text_area if item.key == "factual_sources_input"
         )
         assert entered.value == f"{source.url} | {source.title} | {source.excerpt}"
+
+
+@pytest.mark.parametrize("source_count", [1, 6])
+def test_webui_import_does_not_fetch_duplicate_or_full_source_list(source_count):
+    app_path = Path(__file__).parents[2] / "webui" / "Main.py"
+    existing = "\n".join(
+        f"https://example.org/{index} | Source {index} | "
+        "A supporting excerpt with sufficient detail."
+        for index in range(source_count)
+    )
+    requested_url = (
+        "https://example.org/0" if source_count == 1 else "https://example.org/new"
+    )
+    with (
+        patch.object(config, "try_save_config", return_value=True),
+        patch.object(importer, "import_source") as fetch,
+    ):
+        app = AppTest.from_file(str(app_path), default_timeout=60)
+        app.session_state["ui_language"] = "en"
+        app.run()
+        mode = next(
+            item
+            for item in app.selectbox
+            if str(item.key).startswith("content_mode_select_")
+        )
+        mode.set_value("factual").run()
+        app.session_state["factual_sources_input"] = existing
+        url = next(item for item in app.text_input if item.key == "factual_import_url")
+        url.set_value(requested_url).run()
+        button = next(
+            item for item in app.button if item.key == "factual_import_button"
+        )
+        button.click().run()
+        assert not app.exception
+        fetch.assert_not_called()
+        assert app.session_state["factual_sources_input"] == existing
+        assert app.session_state["factual_import_error"]

@@ -36,6 +36,7 @@ from app.models.llm_provider import (
     normalize_provider_override,
 )
 from app.models.schema import (
+    FactualSource,
     MaterialInfo,
     VideoAspect,
     VideoConcatMode,
@@ -5434,7 +5435,6 @@ def _render_script_settings(panel, params):
                 )
                 if st.button(tr("Import Source Excerpt"), key="factual_import_button"):
                     try:
-                        imported = factual_source_import.import_source(source_url)
                         existing = [
                             line.strip()
                             for line in st.session_state.get(
@@ -5444,11 +5444,13 @@ def _render_script_settings(panel, params):
                         ]
                         if len(existing) >= 6:
                             raise ValueError("six sources already entered")
+                        requested_url = FactualSource.public_citation_url(source_url)
                         if any(
-                            line.split("|", 1)[0].strip() == imported.url
+                            line.split("|", 1)[0].strip() == requested_url
                             for line in existing
                         ):
                             raise ValueError("source URL already entered")
+                        imported = factual_source_import.import_source(requested_url)
                         existing.append(
                             f"{imported.url} | {imported.title} | {imported.excerpt}"
                         )
