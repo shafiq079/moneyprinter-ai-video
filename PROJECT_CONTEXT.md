@@ -211,9 +211,9 @@ This CPU-only first slice is implemented on `development` in commit
 WebUI fix `093e9ec`). The reported local verification for the slice was
 Python 3.11 full-suite **1474 passed, 19 skipped, 10744 subtests passed** plus
 Ruff. Check GitHub Actions for the current commit; do not treat that prior
-local result as a claim about any later changes. The next development task
-should be selected with the operator after reviewing this first slice, rather
-than assuming automatic research ingestion is authorized.
+local result as a claim about any later changes. The operator chose to defer
+the real-model acceptance test and continue CPU-safe development. Automatic
+research ingestion remains unimplemented and is not assumed authorized.
 
 Phase 6 local Wan/LTX hardware benchmarking remains deferred because no local
 GPU is available. The operator's seven-scene HF ZeroGPU result validates the
@@ -256,6 +256,16 @@ Wan/LTX weights yet.
 Do not invent model-quality, performance or recommended-GPU conclusions before
 those real measurements exist. The factual first slice remains optional;
 automatic discovery and a larger editor are not required for creative videos.
+
+The factual review is now visible through the existing WebUI Task Manager
+**Artifacts** action, even if an unsupported script was blocked before a video
+or local-AI output package existed. The read-only summary shows the decision,
+reason, claim-to-source IDs and citation titles/URLs without reprinting source
+excerpts. The original task-local review remains available as JSON. Real LLM
+acceptance with one supported and one unsupported script is deliberately
+deferred at the operator's request; keep it on the later verification list,
+along with real local-GPU validation. Do not claim the CPU fixtures measure
+real-world factual accuracy.
 
 ## CPU integration and hardening pass
 

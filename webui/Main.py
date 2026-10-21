@@ -1476,6 +1476,27 @@ def _render_artifact_package_view() -> None:
     st.caption(tr("Artifact Package Help"))
     st.json(package)
 
+    if package["factual_review"]:
+        try:
+            review = factual_content.load_review_summary(task_id)
+        except factual_content.FactualReviewBlocked:
+            st.warning(tr("Factual Review Unavailable"))
+            return
+        st.subheader(tr("Factual Review"))
+        if review["status"] == "approved":
+            st.success(tr("Factual Review Approved"))
+        else:
+            st.error(tr("Factual Review Blocked"))
+        if review["reason"]:
+            st.text(review["reason"])
+        for item in review["claims"]:
+            citations = ", ".join(item["source_ids"]) or tr("No Supporting Source")
+            st.text(f"{item['claim']} [{citations}]")
+        st.caption(tr("Factual Review Sources"))
+        for source in review["sources"]:
+            st.text(f"{source['id']}: {source['title']} — {source['url']}")
+        st.caption(tr("Factual Review Limitation"))
+
 
 def _render_task_table(filtered_tasks, key_prefix):
     with st.container(key=f"task_table_header_{key_prefix}"):
@@ -1524,6 +1545,9 @@ def _render_task_table(filtered_tasks, key_prefix):
             )
             has_artifact_package = (
                 task_artifacts.has_local_ai_output_package(task_id)
+                or os.path.isfile(
+                    os.path.join(task["task_path"], "factual_review.json")
+                )
             )
             safe_task_key = "".join(ch if ch.isalnum() else "_" for ch in task_id)[:40]
 

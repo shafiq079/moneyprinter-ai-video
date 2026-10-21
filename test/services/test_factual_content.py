@@ -313,3 +313,69 @@ def test_webui_factual_controls_validate_sources_without_generation():
         )
         source.set_value("http://localhost | bad | invalid excerpt").run()
         assert app.session_state["factual_source_error"]
+
+
+def test_saved_review_summary_excludes_excerpts_and_rejects_external_file(tmp_path):
+    task_dir = tmp_path / "review-task"
+    task_dir.mkdir()
+    review = factual_content._validated_review(
+        {
+            "verdict": "blocked",
+            "reason": "Claim lacks evidence",
+            "claims": [{"claim": "The Moon is cheese.", "source_ids": []}],
+        },
+        "The Moon is cheese.",
+        [FactualSource(**SOURCE)],
+    )
+    (task_dir / "factual_review.json").write_text(json.dumps(review))
+    with patch.object(
+        factual_content.utils,
+        "task_dir",
+        return_value=str(task_dir),
+    ):
+        summary = factual_content.load_review_summary("review-task")
+        assert summary["status"] == "blocked"
+        assert summary["claims"][0]["source_ids"] == []
+        assert SOURCE["excerpt"] not in json.dumps(summary)
+
+        (task_dir / "factual_review.json").unlink()
+        (task_dir / "factual_review.json").symlink_to(tmp_path / "outside.json")
+        with pytest.raises(factual_content.FactualReviewBlocked, match="unavailable"):
+            factual_content.load_review_summary("review-task")
+
+
+def test_webui_task_manager_displays_blocked_review_without_video(tmp_path):
+    task_dir = tmp_path / "review-task"
+    task_dir.mkdir()
+    review = factual_content._validated_review(
+        {
+            "verdict": "blocked",
+            "reason": "Claim lacks evidence",
+            "claims": [{"claim": "The Moon is cheese.", "source_ids": []}],
+        },
+        "The Moon is cheese.",
+        [FactualSource(**SOURCE)],
+    )
+    (task_dir / "factual_review.json").write_text(json.dumps(review))
+
+    def task_dir_path(task_id=None):
+        return str(tmp_path / task_id) if task_id else str(tmp_path)
+
+    app_path = Path(__file__).parents[2] / "webui" / "Main.py"
+    with (
+        patch.object(config, "try_save_config", return_value=True),
+        patch.object(factual_content.utils, "task_dir", side_effect=task_dir_path),
+    ):
+        app = AppTest.from_file(str(app_path), default_timeout=60)
+        app.session_state["ui_language"] = "en"
+        app.session_state["artifact_package_task_id"] = "review-task"
+        app.run()
+    assert not app.exception
+    assert any(
+        item.key and str(item.key).startswith("artifacts_task_") and not item.disabled
+        for item in app.button
+    )
+    rendered = "\n".join(str(item.value) for item in app.text)
+    assert "The Moon is cheese." in rendered
+    assert "S1: Moon surface" in rendered
+    assert SOURCE["excerpt"] not in rendered

@@ -67,6 +67,20 @@ and runs the review for that new task. Resume rejects a factual task if the
 approved review file is missing or its saved script hash or source excerpts no
 longer match the task inputs. Keep the approved review with the task artifacts.
 
+The WebUI Task Manager's **Artifacts** action is available for factual tasks
+with a saved review, including blocked tasks that stopped before creating any
+video. It displays the verdict, reason, claims with source IDs, and source
+titles/URLs. The supporting excerpts remain in the task-local JSON but are not
+repeated in this summary. The view makes the automated decision inspectable;
+the operator still needs to check the underlying sources before publication.
+
+**Deferred operator acceptance:** With the configured real LLM, run a
+script-only factual task whose claims match a real copied source excerpt and a
+second task with an unsupported claim. Confirm the first review approves and
+the second blocks before media generation. This does not need video/GPU quota.
+It is intentionally pending; CPU mock tests cannot measure the real model's
+judgment or verify the source pages.
+
 This is the first Phase 7 slice. Automatic source discovery, independent page
 retrieval and source-authenticity checks are future work, and should be added
 only after defining safe and dependable research inputs. The older Content

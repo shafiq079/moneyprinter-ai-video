@@ -227,3 +227,71 @@ def validate_saved_approval(
         or review.get("sources") != expected_sources
     ):
         raise FactualReviewBlocked("Saved factual approval does not match task inputs")
+
+
+def load_review_summary(task_id: str) -> dict:
+    """Read a bounded, task-local review for display without exposing excerpts."""
+    root = Path(utils.task_dir(task_id)).resolve()
+    target = (root / "factual_review.json").resolve()
+    if not target.is_relative_to(root):
+        raise FactualReviewBlocked("Factual review is unavailable")
+    try:
+        if target.stat().st_size > 65536:
+            raise FactualReviewBlocked("Factual review is too large to display")
+        with target.open(encoding="utf-8") as stream:
+            review = json.load(stream)
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise FactualReviewBlocked("Factual review is unavailable") from exc
+
+    if not isinstance(review, dict) or review.get("schema_version") != 1:
+        raise FactualReviewBlocked("Factual review has an invalid format")
+    if review.get("status") not in {"approved", "blocked"}:
+        raise FactualReviewBlocked("Factual review has an invalid status")
+    sources = review.get("sources")
+    claims = review.get("claims")
+    if (
+        not isinstance(sources, list)
+        or not 1 <= len(sources) <= 6
+        or not isinstance(claims, list)
+        or len(claims) > MAX_CLAIMS
+    ):
+        raise FactualReviewBlocked("Factual review has invalid evidence")
+
+    visible_sources = []
+    for index, source in enumerate(sources, start=1):
+        if not isinstance(source, dict) or source.get("id") != f"S{index}":
+            raise FactualReviewBlocked("Factual review has invalid source IDs")
+        try:
+            validated = FactualSource.model_validate(source)
+        except ValueError as exc:
+            raise FactualReviewBlocked("Factual review has invalid sources") from exc
+        visible_sources.append(
+            {"id": f"S{index}", "title": validated.title, "url": validated.url}
+        )
+
+    visible_claims = []
+    known_ids = {source["id"] for source in visible_sources}
+    for item in claims:
+        if not isinstance(item, dict):
+            raise FactualReviewBlocked("Factual review has invalid claims")
+        claim, ids = item.get("claim"), item.get("source_ids")
+        if (
+            not isinstance(claim, str)
+            or not claim.strip()
+            or len(claim) > 500
+            or not isinstance(ids, list)
+            or any(
+                not isinstance(source_id, str) or source_id not in known_ids
+                for source_id in ids
+            )
+        ):
+            raise FactualReviewBlocked("Factual review has invalid claims")
+        visible_claims.append({"claim": claim, "source_ids": ids})
+
+    reason = review.get("reason")
+    return {
+        "status": review["status"],
+        "reason": reason[:500] if isinstance(reason, str) else "",
+        "sources": visible_sources,
+        "claims": visible_claims,
+    }
