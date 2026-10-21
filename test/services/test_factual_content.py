@@ -97,17 +97,25 @@ def test_factual_approval_precedes_audio_and_writes_review(tmp_path):
             task.factual_content.llm, "generate_json_response", return_value=review
         ) as llm,
         patch.object(task, "generate_audio") as audio,
+        patch.object(task, "generate_terms") as terms,
+        patch.object(task.utils, "check_ffmpeg_ready") as ffmpeg,
         patch.object(task.local_ai, "prepare_provider") as provider,
     ):
         result = task.start("approved", params(), stop_at="script")
     assert result == {"script": "The Moon has impact craters."}
     audio.assert_not_called()
+    terms.assert_not_called()
+    ffmpeg.assert_not_called()
     provider.assert_not_called()
     llm.assert_called_once()
     record = json.loads((tmp_path / "factual_review.json").read_text())
     assert record["status"] == "approved"
     assert record["claims"][0]["source_ids"] == ["S1"]
     assert record["sources"][0]["url"] == SOURCE["url"]
+    script_data = json.loads((tmp_path / "script.json").read_text())
+    assert script_data["script"] == params().video_script
+    assert script_data["params"]["content_mode"] == "factual"
+    assert script_data["search_terms"] == []
     with patch.object(task.utils, "task_dir", return_value=str(tmp_path)):
         public = video_controller._public_task_data(
             {"task_id": "approved", "state": "complete"}
@@ -315,6 +323,44 @@ def test_webui_factual_controls_validate_sources_without_generation():
         assert app.session_state["factual_source_error"]
 
 
+def test_webui_review_only_submits_script_stage_without_video_preflight():
+    app_path = Path(__file__).parents[2] / "webui" / "Main.py"
+    with (
+        patch.object(config, "try_save_config", return_value=True),
+        patch("app.services.webui_task.submit_generation") as submit,
+        patch.object(task.local_ai, "prepare_provider") as provider,
+    ):
+        app = AppTest.from_file(str(app_path), default_timeout=60)
+        app.session_state["ui_language"] = "en"
+        app.run()
+        mode = next(
+            item
+            for item in app.selectbox
+            if str(item.key).startswith("content_mode_select_")
+        )
+        mode.set_value("factual").run()
+        next(item for item in app.text_area if item.key == "video_subject").set_value(
+            "Moon surface"
+        ).run()
+        next(item for item in app.text_area if item.key == "video_script").set_value(
+            "The Moon has impact craters."
+        ).run()
+        next(
+            item for item in app.text_area if item.key == "factual_sources_input"
+        ).set_value(
+            f"{SOURCE['url']} | {SOURCE['title']} | {SOURCE['excerpt']}"
+        ).run()
+        next(
+            item for item in app.button if item.key == "review_factual_script_button"
+        ).click().run()
+
+    assert not app.exception
+    submit.assert_called_once()
+    assert submit.call_args.kwargs["stop_at"] == "script"
+    assert submit.call_args.kwargs["params"].content_mode == "factual"
+    provider.assert_not_called()
+
+
 def test_saved_review_summary_excludes_excerpts_and_rejects_external_file(tmp_path):
     task_dir = tmp_path / "review-task"
     task_dir.mkdir()
@@ -378,4 +424,50 @@ def test_webui_task_manager_displays_blocked_review_without_video(tmp_path):
     rendered = "\n".join(str(item.value) for item in app.text)
     assert "The Moon is cheese." in rendered
     assert "S1: Moon surface" in rendered
+    assert SOURCE["excerpt"] not in rendered
+
+
+def test_webui_artifacts_show_approved_script_only_review_after_restart(tmp_path):
+    task_id = "script-review-task"
+    task_dir = tmp_path / task_id
+    task_dir.mkdir()
+    script = "The Moon has impact craters."
+    review = factual_content._validated_review(
+        {
+            "verdict": "approved",
+            "claims": [{"claim": script, "source_ids": ["S1"]}],
+        },
+        script,
+        [FactualSource(**SOURCE)],
+    )
+    (task_dir / "factual_review.json").write_text(json.dumps(review))
+    (task_dir / "script.json").write_text(
+        json.dumps(
+            {
+                "script": script,
+                "params": {
+                    "video_subject": "Moon surface",
+                    "video_source": "pexels",
+                    "content_mode": "factual",
+                    "factual_sources": [SOURCE],
+                },
+            }
+        )
+    )
+
+    def task_dir_path(value=None):
+        return str(tmp_path / value) if value else str(tmp_path)
+
+    app_path = Path(__file__).parents[2] / "webui" / "Main.py"
+    with (
+        patch.object(config, "try_save_config", return_value=True),
+        patch.object(factual_content.utils, "task_dir", side_effect=task_dir_path),
+    ):
+        app = AppTest.from_file(str(app_path), default_timeout=60)
+        app.session_state["ui_language"] = "en"
+        app.session_state["artifact_package_task_id"] = task_id
+        app.run()
+    assert not app.exception
+    rendered = "\n".join(str(item.value) for item in app.text)
+    assert script in rendered
     assert SOURCE["excerpt"] not in rendered

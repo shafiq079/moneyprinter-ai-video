@@ -36,6 +36,15 @@ custom script requirements are subject to the evidence constraint. A review
 failure blocks the task before TTS/video calls. It does not silently replace a
 user's narration. Creative mode follows the existing script path.
 
+In the WebUI, **Review script only** queues the same factual script/review stage
+and stops before narration, provider preflight, video generation or FFmpeg.
+Task Manager shows the reviewed script and the review under **Artifacts**;
+the approved script is saved in `script.json` so this result survives a WebUI
+restart. You can load its settings with **Regenerate**, inspect or edit the
+script, and start a separate full video task. The new task runs the review
+again against its submitted script and excerpts. The script-only task is not a
+same-task Resume and has no video to download.
+
 CLI example (stop after the script for a zero-GPU check):
 
 ```bash

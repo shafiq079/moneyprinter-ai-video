@@ -282,6 +282,15 @@ WebUI click-to-edit flow. A live public-page import in the operator environment
 has not yet been exercised; add it to later acceptance without spending GPU
 quota.
 
+The WebUI now also offers **Review script only** in factual mode. It queues
+the existing `stop_at="script"` task stage, saves an approved `script.json`
+alongside `factual_review.json`, and shows the reviewed script in the current
+result and Task Manager Artifacts. It does not preflight a video provider,
+generate narration, or use GPU quota. Regenerate loads the review-only task's
+settings for a new full video task; the new task reviews the script again.
+Same-task local-AI Resume and the creative workflow are unchanged. Real LLM
+acceptance remains deferred.
+
 ## CPU integration and hardening pass
 
 Starting from `269d5c0202492608e2a1309c94afcf1650bea3fc`, the locked

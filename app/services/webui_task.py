@@ -61,6 +61,7 @@ def _run_generation(
     voxcpm_prompt_audio: bytes | None = None,
     voxcpm_prompt_text: str = "",
     resume_context: dict | None = None,
+    stop_at: str = "video",
 ) -> dict:
     """
     在后台线程中执行现有视频流水线。
@@ -87,6 +88,7 @@ def _run_generation(
             return tm.start(
                 task_id=task_id,
                 params=params,
+                stop_at=stop_at,
                 voice_preview=voice_preview,
                 loomloom_video_request=loomloom_video_request,
                 voxcpm_reference_audio=voxcpm_reference_audio,
@@ -477,6 +479,7 @@ def submit_generation(
     voxcpm_reference_audio: bytes | None = None,
     voxcpm_prompt_audio: bytes | None = None,
     voxcpm_prompt_text: str = "",
+    stop_at: str = "video",
 ) -> None:
     """
     登记并提交 WebUI 视频生成任务，调用后立即返回。
@@ -484,6 +487,10 @@ def submit_generation(
     任务状态必须在线程启动前写入。这样页面本次脚本执行结束时即可查询到任务，
     浏览器刷新或 WebSocket 重连也不依赖旧页面内存中的占位符。
     """
+    if stop_at not in {"video", "script"} or (
+        stop_at == "script" and params.content_mode != "factual"
+    ):
+        raise ValueError("WebUI script-only review requires factual mode")
     task_params = params.model_copy(deep=True)
     # 预览载荷只包含不可变音频路径、参数快照和只读字幕时间轴。复制外层字典，
     # 避免页面后续 rerun 替换缓存字段时影响已经提交到后台队列的任务。
@@ -520,6 +527,7 @@ def submit_generation(
             voxcpm_reference_audio=voxcpm_reference_audio_snapshot,
             voxcpm_prompt_audio=voxcpm_prompt_audio_snapshot,
             voxcpm_prompt_text=voxcpm_prompt_text_snapshot,
+            stop_at=stop_at,
         )
     except Exception as exc:
         # 调度失败与流水线失败一样必须成为可查询状态，避免任务管理器永久显示

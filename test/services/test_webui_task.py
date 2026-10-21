@@ -579,6 +579,28 @@ def test_submit_generation_copies_params_before_starting_worker():
     webui_task.sm.state.delete_task("copied-params-test")
 
 
+def test_factual_review_only_queues_script_stage_without_provider_inputs():
+    task_id = "factual-review-only"
+    params = VideoParams(video_subject="Moon", content_mode="factual")
+    with patch.object(webui_task._task_manager, "add_task") as add_task:
+        webui_task.submit_generation(
+            task_id, params, capture_logs=False, stop_at="script"
+        )
+    submitted = add_task.call_args.kwargs
+    assert submitted["stop_at"] == "script"
+    assert submitted["params"] == params
+    assert submitted["params"] is not params
+    assert submitted["loomloom_video_request"] is None
+    webui_task.sm.state.delete_task(task_id)
+
+    with patch.object(webui_task._task_manager, "add_task") as add_task:
+        with pytest.raises(ValueError, match="factual mode"):
+            webui_task.submit_generation(
+                task_id, VideoParams(video_subject="Garden"), stop_at="script"
+            )
+    add_task.assert_not_called()
+
+
 def test_submit_generation_keeps_voxcpm_reference_audio_out_of_params():
     """参考音频仅属于内存中的当前请求，不能进入可持久化任务参数。"""
     params = VideoParams(video_subject="task isolation")

@@ -2585,6 +2585,10 @@ def _run_pipeline(
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=10)
 
     if stop_at == "script":
+        if factual_sources and resume_context is None:
+            # A review-only factual task must remain inspectable after a WebUI
+            # restart, even though it never reaches the keyword/audio stages.
+            save_script_data(task_id, video_script, [], params)
         sm.state.update_task(
             task_id, state=const.TASK_STATE_COMPLETE, progress=100, script=video_script
         )

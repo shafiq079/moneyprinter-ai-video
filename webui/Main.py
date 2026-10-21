@@ -1491,6 +1491,14 @@ def _render_artifact_package_view() -> None:
             st.error(tr("Factual Review Blocked"))
         if review["reason"]:
             st.text(review["reason"])
+        if review["status"] == "approved" and package["script"]:
+            script = _safe_load_task_script(utils.task_dir(task_id)).get("script")
+            if (
+                isinstance(script, str)
+                and 0 < len(script) <= factual_content.MAX_SCRIPT_CHARS
+            ):
+                st.subheader(tr("Reviewed Script"))
+                st.text(script)
         for item in review["claims"]:
             citations = ", ".join(item["source_ids"]) or tr("No Supporting Source")
             st.text(f"{item['claim']} [{citations}]")
@@ -2445,6 +2453,18 @@ def _render_generation_task_snapshot(task_id, task):
         return
 
     video_files = task.get("videos") or []
+    if (
+        state == const.TASK_STATE_COMPLETE
+        and not video_files
+        and task.get("factual_review_status") == "approved"
+        and isinstance(task.get("script"), str)
+    ):
+        st.success(tr("Factual Review Approved"))
+        st.subheader(tr("Reviewed Script"))
+        st.text(task["script"])
+        st.caption(tr("Factual Review Only Help"))
+        _render_generation_logs(task_id)
+        return
     if state != const.TASK_STATE_COMPLETE or not video_files:
         st.error(tr("Video Generation Failed"))
         _render_generation_logs(task_id)
@@ -8609,7 +8629,47 @@ def _render_generation_controls(
             on_click=_prepare_generation_task,
         )
 
+    review_button = False
+    if params.content_mode == "factual":
+        review_button = st.button(
+            tr("Review Script Only"),
+            use_container_width=True,
+            type="secondary",
+            key="review_factual_script_button",
+            help=tr("Review Script Only Help"),
+            on_click=_prepare_generation_task,
+        )
+
     render_onboarding_tour()
+
+    if review_button:
+        task_id = st.session_state.get("pending_generation_task_id") or str(uuid4())
+        if not params.video_subject and not params.video_script:
+            _remove_active_generation_task(task_id)
+            st.error(tr("Video Script and Subject Cannot Both Be Empty"))
+            st.stop()
+        try:
+            factual_content.validate_sources(params)
+            if st.session_state.get("factual_source_error"):
+                raise ValueError("invalid source line")
+        except ValueError:
+            _remove_active_generation_task(task_id)
+            st.error(tr("Factual Sources Invalid"))
+            st.stop()
+        _save_runtime_config()
+        try:
+            webui_task.submit_generation(
+                task_id=task_id,
+                params=params,
+                capture_logs=not config.ui.get("hide_log", False),
+                stop_at="script",
+            )
+        except Exception:
+            _remove_active_generation_task(task_id)
+            st.error(tr("Factual Review Unavailable"))
+            st.stop()
+        st.session_state["current_generation_task_id"] = task_id
+        st.toast(tr("Factual Review Queued"))
 
     if rerender_button:
         _save_runtime_config()
