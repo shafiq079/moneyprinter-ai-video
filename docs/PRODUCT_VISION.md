@@ -30,7 +30,7 @@ contracts, with no mandatory paid video-generation API.
 | --- | --- | --- |
 | AI scene generation | Original clips, scene prompts, continuity, selective retries, reusable assets. | Implemented through local Wan/LTX and remote HF LTX paths; one real seven-scene HF LTX task completed. Real **local** Wan/LTX checkpoint validation and comparative GPU tuning remain deferred. |
 | Editable project | Keep independently editable scene clips, narration/audio, captions, prompts and metadata alongside the final MP4. A bad scene or a render-only change must not invalidate unrelated generated assets. | Scene plan, scene versions, final output and portable artifact references exist. A full editable timeline/project with independent audio/text layers does not. |
-| In-product editor | Eventually provide a small, self-hosted, CapCut-like experience; do not copy or depend on CapCut. The initial release need not be a full multi-track NLE. | Existing Streamlit scene editor covers prompt/seed, preview, regenerate, variation, version restore, and render-only rerender. More detailed editing is deferred, not rejected. |
+| In-product editor | Eventually provide a small, self-hosted, CapCut-like experience; do not copy or depend on CapCut. The initial release need not be a full multi-track NLE. | Existing Streamlit scene editor covers prompt/seed, preview, regenerate, variation, validated manual clip replacement, version restore, and render-only rerender. Reordering, narration edits and independent timeline layers remain deferred. |
 | Scene timing | Let scene count/length follow narration and content instead of forcing every scene to the same fixed length. | Current planner uses measured audio duration, beat weights and a maximum provider-supported scene duration. Semantic timing, editing boundaries and retiming after narration changes need further design and implementation. |
 | Publishing | Complete video generation without an upload dependency. Initially defer upload automation and channel-growth tooling. | Existing optional Upload-Post integration offers YouTube, TikTok and Instagram; operator end-to-end publishing was not established in this development effort. Direct platform OAuth is not an approved replacement. |
 | Factual content | Optional evidence/review mode must not burden creative generation. | User-supplied excerpts, safe one-page import, review-only workflow and structural claim checks exist. Automatic discovery/source authentication and real-model acceptance remain deferred. |
@@ -43,9 +43,9 @@ frontend or renderer in one step:
 
 1. Reopen a completed task as an editable project. Preserve original/generated
    media and the active scene-version references. Keep final MP4 export.
-2. Preview, replace and reorder individual scene clips. A manually supplied
-   replacement must be validated and stored within the project; it should
-   rerender without calling the AI video provider.
+2. Preview, replace and reorder individual scene clips. Validated single-scene
+   MP4 replacement is implemented using task-local versions, unchanged scene
+   timing and existing narration/captions. Reordering remains deferred.
 3. Edit narration text or audio for a selected scene. Rebuild only affected
    narration and captions; recalculate duration and shift later scenes and
    audio cues as required. Define precisely how changes to a voice track relate
@@ -99,8 +99,19 @@ the specific scope before implementing one of them.
    never create a third branch or force-push. Update `PROJECT_CONTEXT.md` and
    this roadmap when a milestone is accepted or a deferred choice is settled.
 
-The first candidate editor milestone is an audit and specification of the
-editable-project asset contract and change-impact rules, followed by the
-smallest useful edit using existing task artifacts (for example validated
-single-scene clip replacement). That is a **candidate**, not a locked design or
-authorization for a frontend rewrite. Check the latest user request first.
+## First editable-project extension: manual clip replacement
+
+The owner approved the next small editor extension after orientation.
+`docs/SCENE_EDITING.md` defines its asset and change-impact contract. A scene can
+now receive a validated MP4 upload, trimmed to its existing duration with native
+audio removed. It becomes a task-local version with imported provenance; final
+composition reuses narration, captions and existing generated BGM. Failed
+replacement/rendering preserves the prior active version and outputs.
+Resume retains imports across model revisions and fails explicitly for missing
+or changed uploads instead of silently generating substitute footage.
+
+This extends the existing Streamlit workflow. It does not select an NLE
+framework, new project-file extension or interchange format. The next candidate
+is explicit scene playback order and timing controls, after defining the effect
+of reordering visuals against fixed narration. Self-contained project export,
+scene-level narration edits and independent audio/text layers remain future work.

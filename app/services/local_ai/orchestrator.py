@@ -100,6 +100,24 @@ def generate_scene_materials(
     runtime_loaded = False
     outputs: list[str] = []
 
+    # Check every explicit upload before spending quota on any missing AI scene.
+    imported_paths = {}
+    for scene in scenes:
+        record = generation_manifest.scene_record(manifest, scene.scene_id)
+        if record.get("asset_origin") == "imported":
+            try:
+                generation_manifest.validate_imported_scene(task_id, record, scene)
+                imported_paths[scene.scene_id] = str(
+                    generation_manifest.resolve_asset(task_id, record["active_asset"])
+                )
+            except Exception as exc:
+                raise LocalAISceneGenerationError(
+                    provider_id=provider.provider_id,
+                    scene_id=scene.scene_id,
+                    cause_type=type(exc).__name__,
+                    error_code="imported_clip_invalid",
+                ) from exc
+
     # Heavy local providers may expose a task-level generation session. Enter it
     # lazily only when a scene actually needs generation: a fully cached retry
     # should not take the GPU lock or evict another model family just to validate
@@ -130,6 +148,11 @@ def generate_scene_materials(
                     False,
                 )
             record = generation_manifest.scene_record(manifest, scene.scene_id)
+            if scene.scene_id in imported_paths:
+                outputs.append(imported_paths[scene.scene_id])
+                if progress_callback is not None:
+                    progress_callback(scene_index, total_scenes, scene, "ready", True)
+                continue
             active_asset = record.get("active_asset")
             if (
                 record.get("status") == "ready"
@@ -421,6 +444,8 @@ def regenerate_scene_material(
         provider_id=provider.provider_id,
         model_fingerprint=provider.model_fingerprint,
     )
+    record["asset_origin"] = "generated"
+    record["import_metadata"] = {}
     record["versions"] = versions
     record["active_asset"] = relative
     record["actual_duration"] = validated.actual_duration

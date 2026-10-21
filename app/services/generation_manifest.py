@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -132,6 +133,11 @@ def prepare_manifest(
             model_fingerprint=model_fingerprint,
         )
         old = previous_by_id.get(scene.scene_id) or {}
+        if old.get("asset_origin") == "imported":
+            # An upload is a deliberate visual selection, independent of model
+            # revisions. Never clear it and silently generate replacement footage.
+            records.append(dict(old))
+            continue
         versions = [
             value
             for value in old.get("versions", [])
@@ -257,6 +263,8 @@ def remember_scene_version(
             "fingerprint",
             "generation_seconds",
             "validation_seconds",
+            "asset_origin",
+            "import_metadata",
         )
     }
     metadata["actual_duration"] = (
@@ -334,6 +342,8 @@ def restore_scene_version(
     from app.services.local_ai.media import validate_video_clip
 
     validated = validate_video_clip(candidate, scene)
+    if metadata.get("asset_origin") == "imported":
+        validate_imported_scene(task_id, {**metadata, "active_asset": relative}, scene)
     record.update(scene.to_dict())
     for key in (
         "provider_id",
@@ -343,6 +353,8 @@ def restore_scene_version(
     ):
         if key in metadata:
             record[key] = metadata[key]
+    record["asset_origin"] = metadata.get("asset_origin") or "generated"
+    record["import_metadata"] = metadata.get("import_metadata") or {}
     record["active_asset"] = relative
     record["actual_duration"] = validated.duration
     record["status"] = "ready"
@@ -353,6 +365,26 @@ def restore_scene_version(
     record["regeneration_error_code"] = None
     save_manifest(task_id, manifest)
     return manifest, scene, candidate
+
+
+def media_sha256(candidate: Path) -> str:
+    with candidate.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def validate_imported_scene(task_id: str, record: dict, scene: SceneSpec):
+    """Validate the selected upload without depending on the AI provider."""
+    from app.services.local_ai.media import validate_video_clip
+
+    for key in ("scene_id", "narration_segment", "target_duration", "aspect"):
+        if record.get(key) != getattr(scene, key):
+            raise ValueError("imported clip no longer matches the scene timing/content")
+    candidate = resolve_asset(task_id, record.get("active_asset"))
+    metadata = record.get("import_metadata")
+    expected = metadata.get("media_sha256") if isinstance(metadata, dict) else None
+    if not expected or media_sha256(candidate) != expected:
+        raise ValueError("imported clip is missing or has changed")
+    return validate_video_clip(candidate, scene)
 
 
 def local_ai_material_records(task_id: str) -> list[dict[str, Any]]:
@@ -420,6 +452,20 @@ def local_ai_material_records(task_id: str) -> list[dict[str, Any]]:
                 ),
             }
         )
+        if record.get("asset_origin") == "imported":
+            records[-1].update(
+                asset_origin="imported",
+                provider="manual_upload",
+                model_fingerprint=None,
+                provider_metadata={},
+                generation_settings={},
+                seed=None,
+                generation_seconds=None,
+                validation_seconds=None,
+                import_metadata={
+                    "media_sha256": (record.get("import_metadata") or {}).get("media_sha256")
+                },
+            )
     return records
 
 
@@ -447,6 +493,10 @@ def active_scene_paths(task_id: str) -> list[str]:
         if not candidate.is_file():
             raise ValueError(
                 f"scene {record.get('scene_id')} active asset is missing"
+            )
+        if record.get("asset_origin") == "imported":
+            validate_imported_scene(
+                task_id, record, scene_spec_from_version_metadata(record)
             )
         paths.append(str(candidate))
     return paths

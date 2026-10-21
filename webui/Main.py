@@ -70,6 +70,7 @@ from app.services import state as sm
 from app.services import task as tm
 from app.services import task_artifacts
 from app.services import version_checker
+from app.services.local_ai.clip_import import MAX_CLIP_UPLOAD_BYTES
 from app.utils.logging_utils import configure_terminal_logger
 from app.utils import utils
 
@@ -1298,6 +1299,13 @@ def _render_scene_editor() -> None:
             selected_version = active_asset
             selected_version_metadata = None
             if versions:
+                version_key = f"scene_version_{task_id}_{scene.scene_id}"
+                active_key = f"{version_key}_active"
+                if st.session_state.get(active_key) != active_asset:
+                    # Follow a completed edit once, while still letting the user
+                    # preview older versions between edits.
+                    st.session_state[version_key] = active_asset
+                    st.session_state[active_key] = active_asset
                 default_index = (
                     versions.index(active_asset)
                     if active_asset in versions
@@ -1307,15 +1315,23 @@ def _render_scene_editor() -> None:
                     tr("Scene Versions"),
                     options=versions,
                     index=default_index,
-                    format_func=lambda value: (
+                    format_func=lambda value, version_record=record, active=active_asset: (
                         f"{os.path.basename(value)}"
                         + (
+                            f" · {tr('Uploaded Clip')}"
+                            if (
+                                generation_manifest.scene_version_metadata(version_record, value)
+                                or {}
+                            ).get("asset_origin") == "imported"
+                            else ""
+                        )
+                        + (
                             f" · {tr('Current Version')}"
-                            if value == active_asset
+                            if value == active
                             else ""
                         )
                     ),
-                    key=f"scene_version_{task_id}_{scene.scene_id}",
+                    key=version_key,
                 )
                 try:
                     preview_path = generation_manifest.resolve_asset(
@@ -1332,6 +1348,33 @@ def _render_scene_editor() -> None:
                         selected_version,
                     )
                 )
+
+            if record.get("asset_origin") == "imported":
+                st.caption(tr("Uploaded Clip Active"))
+            upload_key = f"scene_clip_upload_{task_id}_{scene.scene_id}"
+            upload_revision = st.session_state.get(f"{upload_key}_revision", 0)
+            uploaded_clip = st.file_uploader(
+                tr("Replacement Clip"), type=["mp4"],
+                max_upload_size=MAX_CLIP_UPLOAD_BYTES // (1024 * 1024),
+                key=f"{upload_key}_{upload_revision}", disabled=is_busy,
+                help=tr("Replacement Clip Help"),
+            )
+            if st.button(
+                tr("Replace Scene Clip"),
+                key=f"replace_scene_clip_{task_id}_{scene.scene_id}",
+                disabled=is_busy or uploaded_clip is None,
+                icon=":material/upload:", use_container_width=True,
+            ):
+                try:
+                    webui_task.submit_scene_clip_replacement(
+                        task_id, scene.scene_id, uploaded_clip.getvalue(),
+                    )
+                except Exception as exc:
+                    st.error(f"{tr('Clip Replacement Failed')}: {exc}")
+                else:
+                    st.session_state[f"{upload_key}_revision"] = upload_revision + 1
+                    st.toast(tr("Clip Replacement Queued"))
+                    st.rerun(scope="fragment")
 
             prompt_value = st.text_area(
                 tr("Scene Prompt"),

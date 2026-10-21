@@ -365,6 +365,7 @@ def test_scene_regeneration_worker_uses_runtime_config_lock():
         1,
         prompt="Prompt",
         seed=42,
+        _queued=True,
     )
 
 
@@ -426,6 +427,7 @@ def test_scene_version_restore_worker_uses_runtime_config_lock():
         "scene-restore-worker",
         2,
         "generated_ai/scene-002/v001.mp4",
+        _queued=True,
     )
 
 
@@ -526,6 +528,7 @@ def test_local_ai_rerender_worker_uses_runtime_config_lock():
     rerender.assert_called_once_with(
         "render-only-worker",
         params,
+        _queued=True,
     )
 
 

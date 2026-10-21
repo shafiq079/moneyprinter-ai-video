@@ -10,6 +10,7 @@ from app.models.schema import VideoParams
 from app.services import state as sm
 from app.services import task as tm
 from app.services.loomloom import LoomLoomConfirmedVideoRequest
+from app.services.local_ai.clip_import import validate_upload_bytes
 from app.utils.logging_utils import format_log_record
 
 
@@ -156,6 +157,7 @@ def _run_scene_regeneration(
                 scene_id,
                 prompt=prompt,
                 seed=seed,
+                _queued=True,
             )
     except Exception as exc:
         logger.exception(
@@ -269,6 +271,7 @@ def _run_scene_version_restore(
                 task_id,
                 scene_id,
                 relative_path,
+                _queued=True,
             )
     except Exception as exc:
         logger.exception(
@@ -358,7 +361,7 @@ def _run_local_ai_rerender(
                 filter=lambda record: record["thread"].id == worker_thread_id,
             )
         with config.runtime_config_lock():
-            return tm.rerender_local_ai_task(task_id, params)
+            return tm.rerender_local_ai_task(task_id, params, _queued=True)
     except Exception as exc:
         logger.exception(
             "render-only rerender worker failed: "
@@ -430,6 +433,82 @@ def submit_local_ai_rerender(
             render_only_rerender_error="render-only rerender could not be scheduled",
         )
         raise
+
+
+def _run_scene_clip_replacement(
+    task_id: str, scene_id: int, content: bytes, capture_logs: bool,
+) -> dict:
+    handler = None
+    worker_id = threading.get_ident()
+    try:
+        if capture_logs:
+            handler = logger.add(
+                lambda message: _append_task_log(task_id, str(message)),
+                level="DEBUG", format=format_log_record, colorize=False,
+                filter=lambda record: record["thread"].id == worker_id,
+            )
+        with config.runtime_config_lock():
+            return tm.replace_local_ai_scene_clip(task_id, scene_id, content, _queued=True)
+    except Exception as exc:
+        # Validation can fail before the task service starts its transaction.
+        snapshot = sm.state.get_task(task_id) or {}
+        if (
+            snapshot.get("state") == const.TASK_STATE_PROCESSING
+            and snapshot.get("current_stage") == "scene_clip_replacement_queued"
+        ):
+            try:
+                finals = tm._existing_final_video_paths(tm._scene_regeneration_task_root(task_id))
+            except (OSError, ValueError):
+                finals = []
+            sm.state.update_task(
+                task_id,
+                state=const.TASK_STATE_COMPLETE if finals else const.TASK_STATE_FAILED,
+                progress=100 if finals else 0, current_stage=None, videos=finals,
+                scene_regeneration_error=f"clip replacement failed: {type(exc).__name__}: {exc}",
+            )
+        return {"task_id": task_id, "scene_id": scene_id, "error": str(exc)}
+    finally:
+        if handler is not None:
+            logger.remove(handler)
+
+
+def submit_scene_clip_replacement(
+    task_id: str, scene_id: int, content: bytes, *, capture_logs: bool = True,
+) -> None:
+    """Reserve and queue a bounded immutable upload, without decoding on the UI thread."""
+    validate_upload_bytes(content)
+    with _resume_submission_lock:
+        previous = sm.state.get_task(task_id) or {}
+        if tm.is_task_busy(previous):
+            raise RuntimeError("task is already busy")
+        # Validate task ownership and scene existence before retaining the upload.
+        _params, plan, *_ = tm._load_scene_regeneration_context(task_id)
+        if int(scene_id) not in {scene.scene_id for scene in plan.scenes}:
+            raise ValueError("scene is missing from scene plan")
+        if not previous:
+            finals = tm._existing_final_video_paths(tm._scene_regeneration_task_root(task_id))
+            previous = {
+                "state": const.TASK_STATE_COMPLETE if finals else const.TASK_STATE_FAILED,
+                "progress": 100 if finals else 0, "videos": finals,
+            }
+        sm.state.update_task(
+            task_id, state=const.TASK_STATE_PROCESSING, progress=60,
+            current_stage="scene_clip_replacement_queued",
+            videos=previous.get("videos"),
+            scene_regeneration_scene_id=int(scene_id), scene_regeneration_error=None,
+        )
+        try:
+            _task_manager.add_task(
+                _run_scene_clip_replacement, task_id=task_id, scene_id=int(scene_id),
+                content=content, capture_logs=capture_logs,
+            )
+        except Exception:
+            sm.state.update_task(
+                task_id, state=previous.get("state", const.TASK_STATE_FAILED),
+                progress=previous.get("progress", 0), current_stage=None,
+                scene_regeneration_error="clip replacement could not be scheduled",
+            )
+            raise
 
 
 def submit_local_ai_resume(task_id: str, capture_logs: bool = True) -> None:

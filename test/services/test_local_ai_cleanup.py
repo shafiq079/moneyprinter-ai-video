@@ -218,12 +218,14 @@ class TestLocalAICleanup(LocalAICleanupTestCase):
         stale_partial = scene_root / ".v004.partial.mp4"
         stale_wan = scene_root / ".v004.wan-raw.mp4"
         stale_ltx = scene_root / ".v004.ltx-raw.mp4"
+        stale_upload = scene_root / ".clip-upload-interrupted.partial.mp4"
         unreferenced = scene_root / "v999.mp4"
         fresh_partial = scene_root / ".v005.partial.mp4"
         for candidate in (
             stale_partial,
             stale_wan,
             stale_ltx,
+            stale_upload,
             unreferenced,
             fresh_partial,
         ):
@@ -231,7 +233,7 @@ class TestLocalAICleanup(LocalAICleanupTestCase):
 
         now = time.time()
         old = now - 3 * 3600
-        for candidate in (stale_partial, stale_wan, stale_ltx, unreferenced):
+        for candidate in (stale_partial, stale_wan, stale_ltx, stale_upload, unreferenced):
             os.utime(candidate, (old, old))
 
         cleanup.cleanup_task_assets(
@@ -245,7 +247,7 @@ class TestLocalAICleanup(LocalAICleanupTestCase):
             now=now,
         )
 
-        for candidate in (stale_partial, stale_wan, stale_ltx, unreferenced):
+        for candidate in (stale_partial, stale_wan, stale_ltx, stale_upload, unreferenced):
             self.assertFalse(candidate.exists(), candidate)
         self.assertTrue(fresh_partial.exists())
 

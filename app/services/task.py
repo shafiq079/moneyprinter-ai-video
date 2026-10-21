@@ -36,6 +36,7 @@ from app.services import (
     voice,
 )
 from app.services import upload_post
+from app.services.local_ai import clip_import
 from app.services import state as sm
 from app.utils import file_security, utils
 
@@ -197,6 +198,17 @@ def is_task_busy(task: dict | None) -> bool:
         state == const.TASK_STATE_PROCESSING
         or task.get("cross_post_state") in _ACTIVE_CROSS_POST_STATES
     )
+
+
+def _assert_scene_edit_available(task: dict, *, queued: bool, stage: str) -> None:
+    """A worker may consume its own queued reservation, never another job's."""
+    owns_reservation = (
+        queued
+        and task.get("current_stage") == f"{stage}_queued"
+        and task.get("cross_post_state") not in _ACTIVE_CROSS_POST_STATES
+    )
+    if is_task_busy(task) and not owns_reservation:
+        raise RuntimeError("task is already busy")
 
 
 def _register_cross_post_future(task_id: str, future: Future) -> None:
@@ -376,6 +388,8 @@ def _local_ai_recovery_action(
     if stage == "preflight":
         return "fix_provider_setup_and_retry"
     code = str(error_code or "").lower()
+    if code == "imported_clip_invalid":
+        return "replace_imported_clip_or_restore_version"
     if code in {"cuda_oom", "runtime_load_error"}:
         return "adjust_gpu_settings_and_retry_scene"
     if code in {"worker_exited", "worker_not_running"}:
@@ -1621,6 +1635,8 @@ def _discard_render_backups(backups: list[tuple[str, str]]) -> None:
 def validate_local_ai_rerender(
     task_id: str,
     params: VideoParams,
+    *,
+    _queued: bool = False,
 ) -> VideoParams:
     """Validate a proposed render-only rerender before it is queued."""
 
@@ -1632,8 +1648,7 @@ def validate_local_ai_rerender(
         _audio_duration,
         prior_state,
     ) = _load_scene_regeneration_context(task_id)
-    if is_task_busy(prior_state):
-        raise RuntimeError("task is already busy")
+    _assert_scene_edit_available(prior_state, queued=_queued, stage="final_rerender")
 
     proposed = VideoParams.model_validate(params.model_dump(mode="json"))
     _assert_render_only_params(stored_params, proposed)
@@ -1649,6 +1664,8 @@ def validate_local_ai_rerender(
 def rerender_local_ai_task(
     task_id: str,
     params: VideoParams | None = None,
+    *,
+    _queued: bool = False,
 ) -> dict:
     """Rebuild final outputs from stored local-AI materials without inference."""
 
@@ -1660,13 +1677,12 @@ def rerender_local_ai_task(
         audio_duration,
         prior_state,
     ) = _load_scene_regeneration_context(task_id)
-    if is_task_busy(prior_state):
-        raise RuntimeError("task is already busy")
+    _assert_scene_edit_available(prior_state, queued=_queued, stage="final_rerender")
 
     render_params = (
         stored_params
         if params is None
-        else validate_local_ai_rerender(task_id, params)
+        else validate_local_ai_rerender(task_id, params, _queued=_queued)
     )
     if params is None and render_params.subtitle_enabled and not subtitle_path:
         raise ValueError(
@@ -1763,14 +1779,14 @@ def regenerate_local_ai_scene(
     *,
     prompt: str | None = None,
     seed: int | None = None,
+    _queued: bool = False,
 ) -> dict:
     """Regenerate one local-AI scene and rerender using existing task artifacts."""
 
     params, plan, audio_file, subtitle_path, audio_duration, prior_state = (
         _load_scene_regeneration_context(task_id)
     )
-    if is_task_busy(prior_state):
-        raise RuntimeError("task is already busy")
+    _assert_scene_edit_available(prior_state, queued=_queued, stage="scene_regeneration")
 
     revised_plan, revised_scene = scene_planner.revise_scene_plan(
         plan,
@@ -1831,6 +1847,8 @@ def regenerate_local_ai_scene(
             audio_duration,
             reuse_existing_generated_bgm=True,
         )
+        provenance = generation_manifest.local_ai_material_records(task_id)
+        task_artifacts.patch_script_data(task_id, local_ai_materials=provenance)
     except Exception as exc:
         for final_path, backup_path in backups:
             if path.isfile(backup_path):
@@ -1883,6 +1901,7 @@ def regenerate_local_ai_scene(
         },
         scene_regeneration_error=None,
         scene_regeneration_scene_id=revised_scene.scene_id,
+        local_ai_materials=provenance,
     )
     return result
 
@@ -1891,14 +1910,15 @@ def restore_local_ai_scene_version(
     task_id: str,
     scene_id: int,
     relative_path: str,
+    *,
+    _queued: bool = False,
 ) -> dict:
     """Restore one validated scene version and rerender without GPU inference."""
 
     params, plan, audio_file, subtitle_path, audio_duration, prior_state = (
         _load_scene_regeneration_context(task_id)
     )
-    if is_task_busy(prior_state):
-        raise RuntimeError("task is already busy")
+    _assert_scene_edit_available(prior_state, queued=_queued, stage="scene_version_restore")
 
     original_manifest = generation_manifest.load_manifest(task_id)
     if original_manifest is None:
@@ -1966,6 +1986,8 @@ def restore_local_ai_scene_version(
             audio_duration,
             reuse_existing_generated_bgm=True,
         )
+        provenance = generation_manifest.local_ai_material_records(task_id)
+        task_artifacts.patch_script_data(task_id, local_ai_materials=provenance)
     except Exception as exc:
         generation_manifest.save_manifest(task_id, original_manifest)
         scene_planner.save_scene_plan(task_id, plan)
@@ -2012,6 +2034,7 @@ def restore_local_ai_scene_version(
         audio_duration=audio_duration,
         subtitle_path=subtitle_path,
         warnings=warnings or None,
+        local_ai_materials=provenance,
         scene_progress={
             "current": 1,
             "total": 1,
@@ -2023,6 +2046,82 @@ def restore_local_ai_scene_version(
         scene_regeneration_scene_id=restored_scene.scene_id,
     )
     return result
+
+
+def replace_local_ai_scene_clip(
+    task_id: str,
+    scene_id: int,
+    content: bytes,
+    *,
+    _queued: bool = False,
+) -> dict:
+    """Replace one scene's visuals, retaining all audio and generation recipes."""
+    clip_import.validate_upload_bytes(content)
+    params, plan, audio_file, subtitle_path, audio_duration, prior = (
+        _load_scene_regeneration_context(task_id)
+    )
+    _assert_scene_edit_available(prior, queued=_queued, stage="scene_clip_replacement")
+    if params.subtitle_enabled and not subtitle_path:
+        raise ValueError("existing captions are unavailable; restore them before replacing a clip")
+    scene = next((s for s in plan.scenes if s.scene_id == int(scene_id)), None)
+    if scene is None:
+        raise ValueError("scene is missing from scene plan")
+    original_manifest = generation_manifest.load_manifest(task_id)
+    task_root = _scene_regeneration_task_root(task_id)
+    previous_final = _existing_final_video_paths(task_root)
+    backups = _backup_render_paths(task_root, suffix="scene-clip-replacement-backup")
+    imported_path = None
+    sm.state.update_task(
+        task_id, state=const.TASK_STATE_PROCESSING, progress=60,
+        current_stage="scene_clip_replacement", scene_regeneration_error=None,
+        scene_regeneration_scene_id=int(scene_id),
+    )
+    try:
+        manifest, imported_path = clip_import.stage_clip_import(task_id, scene, content)
+        generation_manifest.save_manifest(task_id, manifest)
+        materials = generation_manifest.active_scene_paths(task_id)
+        _clear_render_paths(task_root)
+        final_paths, combined_paths, warnings = generate_final_videos(
+            task_id, params, materials, audio_file,
+            subtitle_path if params.subtitle_enabled else "", audio_duration,
+            reuse_existing_generated_bgm=True,
+        )
+        provenance = generation_manifest.local_ai_material_records(task_id)
+        task_artifacts.patch_script_data(task_id, local_ai_materials=provenance)
+    except Exception as exc:
+        generation_manifest.save_manifest(task_id, original_manifest)
+        _restore_render_backups(task_root, backups)
+        if imported_path is not None:
+            imported_path.unlink(missing_ok=True)
+        sm.state.update_task(
+            task_id,
+            state=const.TASK_STATE_COMPLETE if previous_final else const.TASK_STATE_FAILED,
+            progress=100 if previous_final else 0, current_stage=None,
+            videos=previous_final or prior.get("videos"),
+            combined_videos=prior.get("combined_videos"),
+            scene_regeneration_error=f"clip replacement failed: {type(exc).__name__}: {exc}",
+        )
+        raise
+    else:
+        _discard_render_backups(backups)
+    sm.state.update_task(
+        task_id, state=const.TASK_STATE_COMPLETE, progress=100, current_stage=None,
+        videos=final_paths, combined_videos=combined_paths, materials=materials,
+        audio_file=audio_file, audio_duration=audio_duration, subtitle_path=subtitle_path,
+        warnings=warnings or None, local_ai_materials=provenance,
+        scene_regeneration_error=None,
+        failed_stage=None, error=None, recoverable=False, recovery_action=None,
+        local_ai_error_code=None,
+        scene_progress={
+            "current": 1, "total": 1, "scene_id": int(scene_id),
+            "status": "ready", "reused": False,
+        },
+    )
+    return {
+        "scene_id": int(scene_id), "scene_file": str(imported_path),
+        "videos": final_paths, "combined_videos": combined_paths,
+        "materials": materials, "warnings": warnings, "asset_origin": "imported",
+    }
 
 
 def _patch_cross_post_state(task_id: str, **kwargs) -> bool | None:

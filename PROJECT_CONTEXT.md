@@ -73,6 +73,34 @@ M3 exposed `wan22_local` through WebUI, CLI and API using the same provider/pref
 
 ## Current development boundary
 
+The first post-orientation editor extension adds validated single-scene MP4
+replacement in the existing Streamlit Scene Editor. See `docs/SCENE_EDITING.md`
+for the additive manifest metadata, asset ownership and change-impact contract.
+Uploads (maximum 100 MiB) are trimmed to the existing scene duration, normalized
+to video-only H.264 and published as task-local versions. Narration/captions and
+other scene versions are reused; existing generated BGM is reused without a paid
+request. Invalid uploads or render failures preserve the prior active manifest
+and final/combined outputs. Successful edits refresh manual-upload provenance.
+Generated and imported versions can both be restored. Explicit regeneration
+switches provenance back to the selected AI provider.
+
+Resume revalidates imported clips with their saved content hash independently of
+the provider/model fingerprint. Missing, damaged or timing-incompatible imports
+block with `replace_imported_clip_or_restore_version` guidance rather than
+silently generating substitute footage. Existing generated-scene fingerprint
+invalidation remains unchanged. Queued edit workers now recognize their own
+reservation while rejecting unrelated busy/cross-posting tasks. Scene version
+labels bind their own scene's metadata rather than the last loop iteration.
+No editor framework, project interchange format, narration retiming or new
+publishing behavior is introduced by this milestone.
+
+CPU verification: the Python 3.11 full run passed with **1520 passed, 19
+skipped, 10748 subtests passed** and **78%** branch-measured coverage. Final
+caption/history and active-preview guards also passed focused checks after that
+run began. Ruff, compileall and diff whitespace checks passed. Check GitHub CI
+at the current development head for Python 3.13 and actual Windows results;
+these CPU fixtures do not validate Wan/LTX hardware or operator publishing.
+
 Phase 5 single-scene regeneration was CI verified on
 `ce5f299564cf3c7b4945f93e0c83bfe576191406`. Subsequent development added
 version restore, render-only rerender, cooperative cancellation, safe cleanup,

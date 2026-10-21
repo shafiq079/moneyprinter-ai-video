@@ -263,6 +263,29 @@ requested delivery canvas (1920x1080 or 1080x1920). Media validation remains
 ratio-aware and rejects materially wrong outputs. The smoke run is not a latency or
 visual-quality benchmark; no standardized timing measurement was captured.
 
+## Replace one scene with an uploaded clip
+
+Open **Scene Editor** from Task Manager and expand the scene. Select a local
+MP4 under **Replacement clip (MP4)**, then choose **Replace scene clip**.
+The upload must match the scene's aspect ratio and cover its displayed duration.
+The maximum size is 100 MiB. Longer clips are trimmed from the start; clip audio
+is removed so existing narration, captions and music remain authoritative.
+
+Processing runs in the background without a video-provider, TTS or caption
+generation call. The previous clip remains in **Scene versions**. Uploaded
+versions are labeled **Uploaded clip** and can be restored just like generated
+versions. Prompt/seed regeneration explicitly creates a new AI version.
+Replacement rerenders existing ready scenes; it does not fill other missing
+scenes or change the scene order/duration. Successful replacement does not
+submit a publishing job.
+
+Resume preserves selected uploads across model changes and checks their media
+and content hash. If an imported clip is missing or changed, replace it or
+restore a valid version; Resume will not generate a substitute automatically.
+The artifact index includes the active replacement with manual-upload provenance.
+See `docs/SCENE_EDITING.md` for the contract. A portable project archive and
+independent timeline layers remain deferred.
+
 ## Local AI generation telemetry
 
 The generation manifest records CPU-safe wall-clock telemetry for local

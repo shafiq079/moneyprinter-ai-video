@@ -18,6 +18,7 @@ from app.utils import utils
 _VERSION_FILE_RE = re.compile(r"^v(\d+)\.mp4$")
 _TEMP_FILE_PATTERNS = (
     re.compile(r"^\.v\d+\.partial\.mp4$"),
+    re.compile(r"^\.clip-upload-.*\.partial\.mp4$"),
     re.compile(r"^\.v\d+\.wan-raw\.mp4$"),
     re.compile(r"^\.v\d+\.ltx-raw\.mp4$"),
     re.compile(r"^\.generation-manifest-.*\.json\.tmp$"),
