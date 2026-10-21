@@ -2,7 +2,7 @@ import glob
 import os
 import pathlib
 import shutil
-from typing import Union
+from typing import Annotated, Union
 
 from fastapi import BackgroundTasks, Depends, Path, Query, Request, UploadFile
 from fastapi.params import File
@@ -18,6 +18,7 @@ from app.controllers.v1.base import new_router
 from app.models.exception import HttpException
 from app.models.schema import (
     AudioRequest,
+    BaseResponse,
     BgmRetrieveResponse,
     BgmUploadResponse,
     SubtitleRequest,
@@ -31,9 +32,11 @@ from app.models.schema import (
     VideoMaterialRetrieveResponse
 )
 from app.services import bgm as bgm_service
+from app.services import local_ai
 from app.services import material_upload as material_upload_service
 from app.services import state as sm
 from app.services import task as tm
+from app.services import task_artifacts
 from app.utils import file_security, utils
 
 # 统一在 V1 视频路由入口执行鉴权。verify_token 会在 api_key 为空时
@@ -98,9 +101,29 @@ def _resolve_path_within_directory(base_dir: str, unsafe_path: str, request_id: 
 
 
 def _public_task_data(task: dict) -> dict:
-    """复制任务状态并移除仅用于服务端进程协调的内部字段。"""
+    """复制任务状态、移除内部字段并补充可移植的本地 AI 产物索引。"""
     public_task = dict(task)
     public_task.pop("cross_post_owner", None)
+
+    task_id = str(task.get("task_id") or "").strip()
+    if task_id:
+        try:
+            if task_artifacts.has_local_ai_output_package(task_id) or (
+                pathlib.Path(utils.task_dir(task_id)) / "factual_review.json"
+            ).is_file():
+                public_task["artifact_package"] = (
+                    task_artifacts.build_output_package(
+                        task_id,
+                        task_state=task,
+                    )
+                )
+        except (OSError, ValueError) as exc:
+            # 产物索引属于附加可发现性信息。历史任务中的单个损坏文件不能让
+            # 状态查询本身变成 500；保留日志，让操作者仍可定位文件系统问题。
+            logger.warning(
+                "failed to build local AI artifact package: "
+                f"task_id={task_id}, error={type(exc).__name__}: {exc}"
+            )
     return public_task
 
 
@@ -247,6 +270,38 @@ def create_task(
             task_id=task_id, status_code=400, message=f"{request_id}: {str(e)}"
         )
 
+@router.get(
+    "/local-ai/providers/{provider_id}/preflight",
+    response_model=BaseResponse,
+    summary="Check a local AI video provider",
+)
+def preflight_local_ai_provider(
+    request: Request,
+    provider_id: str = Path(..., description="Stable local AI provider ID"),
+    generation_mode: Annotated[
+        str,
+        Query(
+            pattern="^(fast|quality)$",
+            description="Local AI generation mode",
+        ),
+    ] = "fast",
+):
+    request_id = base.get_task_id(request)
+    if not local_ai.is_public_source(provider_id):
+        raise HttpException(
+            task_id=request_id,
+            status_code=404,
+            message=f"{request_id}: unsupported local AI provider",
+        )
+    return utils.get_response(
+        200,
+        local_ai.preflight_status(
+            provider_id,
+            generation_mode=generation_mode,
+        ),
+    )
+
+
 @router.get("/tasks", response_model=TaskListResponse, summary="Get all tasks")
 def get_all_tasks(
     request: Request,
@@ -294,6 +349,43 @@ def get_task(
 
     raise HttpException(
         task_id=task_id, status_code=404, message=f"{request_id}: task not found"
+    )
+
+
+@router.post(
+    "/tasks/{task_id}/cancel",
+    response_model=BaseResponse,
+    summary="Request cooperative task cancellation",
+)
+def cancel_video_task(
+    request: Request,
+    task_id: str = Path(..., description="Task ID"),
+):
+    request_id = base.get_task_id(request)
+    task = sm.state.get_task(task_id)
+    if not task:
+        raise HttpException(
+            task_id=task_id,
+            status_code=404,
+            message=f"{request_id}: task not found",
+        )
+
+    if not tm.request_task_cancellation(task_id):
+        raise HttpException(
+            task_id=task_id,
+            status_code=409,
+            message=f"{request_id}: task is not cancellable",
+        )
+
+    logger.info(
+        f"task cancellation requested: request_id={request_id}, task_id={task_id}"
+    )
+    return utils.get_response(
+        200,
+        {
+            "task_id": task_id,
+            "cancel_requested": True,
+        },
     )
 
 

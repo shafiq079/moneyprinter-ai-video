@@ -518,6 +518,84 @@ compute_type = "int8"
 # initial_prompt = ""
 
 # =============================================================================
+# Local AI Video - Wan 2.2 TI2V-5B
+# =============================================================================
+#
+# Use a dedicated Python environment created from the official Wan2.2
+# requirements. MoneyPrinterTurbo intentionally launches Wan in a persistent
+# local worker process so Wan's GPU/Python dependencies do not replace the
+# application's locked dependencies (notably NumPy).
+#
+# Example:
+#   repo_path = "/opt/models/Wan2.2"
+#   checkpoint_path = "/opt/models/Wan2.2-TI2V-5B"
+#   python_executable = "/opt/venvs/wan22/bin/python"
+#
+# The generation task never downloads model weights. The operator must prepare
+# the official repository, checkpoint directory and worker environment first.
+[wan22_local]
+repo_path = ""
+checkpoint_path = ""
+python_executable = ""
+device = 0
+seed = 42
+offload_model = true
+t5_cpu = true
+convert_model_dtype = true
+
+[ltx25_local]
+# Official Lightricks/LTX-2 checkout. Use a dedicated worker environment with
+# the official LTX dependencies installed; the main MoneyPrinter process does
+# not import torch/LTX during normal startup.
+repo_path = ""
+python_executable = ""
+# LTX-2.5 split components used by DistilledPipeline.
+transformer_path = ""
+text_encoder_path = ""
+video_vae_path = ""
+audio_vae_path = ""
+spatial_upsampler_path = ""
+# Required only for local_ai_generation_mode = "quality" (DFR).
+detailing_lora_path = ""
+device = 0
+seed = 42
+# none = fastest/highest VRAM; cpu/disk stream weights to reduce VRAM.
+offload_mode = "cpu"
+# Official fp8-cast policy for bf16 checkpoints. Disable only when the target
+# GPU/runtime is known to have enough memory for bf16 transformer weights.
+fp8_cast = true
+
+[ltx25_hf]
+# Remote LTX-2.5 Fast backend hosted in a Hugging Face Gradio ZeroGPU Space.
+# Add api_name="generate_scene" to the Space's Gradio click binding so this
+# endpoint remains stable across UI changes.
+space_url = ""
+api_name = "generate_scene"
+# Name of the environment variable that contains the caller HF token.
+# The token itself must never be stored in config.toml.
+token_env = "HF_TOKEN"
+# Change this whenever the deployed Space/model code changes so cached scene
+# fingerprints cannot silently reuse assets from a different deployment.
+deployment_revision = ""
+seed = 42
+max_scene_duration = 5.0
+decoder = "conv"
+job_timeout_seconds = 900
+
+# =============================================================================
+# Local AI Generated Asset Cleanup
+# =============================================================================
+[local_ai_cleanup]
+# Keep the active scene clip plus at least one comparison/recovery version.
+keep_scene_versions = 2
+# Crash leftovers such as .partial.mp4, .wan-raw.mp4 and .ltx-raw.mp4 are only
+# removed after this age. Set 0 to make them immediately eligible.
+stale_temp_hours = 24
+# 0 disables whole-task deletion. Set a positive number only when operators want
+# the cleanup command to delete completed task directories older than this many days.
+completed_task_retention_days = 0
+
+# =============================================================================
 # Material Request Proxy / 素材请求代理
 # =============================================================================
 
@@ -654,6 +732,7 @@ open_task_folder_on_completion = true
 # video_clip_duration = 3
 # video_clip_speed = 1.0
 # video_count = 1
+# local_ai_visual_style = ""
 # tts_server = "azure-tts-v1"
 # voice_name = ""
 # voice_mode = "tts"                 # "tts", "upload", or "none"

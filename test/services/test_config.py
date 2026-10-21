@@ -213,6 +213,35 @@ class TestConfigPersistence:
             config._cfg.clear()
             config._cfg.update(original_cfg)
 
+    def test_save_config_preserves_hf_space_settings(self):
+        original_cfg = dict(config._cfg)
+        original_hf = dict(config.ltx25_hf)
+        try:
+            with TemporaryDirectory() as temp_dir:
+                config_path = Path(temp_dir) / "config.toml"
+                config.ltx25_hf.update(
+                    {
+                        "space_url": "https://owner-space.hf.space",
+                        "deployment_revision": "test-revision",
+                        "token_env": "HF_TOKEN",
+                    }
+                )
+                with (
+                    patch.object(config, "root_dir", temp_dir),
+                    patch.object(config, "config_file", str(config_path)),
+                ):
+                    config.save_config()
+
+                saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+                assert saved["ltx25_hf"]["space_url"] == "https://owner-space.hf.space"
+                assert saved["ltx25_hf"]["deployment_revision"] == "test-revision"
+                assert "token" not in saved["ltx25_hf"]
+        finally:
+            config.ltx25_hf.clear()
+            config.ltx25_hf.update(original_hf)
+            config._cfg.clear()
+            config._cfg.update(original_cfg)
+
     def test_save_config_falls_back_for_bind_mounted_file(self):
         """
         Docker Desktop 的单文件挂载点不能被 os.replace 替换。遇到 EBUSY 时

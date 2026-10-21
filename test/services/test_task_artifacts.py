@@ -71,6 +71,95 @@ class TestTaskArtifacts(unittest.TestCase):
         self.assertEqual(payload["params"]["video_terms"], ["city", "night"])
         self.assertEqual(payload["params"]["video_source"], "pexels")
 
+    def test_output_package_uses_task_relative_current_artifacts(self):
+        (self.task_dir / "generated_ai" / "scene-001").mkdir(parents=True)
+        for relative, payload in (
+            ("script.json", b"{}"),
+            ("subtitle.srt", b"subtitle"),
+            ("audio.mp3", b"audio"),
+            ("scene_plan.json", b"{}"),
+            ("generated_ai/generation_manifest.json", b"{}"),
+            ("generated_ai/scene-001/v002.mp4", b"scene"),
+            ("final-1.mp4", b"final"),
+            ("combined-1.mp4", b"combined"),
+        ):
+            target = self.task_dir / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(payload)
+
+        task_state = {
+            "videos": [str(self.task_dir / "final-1.mp4")],
+            "combined_videos": [str(self.task_dir / "combined-1.mp4")],
+            "subtitle_path": str(self.task_dir / "subtitle.srt"),
+            "audio_file": str(self.task_dir / "audio.mp3"),
+        }
+        with patch(
+            "app.services.generation_manifest.local_ai_material_records",
+            return_value=[
+                {
+                    "scene_id": 1,
+                    "asset": "generated_ai/scene-001/v002.mp4",
+                }
+            ],
+        ):
+            package = task_artifacts.build_output_package(
+                "task-package",
+                task_state=task_state,
+            )
+
+        self.assertEqual(package["schema_version"], 1)
+        self.assertEqual(package["task_id"], "task-package")
+        self.assertEqual(package["final_videos"], ["final-1.mp4"])
+        self.assertEqual(package["combined_videos"], ["combined-1.mp4"])
+        self.assertEqual(package["script"], "script.json")
+        self.assertEqual(package["captions"], "subtitle.srt")
+        self.assertEqual(package["audio"], "audio.mp3")
+        self.assertEqual(package["scene_plan"], "scene_plan.json")
+        self.assertEqual(
+            package["generation_manifest"],
+            "generated_ai/generation_manifest.json",
+        )
+        self.assertEqual(
+            package["scene_materials"],
+            ["generated_ai/scene-001/v002.mp4"],
+        )
+        self.assertNotIn(
+            str(self.task_dir),
+            json.dumps(package),
+        )
+
+    def test_output_package_drops_outside_paths_and_discovers_final_video(self):
+        (self.task_dir / "final-1.mp4").write_bytes(b"final")
+        outside = (
+            Path(self.temp_dir.name).parent
+            / f"{self.task_dir.name}-outside-final.mp4"
+        )
+        outside.write_bytes(b"outside")
+        self.addCleanup(outside.unlink, missing_ok=True)
+
+        package = task_artifacts.build_output_package(
+            "task-safe-package",
+            task_state={"videos": [str(outside)]},
+        )
+
+        self.assertEqual(package["final_videos"], ["final-1.mp4"])
+        self.assertIsNone(package["captions"])
+        self.assertIsNone(package["scene_plan"])
+        self.assertEqual(package["scene_materials"], [])
+
+    def test_local_ai_output_package_requires_plan_and_manifest(self):
+        (self.task_dir / "scene_plan.json").write_text("{}", encoding="utf-8")
+        self.assertFalse(
+            task_artifacts.has_local_ai_output_package("task-package")
+        )
+
+        manifest = self.task_dir / "generated_ai" / "generation_manifest.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text("{}", encoding="utf-8")
+        self.assertTrue(
+            task_artifacts.has_local_ai_output_package("task-package")
+        )
+
     def test_patch_missing_script_is_non_blocking(self):
         """独立调用素材下载时没有任务清单，应静默跳过而不是创建残缺 JSON。"""
         updated = task_artifacts.patch_script_data(

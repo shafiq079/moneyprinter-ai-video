@@ -351,6 +351,10 @@
     "Onboarding Next": "Weiter",
     "Onboarding Done": "Fertig",
     "Regenerate Task": "Neu erstellen",
+    "Resume Task": "Fortsetzen",
+    "Resume Task Help": "Diese lokale KI-Aufgabe mit gespeicherter Tonspur, Szenenplan und gültigen Clips fortsetzen.",
+    "Resume Task Failed": "Aufgabe konnte nicht fortgesetzt werden",
+    "Resume Task Queued": "Fortsetzung der Aufgabe eingereiht",
     "Regenerate Task Confirmation": "Skript und Einstellungen dieser Aufgabe laden? Die aktuellen Formularwerte werden ersetzt, die ursprüngliche Aufgabe und das Video bleiben unverändert.",
     "Load Task Configuration": "Konfiguration laden",
     "Task Restore Failed": "Diese Aufgabe enthält keine wiederverwendbaren Einstellungen.",
@@ -418,6 +422,7 @@
     "OFox Upstream Vendor Help": "Welcher Upstream-Anbieter die OFox-Videogenerierung bedient. BytePlus (international) ist der Standard mit einheitlicher Inhaltsrichtlinie; Volcano Engine ist der Festland-China-Anbieter; Auto lässt das OFox-Gateway die Last über die Anbieter verteilen.",
     "OFox Vendor BytePlus": "BytePlus (international, Standard)",
     "OFox Vendor Volcengine": "Volcano Engine (Festlandchina)",
-    "OFox Vendor Auto": "Auto (Gateway-Lastverteilung)"
+    "OFox Vendor Auto": "Auto (Gateway-Lastverteilung)",
+    "Local AI Multiple Videos Help": "Lokale KI-Szenen werden pro Aufgabe einmal erzeugt und von allen {count} finalen Ausgabevarianten gemeinsam verwendet. Eine Erhöhung dieses Werts führt die Komposition erneut aus; die Wan/LTX-Szeneninferenz wird nicht vervielfacht, außer du regenerierst ausdrücklich eine Szene."
   }
 }

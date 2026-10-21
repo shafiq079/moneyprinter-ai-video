@@ -801,6 +801,86 @@ class TestCli(unittest.TestCase):
                 os.remove(test_filepath)
 
 
+    def test_local_ai_visual_style_reaches_video_params(self):
+        args = cli.parse_args(
+            [
+                "--video-subject",
+                "test",
+                "--video-source",
+                "ltx25_local",
+                "--local-ai-visual-style",
+                "warm 35mm documentary",
+                "--stop-at",
+                "script",
+            ]
+        )
+        params = cli.build_video_params(args)
+        self.assertEqual(
+            params.local_ai_visual_style,
+            "warm 35mm documentary",
+        )
+
+    def test_ltx25_local_is_registered_as_a_cli_video_source(self):
+        args = cli.parse_args(
+            [
+                "--video-subject",
+                "test",
+                "--video-source",
+                "ltx25_local",
+                "--stop-at",
+                "script",
+            ]
+        )
+        self.assertEqual(args.video_source, "ltx25_local")
+
+    def test_wan22_local_is_registered_as_a_cli_video_source(self):
+        args = cli.parse_args(
+            [
+                "--video-subject",
+                "test",
+                "--video-source",
+                "wan22_local",
+                "--stop-at",
+                "script",
+            ]
+        )
+        self.assertEqual(args.video_source, "wan22_local")
+
+    def test_ltx_quality_preflight_forwards_generation_mode(self):
+        with (
+            patch(
+                "app.services.local_ai.preflight_status",
+                return_value={
+                    "provider_id": "ltx25_local",
+                    "ready": True,
+                    "message": "ready",
+                },
+            ) as preflight_status,
+            redirect_stdout(io.StringIO()),
+        ):
+            code = cli.run_cli(
+                [
+                    "--video-source",
+                    "ltx25_local",
+                    "--local-ai-generation-mode",
+                    "quality",
+                    "--check-local-ai-source",
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        preflight_status.assert_called_once_with(
+            "ltx25_local",
+            generation_mode="quality",
+        )
+
+    def test_local_ai_preflight_command_does_not_require_video_subject(self):
+        args = cli.parse_args(
+            ["--video-source", "wan22_local", "--check-local-ai-source"]
+        )
+        self.assertTrue(args.check_local_ai_source)
+        self.assertEqual(args.video_source, "wan22_local")
+
     def test_local_source_requires_video_materials(self):
         with self.assertRaises(SystemExit) as cm:
             cli.parse_args(["--video-subject", "test", "--video-source", "local"])

@@ -1,0 +1,454 @@
+from __future__ import annotations
+
+import os
+import time
+from collections.abc import Callable
+from contextlib import ExitStack
+
+from loguru import logger
+
+from app.services import generation_manifest
+
+from .base import (
+    LocalAICancellationRequested,
+    LocalAISceneGenerationError,
+    LocalVideoProvider,
+    SceneSpec,
+    scene_fingerprint,
+)
+
+
+def _elapsed_seconds(started_at: float) -> float:
+    return round(max(time.perf_counter() - started_at, 0.0), 6)
+
+
+def _record_runtime_load(
+    manifest: dict,
+    *,
+    task_id: str,
+    provider: LocalVideoProvider,
+    elapsed_seconds: float,
+) -> None:
+    telemetry = manifest.setdefault("telemetry", {})
+    previous_total = telemetry.get("runtime_load_seconds_total", 0.0)
+    previous_count = telemetry.get("runtime_load_count", 0)
+    try:
+        previous_total = float(previous_total)
+    except (TypeError, ValueError):
+        previous_total = 0.0
+    try:
+        previous_count = int(previous_count)
+    except (TypeError, ValueError):
+        previous_count = 0
+
+    telemetry["runtime_load_seconds_last"] = elapsed_seconds
+    telemetry["runtime_load_seconds_total"] = round(
+        previous_total + elapsed_seconds,
+        6,
+    )
+    telemetry["runtime_load_count"] = previous_count + 1
+
+    runtime_telemetry = getattr(provider, "runtime_telemetry", None)
+    if callable(runtime_telemetry):
+        try:
+            metrics = runtime_telemetry()
+        except Exception as exc:
+            logger.debug(
+                "local AI runtime telemetry unavailable: "
+                f"task_id={task_id}, provider={provider.provider_id}, "
+                f"stage=runtime_telemetry, error={type(exc).__name__}"
+            )
+        else:
+            if isinstance(metrics, dict):
+                telemetry["runtime"] = (
+                    generation_manifest.sanitize_persisted_metadata(metrics)
+                )
+
+    logger.info(
+        "local AI runtime load/reuse completed: "
+        f"task_id={task_id}, provider={provider.provider_id}, "
+        f"stage=runtime_load, elapsed_seconds={elapsed_seconds:.3f}"
+    )
+
+
+def generate_scene_materials(
+    task_id: str,
+    *,
+    provider: LocalVideoProvider,
+    scenes: list[SceneSpec],
+    progress_callback: (
+        Callable[[int, int, SceneSpec, str, bool], None] | None
+    ) = None,
+    cancel_check: Callable[[], bool] | None = None,
+) -> list[str]:
+    """Generate/reuse ordered scene clips and persist progress after every scene."""
+
+    if not scenes:
+        raise ValueError("local AI scene plan must contain at least one scene")
+
+    manifest = generation_manifest.prepare_manifest(
+        task_id,
+        provider_id=provider.provider_id,
+        model_fingerprint=provider.model_fingerprint,
+        scenes=scenes,
+        provider_metadata=(
+            provider.safe_metadata()
+            if callable(getattr(provider, "safe_metadata", None))
+            else None
+        ),
+    )
+    runtime_loaded = False
+    outputs: list[str] = []
+
+    # Heavy local providers may expose a task-level generation session. Enter it
+    # lazily only when a scene actually needs generation: a fully cached retry
+    # should not take the GPU lock or evict another model family just to validate
+    # already-persisted clips. Once entered, keep it for the rest of the scene
+    # batch so different provider families cannot thrash each other per scene.
+    session_factory = getattr(provider, "generation_session", None)
+    generation_session_entered = False
+
+    total_scenes = len(scenes)
+    with ExitStack() as stack:
+        for scene_index, scene in enumerate(scenes, start=1):
+            if cancel_check is not None and cancel_check():
+                raise LocalAICancellationRequested(
+                    f"local AI generation cancelled before scene {scene.scene_id}"
+                )
+            logger.info(
+                "local AI scene progress: "
+                f"task_id={task_id}, provider={provider.provider_id}, "
+                f"scene_id={scene.scene_id}, stage=checking, "
+                f"scene_index={scene_index}, total_scenes={total_scenes}"
+            )
+            if progress_callback is not None:
+                progress_callback(
+                    scene_index,
+                    total_scenes,
+                    scene,
+                    "checking",
+                    False,
+                )
+            record = generation_manifest.scene_record(manifest, scene.scene_id)
+            active_asset = record.get("active_asset")
+            if (
+                record.get("status") == "ready"
+                and record.get("fingerprint")
+                and active_asset
+            ):
+                try:
+                    cached_path = generation_manifest.resolve_asset(
+                        task_id, active_asset
+                    )
+                    validated = provider.validate_output(cached_path, scene)
+                except Exception as exc:
+                    record["status"] = "invalid"
+                    record["active_asset"] = None
+                    record["actual_duration"] = None
+                    record["error_type"] = type(exc).__name__
+                    record["error_code"] = type(exc).__name__
+                    generation_manifest.save_manifest(task_id, manifest)
+                else:
+                    record["actual_duration"] = validated.actual_duration
+                    record["error_type"] = None
+                    record["error_code"] = None
+                    outputs.append(str(cached_path))
+                    if progress_callback is not None:
+                        progress_callback(
+                            scene_index,
+                            total_scenes,
+                            scene,
+                            "ready",
+                            True,
+                        )
+                    continue
+
+            if not runtime_loaded:
+                if callable(session_factory) and not generation_session_entered:
+                    stack.enter_context(session_factory())
+                    generation_session_entered = True
+                provider.preflight()
+                runtime_started = time.perf_counter()
+                provider.load_runtime()
+                runtime_seconds = _elapsed_seconds(runtime_started)
+                _record_runtime_load(
+                    manifest,
+                    task_id=task_id,
+                    provider=provider,
+                    elapsed_seconds=runtime_seconds,
+                )
+                generation_manifest.save_manifest(task_id, manifest)
+                runtime_loaded = True
+
+            relative, final_path, partial_path = generation_manifest.next_scene_version(
+                task_id,
+                scene.scene_id,
+                list(record.get("versions") or []),
+            )
+            partial_path.unlink(missing_ok=True)
+            record["status"] = "generating"
+            record["error_type"] = None
+            record["error_code"] = None
+            generation_manifest.save_manifest(task_id, manifest)
+            if progress_callback is not None:
+                progress_callback(
+                    scene_index,
+                    total_scenes,
+                    scene,
+                    "generating",
+                    False,
+                )
+
+            generation_seconds = 0.0
+            validation_seconds = 0.0
+            try:
+                generation_started = time.perf_counter()
+                try:
+                    provider.generate(scene, partial_path)
+                finally:
+                    generation_seconds = _elapsed_seconds(generation_started)
+
+                validation_started = time.perf_counter()
+                try:
+                    provider.validate_output(partial_path, scene)
+                finally:
+                    validation_seconds += _elapsed_seconds(validation_started)
+
+                os.replace(partial_path, final_path)
+
+                validation_started = time.perf_counter()
+                try:
+                    validated = provider.validate_output(final_path, scene)
+                finally:
+                    validation_seconds += _elapsed_seconds(validation_started)
+            except Exception as exc:
+                partial_path.unlink(missing_ok=True)
+                logger.warning(
+                    "local AI scene generation failed: "
+                    f"task_id={task_id}, provider={provider.provider_id}, "
+                    f"scene_id={scene.scene_id}, stage=scene_generation, "
+                    f"generation_seconds={generation_seconds:.3f}, "
+                    f"validation_seconds={validation_seconds:.3f}, "
+                    f"error_type={type(exc).__name__}"
+                )
+                record["status"] = "failed"
+                record["active_asset"] = None
+                record["actual_duration"] = None
+                record["generation_seconds"] = generation_seconds
+                record["validation_seconds"] = round(validation_seconds, 6)
+                # Persist only an exception type. Detailed provider errors stay in logs
+                # so manifests cannot accidentally capture model paths/tokens/host data.
+                record["error_type"] = type(exc).__name__
+                record["error_code"] = str(
+                    getattr(exc, "code", type(exc).__name__)
+                )
+                generation_manifest.save_manifest(task_id, manifest)
+                raise LocalAISceneGenerationError(
+                    provider_id=provider.provider_id,
+                    scene_id=scene.scene_id,
+                    cause_type=type(exc).__name__,
+                    error_code=record["error_code"],
+                ) from exc
+
+            versions = list(record.get("versions") or [])
+            if relative not in versions:
+                versions.append(relative)
+            record["versions"] = versions
+            record["active_asset"] = relative
+            record["actual_duration"] = validated.actual_duration
+            record["generation_seconds"] = generation_seconds
+            record["validation_seconds"] = round(validation_seconds, 6)
+            generation_manifest.remember_scene_version(
+                record,
+                relative,
+                actual_duration=validated.actual_duration,
+            )
+            record["status"] = "ready"
+            record["error_type"] = None
+            record["error_code"] = None
+            generation_manifest.save_manifest(task_id, manifest)
+            logger.info(
+                "local AI scene generated: "
+                f"task_id={task_id}, provider={provider.provider_id}, "
+                f"scene_id={scene.scene_id}, stage=scene_generation_complete, "
+                f"generation_seconds={generation_seconds:.3f}, "
+                f"validation_seconds={validation_seconds:.3f}"
+            )
+            outputs.append(str(final_path))
+            if progress_callback is not None:
+                progress_callback(
+                    scene_index,
+                    total_scenes,
+                    scene,
+                    "ready",
+                    False,
+                )
+
+    return outputs
+
+
+def regenerate_scene_material(
+    task_id: str,
+    *,
+    provider: LocalVideoProvider,
+    scene: SceneSpec,
+) -> str:
+    """Generate one new scene version while keeping the previous active clip safe."""
+
+    manifest = generation_manifest.load_manifest(task_id)
+    if manifest is None:
+        raise ValueError("local AI generation manifest is missing")
+    if manifest.get("provider_id") != provider.provider_id:
+        raise ValueError("scene provider does not match the task manifest")
+
+    record = generation_manifest.scene_record(manifest, scene.scene_id)
+    old_active = record.get("active_asset")
+    old_status = record.get("status")
+    old_actual_duration = record.get("actual_duration")
+    old_fingerprint = record.get("fingerprint")
+    if old_active and generation_manifest.scene_version_metadata(
+        record,
+        old_active,
+    ) is None:
+        generation_manifest.remember_scene_version(
+            record,
+            old_active,
+            actual_duration=old_actual_duration,
+        )
+
+    relative, final_path, partial_path = generation_manifest.next_scene_version(
+        task_id,
+        scene.scene_id,
+        list(record.get("versions") or []),
+    )
+    partial_path.unlink(missing_ok=True)
+
+    # Regeneration state is additive. Do not clear the current active asset before
+    # the replacement validates, so a failed variation never destroys a good task.
+    record["regeneration_status"] = "generating"
+    record["regeneration_error_type"] = None
+    record["regeneration_error_code"] = None
+    generation_manifest.save_manifest(task_id, manifest)
+
+    session_factory = getattr(provider, "generation_session", None)
+    generation_seconds = 0.0
+    validation_seconds = 0.0
+    try:
+        with ExitStack() as stack:
+            if callable(session_factory):
+                stack.enter_context(session_factory())
+            provider.preflight()
+
+            runtime_started = time.perf_counter()
+            provider.load_runtime()
+            runtime_seconds = _elapsed_seconds(runtime_started)
+            _record_runtime_load(
+                manifest,
+                task_id=task_id,
+                provider=provider,
+                elapsed_seconds=runtime_seconds,
+            )
+            generation_manifest.save_manifest(task_id, manifest)
+
+            generation_started = time.perf_counter()
+            try:
+                provider.generate(scene, partial_path)
+            finally:
+                generation_seconds = _elapsed_seconds(generation_started)
+
+            validation_started = time.perf_counter()
+            try:
+                provider.validate_output(partial_path, scene)
+            finally:
+                validation_seconds += _elapsed_seconds(validation_started)
+
+            os.replace(partial_path, final_path)
+
+            validation_started = time.perf_counter()
+            try:
+                validated = provider.validate_output(final_path, scene)
+            finally:
+                validation_seconds += _elapsed_seconds(validation_started)
+    except Exception as exc:
+        partial_path.unlink(missing_ok=True)
+        logger.warning(
+            "local AI scene regeneration failed: "
+            f"task_id={task_id}, provider={provider.provider_id}, "
+            f"scene_id={scene.scene_id}, stage=scene_regeneration, "
+            f"generation_seconds={generation_seconds:.3f}, "
+            f"validation_seconds={validation_seconds:.3f}, "
+            f"error_type={type(exc).__name__}"
+        )
+        record["regeneration_status"] = "failed"
+        record["regeneration_error_type"] = type(exc).__name__
+        record["regeneration_error_code"] = str(
+            getattr(exc, "code", type(exc).__name__)
+        )
+        record["last_regeneration_seconds"] = generation_seconds
+        record["last_regeneration_validation_seconds"] = round(
+            validation_seconds,
+            6,
+        )
+        record["active_asset"] = old_active
+        record["status"] = old_status
+        record["actual_duration"] = old_actual_duration
+        record["fingerprint"] = old_fingerprint
+        generation_manifest.save_manifest(task_id, manifest)
+        raise LocalAISceneGenerationError(
+            provider_id=provider.provider_id,
+            scene_id=scene.scene_id,
+            cause_type=type(exc).__name__,
+            error_code=record["regeneration_error_code"],
+        ) from exc
+
+    versions = list(record.get("versions") or [])
+    if relative not in versions:
+        versions.append(relative)
+
+    record.update(scene.to_dict())
+    record["provider_id"] = provider.provider_id
+    record["model_fingerprint"] = provider.model_fingerprint
+    record["provider_metadata"] = generation_manifest.sanitize_persisted_metadata(
+        provider.safe_metadata()
+        if callable(getattr(provider, "safe_metadata", None))
+        else {}
+    )
+    record["provider_settings"] = generation_manifest.sanitize_persisted_metadata(
+        record.get("provider_settings") or {}
+    )
+    record["fingerprint"] = scene_fingerprint(
+        scene,
+        provider_id=provider.provider_id,
+        model_fingerprint=provider.model_fingerprint,
+    )
+    record["versions"] = versions
+    record["active_asset"] = relative
+    record["actual_duration"] = validated.actual_duration
+    record["generation_seconds"] = generation_seconds
+    record["validation_seconds"] = round(validation_seconds, 6)
+    record["last_regeneration_seconds"] = generation_seconds
+    record["last_regeneration_validation_seconds"] = round(
+        validation_seconds,
+        6,
+    )
+    generation_manifest.remember_scene_version(
+        record,
+        relative,
+        actual_duration=validated.actual_duration,
+    )
+    record["status"] = "ready"
+    record["error_type"] = None
+    record["error_code"] = None
+    record["regeneration_status"] = "ready"
+    record["regeneration_error_type"] = None
+    record["regeneration_error_code"] = None
+    generation_manifest.save_manifest(task_id, manifest)
+    logger.info(
+        "local AI scene regenerated: "
+        f"task_id={task_id}, provider={provider.provider_id}, "
+        f"scene_id={scene.scene_id}, stage=scene_regeneration_complete, "
+        f"generation_seconds={generation_seconds:.3f}, "
+        f"validation_seconds={validation_seconds:.3f}"
+    )
+    return str(final_path)
+

@@ -22,6 +22,7 @@ _task_manager = InMemoryTaskManager(
 )
 _task_logs: dict[str, deque[str]] = {}
 _task_logs_lock = threading.RLock()
+_resume_submission_lock = threading.RLock()
 _MAX_LOG_TASKS = 20
 _MAX_LOG_RECORDS_PER_TASK = 1000
 # Streamlit 无法由后台线程直接推送组件更新，只能通过 Fragment 轮询。0.5 秒
@@ -59,6 +60,8 @@ def _run_generation(
     voxcpm_reference_audio: bytes | None = None,
     voxcpm_prompt_audio: bytes | None = None,
     voxcpm_prompt_text: str = "",
+    resume_context: dict | None = None,
+    stop_at: str = "video",
 ) -> dict:
     """
     在后台线程中执行现有视频流水线。
@@ -85,11 +88,13 @@ def _run_generation(
             return tm.start(
                 task_id=task_id,
                 params=params,
+                stop_at=stop_at,
                 voice_preview=voice_preview,
                 loomloom_video_request=loomloom_video_request,
                 voxcpm_reference_audio=voxcpm_reference_audio,
                 voxcpm_prompt_audio=voxcpm_prompt_audio,
                 voxcpm_prompt_text=voxcpm_prompt_text,
+                resume_context=resume_context,
             )
     except Exception as exc:
         # tm.start 已负责把流水线异常转换成失败状态；这里额外保护日志 sink、
@@ -125,6 +130,346 @@ def _run_generation(
                 )
 
 
+def _run_scene_regeneration(
+    task_id: str,
+    scene_id: int,
+    prompt: str,
+    seed: int,
+    capture_logs: bool,
+) -> dict:
+    """Run one scene replacement through the same serialized WebUI worker."""
+
+    log_handler_id = None
+    worker_thread_id = threading.get_ident()
+    try:
+        if capture_logs:
+            log_handler_id = logger.add(
+                lambda message: _append_task_log(task_id, str(message)),
+                level="DEBUG",
+                format=format_log_record,
+                colorize=False,
+                filter=lambda record: record["thread"].id == worker_thread_id,
+            )
+        with config.runtime_config_lock():
+            return tm.regenerate_local_ai_scene(
+                task_id,
+                scene_id,
+                prompt=prompt,
+                seed=seed,
+            )
+    except Exception as exc:
+        logger.exception(
+            "scene regeneration worker failed: "
+            f"task_id={task_id}, scene_id={scene_id}, error={exc}"
+        )
+        try:
+            snapshot = sm.state.get_task(task_id) or {}
+        except Exception:
+            snapshot = {}
+        # The task service preserves an existing good final video on ordinary
+        # regeneration failures. Only use failed state if no usable task remains.
+        if snapshot.get("state") not in {
+            const.TASK_STATE_COMPLETE,
+            const.TASK_STATE_FAILED,
+        }:
+            sm.state.update_task(
+                task_id,
+                state=const.TASK_STATE_FAILED,
+                progress=0,
+                current_stage=None,
+                scene_regeneration_error=f"{type(exc).__name__}: {exc}",
+                scene_regeneration_scene_id=scene_id,
+            )
+        return {
+            "task_id": task_id,
+            "scene_id": scene_id,
+            "state": (sm.state.get_task(task_id) or {}).get("state"),
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    finally:
+        if log_handler_id is not None:
+            try:
+                logger.remove(log_handler_id)
+            except ValueError:
+                logger.debug(
+                    f"scene regeneration log handler already removed: task_id={task_id}"
+                )
+
+
+def submit_scene_regeneration(
+    task_id: str,
+    scene_id: int,
+    *,
+    prompt: str,
+    seed: int,
+    capture_logs: bool = True,
+) -> None:
+    """Queue a single-scene local-AI variation without blocking Streamlit."""
+
+    clean_prompt = str(prompt or "").strip()
+    if not clean_prompt:
+        raise ValueError("scene prompt must not be empty")
+    if int(seed) < 0:
+        raise ValueError("scene seed must be >= 0")
+
+    previous = sm.state.get_task(task_id) or {}
+    if tm.is_task_busy(previous):
+        raise RuntimeError("task is already busy")
+
+    sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_PROCESSING,
+        progress=40,
+        current_stage="scene_regeneration_queued",
+        scene_regeneration_scene_id=int(scene_id),
+        scene_regeneration_error=None,
+    )
+    try:
+        _task_manager.add_task(
+            _run_scene_regeneration,
+            task_id=task_id,
+            scene_id=int(scene_id),
+            prompt=clean_prompt,
+            seed=int(seed),
+            capture_logs=capture_logs,
+        )
+    except Exception:
+        sm.state.update_task(
+            task_id,
+            state=previous.get("state", const.TASK_STATE_FAILED),
+            progress=previous.get("progress", 100 if previous.get("videos") else 0),
+            current_stage=None,
+            scene_regeneration_error="scene regeneration could not be scheduled",
+            scene_regeneration_scene_id=int(scene_id),
+        )
+        raise
+
+
+def _run_scene_version_restore(
+    task_id: str,
+    scene_id: int,
+    relative_path: str,
+    capture_logs: bool,
+) -> dict:
+    """Restore one existing scene version through the serialized WebUI worker."""
+
+    log_handler_id = None
+    worker_thread_id = threading.get_ident()
+    try:
+        if capture_logs:
+            log_handler_id = logger.add(
+                lambda message: _append_task_log(task_id, str(message)),
+                level="DEBUG",
+                format=format_log_record,
+                colorize=False,
+                filter=lambda record: record["thread"].id == worker_thread_id,
+            )
+        with config.runtime_config_lock():
+            return tm.restore_local_ai_scene_version(
+                task_id,
+                scene_id,
+                relative_path,
+            )
+    except Exception as exc:
+        logger.exception(
+            "scene version restore worker failed: "
+            f"task_id={task_id}, scene_id={scene_id}, error={exc}"
+        )
+        return {
+            "task_id": task_id,
+            "scene_id": scene_id,
+            "state": (sm.state.get_task(task_id) or {}).get("state"),
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    finally:
+        if log_handler_id is not None:
+            try:
+                logger.remove(log_handler_id)
+            except ValueError:
+                logger.debug(
+                    f"scene restore log handler already removed: task_id={task_id}"
+                )
+
+
+def submit_scene_version_restore(
+    task_id: str,
+    scene_id: int,
+    *,
+    relative_path: str,
+    capture_logs: bool = True,
+) -> None:
+    """Queue a no-GPU restore of a previously validated scene version."""
+
+    selected = str(relative_path or "").strip()
+    if not selected:
+        raise ValueError("scene version path must not be empty")
+
+    previous = sm.state.get_task(task_id) or {}
+    if tm.is_task_busy(previous):
+        raise RuntimeError("task is already busy")
+
+    sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_PROCESSING,
+        progress=70,
+        current_stage="scene_version_restore_queued",
+        scene_regeneration_scene_id=int(scene_id),
+        scene_regeneration_error=None,
+    )
+    try:
+        _task_manager.add_task(
+            _run_scene_version_restore,
+            task_id=task_id,
+            scene_id=int(scene_id),
+            relative_path=selected,
+            capture_logs=capture_logs,
+        )
+    except Exception:
+        sm.state.update_task(
+            task_id,
+            state=previous.get("state", const.TASK_STATE_FAILED),
+            progress=previous.get(
+                "progress",
+                100 if previous.get("videos") else 0,
+            ),
+            current_stage=None,
+            scene_regeneration_error="scene version restore could not be scheduled",
+            scene_regeneration_scene_id=int(scene_id),
+        )
+        raise
+
+
+def _run_local_ai_rerender(
+    task_id: str,
+    params: VideoParams,
+    capture_logs: bool,
+) -> dict:
+    """Run a same-task render-only rebuild through the serialized WebUI worker."""
+
+    log_handler_id = None
+    worker_thread_id = threading.get_ident()
+    try:
+        if capture_logs:
+            log_handler_id = logger.add(
+                lambda message: _append_task_log(task_id, str(message)),
+                level="DEBUG",
+                format=format_log_record,
+                colorize=False,
+                filter=lambda record: record["thread"].id == worker_thread_id,
+            )
+        with config.runtime_config_lock():
+            return tm.rerender_local_ai_task(task_id, params)
+    except Exception as exc:
+        logger.exception(
+            "render-only rerender worker failed: "
+            f"task_id={task_id}, error={exc}"
+        )
+        snapshot = sm.state.get_task(task_id) or {}
+        if snapshot.get("state") not in {
+            const.TASK_STATE_COMPLETE,
+            const.TASK_STATE_FAILED,
+        }:
+            sm.state.update_task(
+                task_id,
+                state=const.TASK_STATE_FAILED,
+                progress=0,
+                current_stage=None,
+                render_only_rerender=True,
+                render_only_rerender_error=f"{type(exc).__name__}: {exc}",
+            )
+        return {
+            "task_id": task_id,
+            "state": (sm.state.get_task(task_id) or {}).get("state"),
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    finally:
+        if log_handler_id is not None:
+            try:
+                logger.remove(log_handler_id)
+            except ValueError:
+                logger.debug(
+                    f"rerender log handler already removed: task_id={task_id}"
+                )
+
+
+def submit_local_ai_rerender(
+    task_id: str,
+    params: VideoParams,
+    *,
+    capture_logs: bool = True,
+) -> None:
+    """Queue a same-task final rerender without local-video inference."""
+
+    previous = sm.state.get_task(task_id) or {}
+    submitted_params = tm.validate_local_ai_rerender(task_id, params)
+    sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_PROCESSING,
+        progress=70,
+        current_stage="final_rerender_queued",
+        render_only_rerender=True,
+        render_only_rerender_error=None,
+    )
+    try:
+        _task_manager.add_task(
+            _run_local_ai_rerender,
+            task_id=task_id,
+            params=submitted_params,
+            capture_logs=capture_logs,
+        )
+    except Exception:
+        sm.state.update_task(
+            task_id,
+            state=previous.get("state", const.TASK_STATE_FAILED),
+            progress=previous.get(
+                "progress",
+                100 if previous.get("videos") else 0,
+            ),
+            current_stage=None,
+            render_only_rerender=True,
+            render_only_rerender_error="render-only rerender could not be scheduled",
+        )
+        raise
+
+
+def submit_local_ai_resume(task_id: str, capture_logs: bool = True) -> None:
+    """Queue a failed local-AI task under its original ID and saved settings."""
+
+    with _resume_submission_lock:
+        context = tm.load_local_ai_resume_context(task_id)
+        previous = sm.state.get_task(task_id) or {}
+        sm.state.update_task(
+            task_id,
+            state=const.TASK_STATE_PROCESSING,
+            progress=max(0, int(previous.get("progress", 0) or 0)),
+            current_stage="resume_queued",
+            cancel_requested=False,
+            cancelled=False,
+            failed_stage=None,
+            error=None,
+        )
+        try:
+            _task_manager.add_task(
+                _run_generation,
+                task_id=task_id,
+                params=context["params"],
+                capture_logs=capture_logs,
+                resume_context=context,
+            )
+        except Exception:
+            sm.state.update_task(
+                task_id,
+                state=previous.get("state", const.TASK_STATE_FAILED),
+                progress=previous.get("progress", 0),
+                current_stage=None,
+                cancel_requested=previous.get("cancel_requested", False),
+                cancelled=previous.get("cancelled", False),
+                failed_stage=previous.get("failed_stage"),
+                error=previous.get("error"),
+            )
+            raise
+
+
 def submit_generation(
     task_id: str,
     params: VideoParams,
@@ -134,6 +479,7 @@ def submit_generation(
     voxcpm_reference_audio: bytes | None = None,
     voxcpm_prompt_audio: bytes | None = None,
     voxcpm_prompt_text: str = "",
+    stop_at: str = "video",
 ) -> None:
     """
     登记并提交 WebUI 视频生成任务，调用后立即返回。
@@ -141,6 +487,10 @@ def submit_generation(
     任务状态必须在线程启动前写入。这样页面本次脚本执行结束时即可查询到任务，
     浏览器刷新或 WebSocket 重连也不依赖旧页面内存中的占位符。
     """
+    if stop_at not in {"video", "script"} or (
+        stop_at == "script" and params.content_mode != "factual"
+    ):
+        raise ValueError("WebUI script-only review requires factual mode")
     task_params = params.model_copy(deep=True)
     # 预览载荷只包含不可变音频路径、参数快照和只读字幕时间轴。复制外层字典，
     # 避免页面后续 rerun 替换缓存字段时影响已经提交到后台队列的任务。
@@ -177,6 +527,7 @@ def submit_generation(
             voxcpm_reference_audio=voxcpm_reference_audio_snapshot,
             voxcpm_prompt_audio=voxcpm_prompt_audio_snapshot,
             voxcpm_prompt_text=voxcpm_prompt_text_snapshot,
+            stop_at=stop_at,
         )
     except Exception as exc:
         # 调度失败与流水线失败一样必须成为可查询状态，避免任务管理器永久显示

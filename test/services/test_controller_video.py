@@ -267,6 +267,63 @@ class TestVideoControllerTasks(unittest.TestCase):
         self.assertIs(raised.exception, scheduling_error)
         self.assertIsNone(state.get_task("task-123"))
 
+    def test_local_ai_preflight_endpoint_uses_shared_provider_status(self):
+        with patch.object(
+            video_controller.local_ai,
+            "preflight_status",
+            return_value={
+                "provider_id": "wan22_local",
+                "ready": True,
+                "error_type": None,
+                "message": "ready",
+            },
+        ) as preflight_status:
+            response = video_controller.preflight_local_ai_provider(
+                self._request(),
+                provider_id="wan22_local",
+            )
+
+        self.assertEqual(response["status"], 200)
+        self.assertTrue(response["data"]["ready"])
+        preflight_status.assert_called_once_with(
+            "wan22_local",
+            generation_mode="fast",
+        )
+
+    def test_ltx_quality_preflight_forwards_generation_mode(self):
+        with patch.object(
+            video_controller.local_ai,
+            "preflight_status",
+            return_value={
+                "provider_id": "ltx25_local",
+                "ready": True,
+                "error_type": None,
+                "message": "ready",
+                "metadata": {"mode": "quality"},
+            },
+        ) as preflight_status:
+            response = video_controller.preflight_local_ai_provider(
+                self._request(),
+                provider_id="ltx25_local",
+                generation_mode="quality",
+            )
+
+        self.assertEqual(response["status"], 200)
+        preflight_status.assert_called_once_with(
+            "ltx25_local",
+            generation_mode="quality",
+        )
+
+    def test_local_ai_preflight_endpoint_rejects_internal_or_unknown_sources(self):
+        for provider_id in ("__local_ai_fake__", "unknown"):
+            with self.subTest(provider_id=provider_id):
+                with self.assertRaises(HttpException) as raised:
+                    video_controller.preflight_local_ai_provider(
+                        self._request(),
+                        provider_id=provider_id,
+                    )
+                self.assertEqual(raised.exception.status_code, 404)
+
     def test_get_all_tasks_preserves_pagination(self):
         """任务列表响应必须包含状态层返回的总数和请求分页参数。"""
         with patch.object(
@@ -323,6 +380,54 @@ class TestVideoControllerTasks(unittest.TestCase):
             sm.state.delete_task(task_id)
             shutil.rmtree(task_dir, ignore_errors=True)
 
+    def test_task_query_exposes_local_ai_artifact_package(self):
+        task = {
+            "task_id": "local-ai-artifacts",
+            "state": const.TASK_STATE_COMPLETE,
+            "progress": 100,
+        }
+        package = {
+            "schema_version": 1,
+            "task_id": "local-ai-artifacts",
+            "final_videos": ["final-1.mp4"],
+            "combined_videos": ["combined-1.mp4"],
+            "script": "script.json",
+            "captions": "subtitle.srt",
+            "audio": "audio.mp3",
+            "scene_plan": "scene_plan.json",
+            "generation_manifest": "generated_ai/generation_manifest.json",
+            "scene_materials": ["generated_ai/scene-001/v001.mp4"],
+        }
+
+        with (
+            patch.object(
+                video_controller.sm.state,
+                "get_task",
+                return_value=task,
+            ),
+            patch.object(
+                video_controller.task_artifacts,
+                "has_local_ai_output_package",
+                return_value=True,
+            ),
+            patch.object(
+                video_controller.task_artifacts,
+                "build_output_package",
+                return_value=package,
+            ) as build_package,
+        ):
+            response = video_controller.get_task(
+                self._request(),
+                task_id="local-ai-artifacts",
+                query=MagicMock(),
+            )
+
+        self.assertEqual(response["data"]["artifact_package"], package)
+        build_package.assert_called_once_with(
+            "local-ai-artifacts",
+            task_state=task,
+        )
+
     def test_task_query_preserves_structured_failure_details(self):
         """失败阶段和错误信息必须通过任务查询接口原样返回。"""
         failed_task = {
@@ -357,6 +462,11 @@ class TestVideoControllerTasks(unittest.TestCase):
         ]
         self.assertIn("failed_stage", task_data_schema["properties"])
         self.assertIn("cross_post_state", task_data_schema["properties"])
+        self.assertIn("artifact_package", task_data_schema["properties"])
+        self.assertIn(
+            "TaskArtifactPackageData",
+            TaskQueryResponse.model_json_schema()["$defs"],
+        )
 
         list_schema = TaskListResponse.model_json_schema()
         self.assertIn("TaskListData", list_schema["$defs"])
@@ -369,6 +479,76 @@ class TestVideoControllerTasks(unittest.TestCase):
 
         self.assertEqual(data_property.get("type"), "null")
         self.assertIsNone(data_property.get("default"))
+
+    def test_cancel_endpoint_requests_cooperative_cancellation(self):
+        task = {
+            "task_id": "running-task",
+            "state": const.TASK_STATE_PROCESSING,
+            "progress": 40,
+        }
+        with (
+            patch.object(
+                video_controller.sm.state,
+                "get_task",
+                return_value=task,
+            ),
+            patch.object(
+                video_controller.tm,
+                "request_task_cancellation",
+                return_value=True,
+            ) as request_cancel,
+        ):
+            response = video_controller.cancel_video_task(
+                self._request(),
+                task_id="running-task",
+            )
+
+        self.assertEqual(response["status"], 200)
+        self.assertEqual(
+            response["data"],
+            {
+                "task_id": "running-task",
+                "cancel_requested": True,
+            },
+        )
+        request_cancel.assert_called_once_with("running-task")
+
+    def test_cancel_endpoint_rejects_terminal_or_missing_task(self):
+        with patch.object(
+            video_controller.sm.state,
+            "get_task",
+            return_value=None,
+        ):
+            with self.assertRaises(HttpException) as missing:
+                video_controller.cancel_video_task(
+                    self._request(),
+                    task_id="missing",
+                )
+        self.assertEqual(missing.exception.status_code, 404)
+
+        completed = {
+            "task_id": "complete",
+            "state": const.TASK_STATE_COMPLETE,
+            "progress": 100,
+        }
+        with (
+            patch.object(
+                video_controller.sm.state,
+                "get_task",
+                return_value=completed,
+            ),
+            patch.object(
+                video_controller.tm,
+                "request_task_cancellation",
+                return_value=False,
+            ),
+        ):
+            with self.assertRaises(HttpException) as terminal:
+                video_controller.cancel_video_task(
+                    self._request(),
+                    task_id="complete",
+                )
+        self.assertEqual(terminal.exception.status_code, 409)
 
     def test_delete_rejects_generation_and_cross_posting_tasks(self):
         """生成中和发布中的任务都在读取目录，删除接口必须返回 409。"""

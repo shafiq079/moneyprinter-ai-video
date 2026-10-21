@@ -41,6 +41,53 @@ def _log_record(file_path, message="generation finished"):
     }
 
 
+def test_task_history_exposes_local_ai_artifact_package_view():
+    tree = ast.parse(WEBUI_MAIN.read_text(encoding="utf-8"))
+    functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+    }
+
+    task_table_calls = {
+        _attribute_name(node.func)
+        for node in ast.walk(functions["_render_task_table"])
+        if isinstance(node, ast.Call)
+    }
+    artifact_view_calls = {
+        _attribute_name(node.func)
+        for node in ast.walk(functions["_render_artifact_package_view"])
+        if isinstance(node, ast.Call)
+    }
+    manager_calls = {
+        _attribute_name(node.func)
+        for node in ast.walk(functions["_render_task_manager_panel"])
+        if isinstance(node, ast.Call)
+    }
+
+    assert "_select_artifact_package_task" in task_table_calls
+    assert "webui_task.submit_local_ai_resume" in task_table_calls
+    assert "task_artifacts.build_output_package" in artifact_view_calls
+    assert "_render_artifact_package_view" in manager_calls
+
+
+def test_generation_controls_expose_same_task_local_ai_rerender():
+    tree = ast.parse(WEBUI_MAIN.read_text(encoding="utf-8"))
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_render_generation_controls"
+    )
+    calls = {
+        _attribute_name(node.func)
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call)
+    }
+
+    assert "webui_task.submit_local_ai_rerender" in calls
+
+
 def test_generation_controls_submit_background_task_instead_of_blocking_page():
     """
     WebUI 生成按钮不能重新直接调用同步流水线。
@@ -259,6 +306,229 @@ def test_completed_task_renders_subject_named_video_download(
         open_task_folder.assert_called_once_with("download-test")
 
 
+def test_submit_scene_regeneration_queues_background_work():
+    task_id = "scene-regeneration-submit"
+    webui_task.sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_COMPLETE,
+        progress=100,
+        videos=["/tmp/final-1.mp4"],
+    )
+    try:
+        with patch.object(webui_task._task_manager, "add_task") as add_task:
+            webui_task.submit_scene_regeneration(
+                task_id,
+                2,
+                prompt="A revised scene prompt",
+                seed=77,
+                capture_logs=False,
+            )
+
+        add_task.assert_called_once()
+        self_kwargs = add_task.call_args.kwargs
+        assert self_kwargs["task_id"] == task_id
+        assert self_kwargs["scene_id"] == 2
+        assert self_kwargs["prompt"] == "A revised scene prompt"
+        assert self_kwargs["seed"] == 77
+        state = webui_task.sm.state.get_task(task_id)
+        assert state["state"] == const.TASK_STATE_PROCESSING
+        assert state["current_stage"] == "scene_regeneration_queued"
+    finally:
+        webui_task.sm.state.delete_task(task_id)
+
+
+def test_scene_regeneration_worker_uses_runtime_config_lock():
+    with (
+        patch.object(
+            webui_task.tm,
+            "regenerate_local_ai_scene",
+            return_value={"scene_id": 1},
+        ) as regenerate,
+        patch.object(
+            webui_task.config,
+            "runtime_config_lock",
+            return_value=nullcontext(),
+        ) as runtime_lock,
+    ):
+        result = webui_task._run_scene_regeneration(
+            "scene-worker",
+            1,
+            "Prompt",
+            42,
+            capture_logs=False,
+        )
+
+    assert result == {"scene_id": 1}
+    runtime_lock.assert_called_once_with()
+    regenerate.assert_called_once_with(
+        "scene-worker",
+        1,
+        prompt="Prompt",
+        seed=42,
+    )
+
+
+def test_submit_scene_version_restore_queues_background_work():
+    task_id = "scene-version-restore-submit"
+    webui_task.sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_COMPLETE,
+        progress=100,
+        videos=["/tmp/final-1.mp4"],
+    )
+    try:
+        with patch.object(webui_task._task_manager, "add_task") as add_task:
+            webui_task.submit_scene_version_restore(
+                task_id,
+                3,
+                relative_path="generated_ai/scene-003/v001.mp4",
+                capture_logs=False,
+            )
+
+        add_task.assert_called_once()
+        kwargs = add_task.call_args.kwargs
+        assert kwargs["task_id"] == task_id
+        assert kwargs["scene_id"] == 3
+        assert (
+            kwargs["relative_path"]
+            == "generated_ai/scene-003/v001.mp4"
+        )
+        state = webui_task.sm.state.get_task(task_id)
+        assert state["state"] == const.TASK_STATE_PROCESSING
+        assert state["current_stage"] == "scene_version_restore_queued"
+    finally:
+        webui_task.sm.state.delete_task(task_id)
+
+
+def test_scene_version_restore_worker_uses_runtime_config_lock():
+    with (
+        patch.object(
+            webui_task.tm,
+            "restore_local_ai_scene_version",
+            return_value={"scene_id": 2, "restored": True},
+        ) as restore,
+        patch.object(
+            webui_task.config,
+            "runtime_config_lock",
+            return_value=nullcontext(),
+        ) as runtime_lock,
+    ):
+        result = webui_task._run_scene_version_restore(
+            "scene-restore-worker",
+            2,
+            "generated_ai/scene-002/v001.mp4",
+            capture_logs=False,
+        )
+
+    assert result == {"scene_id": 2, "restored": True}
+    runtime_lock.assert_called_once_with()
+    restore.assert_called_once_with(
+        "scene-restore-worker",
+        2,
+        "generated_ai/scene-002/v001.mp4",
+    )
+
+
+def test_submit_local_ai_rerender_validates_before_queueing():
+    task_id = "render-only-submit"
+    params = VideoParams(
+        video_subject="rerender",
+        video_source="ltx25_local",
+    )
+    validated = params.model_copy(deep=True)
+
+    with (
+        patch.object(
+            webui_task.tm,
+            "validate_local_ai_rerender",
+            return_value=validated,
+        ) as validate,
+        patch.object(webui_task._task_manager, "add_task") as add_task,
+    ):
+        webui_task.submit_local_ai_rerender(
+            task_id,
+            params,
+            capture_logs=False,
+        )
+
+    validate.assert_called_once_with(task_id, params)
+    add_task.assert_called_once()
+    queued = add_task.call_args.kwargs
+    assert queued["task_id"] == task_id
+    assert queued["params"] == validated
+    assert queued["params"] is validated
+    state = webui_task.sm.state.get_task(task_id)
+    assert state["state"] == const.TASK_STATE_PROCESSING
+    assert state["current_stage"] == "final_rerender_queued"
+    webui_task.sm.state.delete_task(task_id)
+
+
+def test_submit_local_ai_rerender_rejection_does_not_mark_task_processing():
+    task_id = "render-only-rejected"
+    params = VideoParams(
+        video_subject="rerender",
+        video_source="ltx25_local",
+    )
+    webui_task.sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_COMPLETE,
+        progress=100,
+        videos=["/tmp/final-1.mp4"],
+    )
+    try:
+        with (
+            patch.object(
+                webui_task.tm,
+                "validate_local_ai_rerender",
+                side_effect=ValueError("unsafe field changed"),
+            ),
+            patch.object(webui_task._task_manager, "add_task") as add_task,
+            pytest.raises(ValueError, match="unsafe field changed"),
+        ):
+            webui_task.submit_local_ai_rerender(
+                task_id,
+                params,
+                capture_logs=False,
+            )
+
+        add_task.assert_not_called()
+        state = webui_task.sm.state.get_task(task_id)
+        assert state["state"] == const.TASK_STATE_COMPLETE
+    finally:
+        webui_task.sm.state.delete_task(task_id)
+
+
+def test_local_ai_rerender_worker_uses_runtime_config_lock():
+    params = VideoParams(
+        video_subject="rerender",
+        video_source="ltx25_local",
+    )
+    with (
+        patch.object(
+            webui_task.tm,
+            "rerender_local_ai_task",
+            return_value={"render_only": True},
+        ) as rerender,
+        patch.object(
+            webui_task.config,
+            "runtime_config_lock",
+            return_value=nullcontext(),
+        ) as runtime_lock,
+    ):
+        result = webui_task._run_local_ai_rerender(
+            "render-only-worker",
+            params,
+            capture_logs=False,
+        )
+
+    assert result == {"render_only": True}
+    runtime_lock.assert_called_once_with()
+    rerender.assert_called_once_with(
+        "render-only-worker",
+        params,
+    )
+
+
 def test_submit_generation_returns_while_pipeline_is_still_running():
     """后台流水线未结束时，提交函数必须已经返回，让 Streamlit 完成本次渲染。"""
     task_id = "background-submit-test"
@@ -309,6 +579,28 @@ def test_submit_generation_copies_params_before_starting_worker():
     webui_task.sm.state.delete_task("copied-params-test")
 
 
+def test_factual_review_only_queues_script_stage_without_provider_inputs():
+    task_id = "factual-review-only"
+    params = VideoParams(video_subject="Moon", content_mode="factual")
+    with patch.object(webui_task._task_manager, "add_task") as add_task:
+        webui_task.submit_generation(
+            task_id, params, capture_logs=False, stop_at="script"
+        )
+    submitted = add_task.call_args.kwargs
+    assert submitted["stop_at"] == "script"
+    assert submitted["params"] == params
+    assert submitted["params"] is not params
+    assert submitted["loomloom_video_request"] is None
+    webui_task.sm.state.delete_task(task_id)
+
+    with patch.object(webui_task._task_manager, "add_task") as add_task:
+        with pytest.raises(ValueError, match="factual mode"):
+            webui_task.submit_generation(
+                task_id, VideoParams(video_subject="Garden"), stop_at="script"
+            )
+    add_task.assert_not_called()
+
+
 def test_submit_generation_keeps_voxcpm_reference_audio_out_of_params():
     """参考音频仅属于内存中的当前请求，不能进入可持久化任务参数。"""
     params = VideoParams(video_subject="task isolation")
@@ -356,6 +648,70 @@ def test_scheduling_failure_is_saved_as_terminal_task_state():
     assert task["failed_stage"] == "scheduling"
     assert task["error"] == "RuntimeError: worker unavailable"
     webui_task.sm.state.delete_task(task_id)
+
+
+def test_resume_queues_original_task_id_and_resets_stale_cancellation():
+    task_id = "failed-local-ai-resume"
+    params = VideoParams(video_subject="Retry", video_source="ltx25_hf")
+    webui_task.sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_CANCELLED,
+        progress=43,
+        cancel_requested=True,
+        failed_stage="materials",
+        error="Task cancelled by user",
+    )
+    context = {"params": params}
+    try:
+        with (
+            patch.object(webui_task.tm, "load_local_ai_resume_context", return_value=context),
+            patch.object(webui_task._task_manager, "add_task") as add_task,
+        ):
+            webui_task.submit_local_ai_resume(task_id, capture_logs=False)
+        submission = add_task.call_args
+        assert submission.kwargs["task_id"] == task_id
+        assert submission.kwargs["resume_context"] is context
+        assert submission.kwargs["params"] is params
+        queued = webui_task.sm.state.get_task(task_id)
+        assert queued["state"] == const.TASK_STATE_PROCESSING
+        assert queued["cancel_requested"] is False
+        assert queued["failed_stage"] is None
+        assert queued["current_stage"] == "resume_queued"
+    finally:
+        webui_task.sm.state.delete_task(task_id)
+
+
+def test_resume_queue_failure_restores_original_failed_state():
+    task_id = "resume-queue-failure"
+    webui_task.sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_FAILED,
+        progress=43,
+        failed_stage="materials",
+        error="remote quota exceeded",
+    )
+    try:
+        with (
+            patch.object(
+                webui_task.tm,
+                "load_local_ai_resume_context",
+                return_value={"params": VideoParams(video_subject="Retry")},
+            ),
+            patch.object(
+                webui_task._task_manager,
+                "add_task",
+                side_effect=RuntimeError("queue unavailable"),
+            ),
+            pytest.raises(RuntimeError, match="queue unavailable"),
+        ):
+            webui_task.submit_local_ai_resume(task_id, capture_logs=False)
+        restored = webui_task.sm.state.get_task(task_id)
+        assert restored["state"] == const.TASK_STATE_FAILED
+        assert restored["failed_stage"] == "materials"
+        assert restored["progress"] == 43
+        assert restored["error"] == "remote quota exceeded"
+    finally:
+        webui_task.sm.state.delete_task(task_id)
 
 
 def test_worker_logs_are_available_without_streamlit_session_state():

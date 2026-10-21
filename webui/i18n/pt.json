@@ -348,6 +348,10 @@
     "Onboarding Next": "Próximo",
     "Onboarding Done": "Concluir",
     "Regenerate Task": "Gerar novamente",
+    "Resume Task": "Retomar",
+    "Resume Task Help": "Continue esta tarefa de IA local com a narração, o plano de cenas e os clipes válidos salvos.",
+    "Resume Task Failed": "Não foi possível retomar a tarefa",
+    "Resume Task Queued": "Retomada da tarefa adicionada à fila",
     "Regenerate Task Confirmation": "Carregar o roteiro e as configurações desta tarefa? Os valores atuais serão substituídos, mas a tarefa e o vídeo originais não serão alterados.",
     "Load Task Configuration": "Carregar configurações",
     "Task Restore Failed": "Esta tarefa não contém configurações reutilizáveis.",
@@ -418,6 +422,7 @@
     "OFox Upstream Vendor Help": "Qual fornecedor upstream atende a geração de vídeo do OFox. BytePlus (internacional) é o padrão, com política de conteúdo consistente; Volcano Engine é o fornecedor da China continental; Auto deixa o gateway OFox balancear a carga entre fornecedores.",
     "OFox Vendor BytePlus": "BytePlus (internacional, padrão)",
     "OFox Vendor Volcengine": "Volcano Engine (China continental)",
-    "OFox Vendor Auto": "Automático (balanceamento do gateway)"
+    "OFox Vendor Auto": "Automático (balanceamento do gateway)",
+    "Local AI Multiple Videos Help": "As cenas de IA local são geradas uma vez por tarefa e compartilhadas entre todas as {count} variantes finais de saída. Aumentar este valor executa novamente a composição; não multiplica a inferência de cenas Wan/LTX, a menos que você regenere explicitamente uma cena."
   }
 }

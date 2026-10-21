@@ -594,6 +594,33 @@ def generate_silent_audio(duration_seconds: float, output_file: str) -> bool:
     return True
 
 
+def prepare_no_voice_audio(
+    text: str,
+    voice_file: str,
+) -> tuple[SubMaker, float] | None:
+    """Create the deterministic silent timing track used by No Voice mode."""
+
+    duration_seconds = estimate_no_voice_duration(text)
+    if not generate_silent_audio(duration_seconds, voice_file):
+        return None
+
+    measured_duration = get_audio_duration(voice_file)
+    if not math.isfinite(measured_duration) or measured_duration <= 0:
+        logger.error(
+            "silent audio duration is unavailable, "
+            f"file: {voice_file}"
+        )
+        return None
+
+    sub_maker = ensure_legacy_submaker_fields(SubMaker())
+    sub_maker = populate_legacy_submaker_with_full_text(
+        sub_maker=sub_maker,
+        text=text,
+        audio_duration_seconds=measured_duration,
+    )
+    return sub_maker, float(measured_duration)
+
+
 def _single_tts(
     text: str,
     voice_name: str,
@@ -605,16 +632,8 @@ def _single_tts(
     voxcpm_prompt_text: str = "",
 ) -> Union[SubMaker, None]:
     if is_no_voice(voice_name):
-        duration_seconds = estimate_no_voice_duration(text)
-        if not generate_silent_audio(duration_seconds, voice_file):
-            return None
-
-        sub_maker = ensure_legacy_submaker_fields(SubMaker())
-        return populate_legacy_submaker_with_full_text(
-            sub_maker=sub_maker,
-            text=text,
-            audio_duration_seconds=duration_seconds,
-        )
+        prepared = prepare_no_voice_audio(text, voice_file)
+        return prepared[0] if prepared is not None else None
 
     if is_azure_v2_voice(voice_name):
         return azure_tts_v2(

@@ -2,6 +2,7 @@ import json
 import math
 import os
 import re
+import shutil
 import socket
 import threading
 import time
@@ -16,6 +17,8 @@ from app.config import config
 from app.models import const
 from app.models.schema import VideoConcatMode, VideoParams
 from app.services import bgm as bgm_service
+from app.services import factual_content
+from app.services import generation_manifest, local_ai, scene_planner
 from app.services import (
     elevenlabs_music,
     llm,
@@ -101,6 +104,79 @@ def _get_video_music_prompt(params: VideoParams) -> str:
     if params.bgm_type == "sonilo" and not prompt:
         prompt = str(params.sonilo_bgm_prompt or "").strip()
     return prompt
+
+
+class TaskCancellationRequested(RuntimeError):
+    def __init__(self, stage: str) -> None:
+        self.stage = str(stage or "pipeline")
+        super().__init__(f"task cancellation requested at {self.stage}")
+
+
+def request_task_cancellation(task_id: str) -> bool:
+    """Persist a cooperative cancellation request for a running/queued task."""
+
+    task = sm.state.get_task(task_id)
+    if not task:
+        return False
+
+    state = task.get("state")
+    try:
+        state = int(state)
+    except (TypeError, ValueError):
+        pass
+    if state != const.TASK_STATE_PROCESSING:
+        return False
+
+    return bool(
+        sm.state.patch_task(
+            task_id,
+            cancel_requested=True,
+            cancel_requested_at=time.time(),
+        )
+    )
+
+
+def is_cancellation_requested(task_id: str) -> bool:
+    task = sm.state.get_task(task_id) or {}
+    return bool(task.get("cancel_requested"))
+
+
+def _raise_if_cancelled(task_id: str, stage: str) -> None:
+    if is_cancellation_requested(task_id):
+        raise TaskCancellationRequested(stage)
+
+
+def _mark_task_cancelled(task_id: str, stage: str) -> dict:
+    """Persist a terminal cooperative-cancellation state without deleting assets."""
+
+    existing = sm.state.get_task(task_id) or {}
+    progress = int(existing.get("progress", 0) or 0)
+    fields = {
+        "state": const.TASK_STATE_CANCELLED,
+        "progress": progress,
+        "failed_stage": str(stage or "cancelled"),
+        "error": "Task cancelled by user",
+        "cancel_requested": True,
+        "cancelled": True,
+        "current_stage": None,
+    }
+    if not sm.state.patch_task(task_id, **fields):
+        sm.state.update_task(
+            task_id,
+            state=fields["state"],
+            progress=fields["progress"],
+            failed_stage=fields["failed_stage"],
+            error=fields["error"],
+            cancel_requested=True,
+            cancelled=True,
+            current_stage=None,
+        )
+    result = dict(existing)
+    result.update({"task_id": task_id, **fields})
+    logger.info(
+        f"task cancelled, task_id: {task_id}, stage: {fields['failed_stage']}"
+    )
+    return result
 
 
 def is_task_busy(task: dict | None) -> bool:
@@ -266,6 +342,7 @@ def _mark_task_failed(
     progress = int((existing_task or {}).get("progress", 0) or 0)
     logger.error(f"task failed, task_id: {task_id}, stage: {stage}, error: {message}")
     failure = {
+        **(existing_task or {}),
         "task_id": task_id,
         "state": const.TASK_STATE_FAILED,
         "progress": progress,
@@ -287,6 +364,23 @@ def _mark_task_failed(
         **failure_details,
     )
     return failure
+
+
+def _local_ai_recovery_action(
+    *,
+    stage: str,
+    error_code: str = "",
+) -> str:
+    """Return a stable recovery hint for local-AI task failures."""
+
+    if stage == "preflight":
+        return "fix_provider_setup_and_retry"
+    code = str(error_code or "").lower()
+    if code in {"cuda_oom", "runtime_load_error"}:
+        return "adjust_gpu_settings_and_retry_scene"
+    if code in {"worker_exited", "worker_not_running"}:
+        return "restart_local_ai_worker_and_retry_scene"
+    return "retry_scene"
 
 
 def generate_script(task_id, params):
@@ -519,6 +613,35 @@ def generate_audio(
         return None, None, None
 
     if not custom_audio_file:
+        if voice.is_no_voice(getattr(params, "voice_name", "")):
+            logger.info(
+                "no-voice mode selected; skipping TTS provider and preparing "
+                "a silent timing track"
+            )
+            audio_file = path.join(utils.task_dir(task_id), "audio.mp3")
+            prepared = voice.prepare_no_voice_audio(
+                video_script,
+                audio_file,
+            )
+            if prepared is None:
+                _mark_task_failed(
+                    task_id,
+                    "audio",
+                    "failed to prepare silent no-voice timing track",
+                )
+                return None, None, None
+
+            sub_maker, measured_duration = prepared
+            audio_duration = math.ceil(measured_duration)
+            if audio_duration <= 0:
+                _mark_task_failed(
+                    task_id,
+                    "audio",
+                    "silent no-voice duration is zero",
+                )
+                return None, None, None
+            return audio_file, audio_duration, sub_maker
+
         reusable_preview = _resolve_reusable_voice_preview(
             task_id,
             params,
@@ -597,6 +720,30 @@ def generate_subtitle(task_id, params, video_script, sub_maker, audio_file):
         logger.info("subtitle provider is empty, skip subtitle generation")
         return ""
 
+    # No Voice uses a deterministic script timeline over a silent timing track.
+    # Do not send silence to Whisper: that would load/transcribe a speech model
+    # even though the user explicitly requested no generated voice.
+    if (
+        voice.is_no_voice(getattr(params, "voice_name", ""))
+        and sub_maker is not None
+    ):
+        voice.create_subtitle(
+            text=video_script,
+            sub_maker=sub_maker,
+            subtitle_file=subtitle_path,
+            word_level=(
+                getattr(params, "subtitle_display_mode", "sentence")
+                == "word_by_word"
+            ),
+        )
+        subtitle_lines = subtitle.file_to_subtitles(subtitle_path)
+        if not subtitle_lines:
+            logger.warning(
+                "no-voice subtitle timeline did not produce a valid subtitle file"
+            )
+            return ""
+        return subtitle_path
+
     if sub_maker is None and subtitle_provider != "whisper":
         # 自定义音频不会经过 TTS，因此没有 Edge/Azure 等 TTS 返回的
         # sub_maker 时间轴。只有 Whisper 可以直接从音频文件转写字幕；
@@ -651,7 +798,130 @@ def get_video_materials(
     video_terms,
     audio_duration,
     loomloom_video_request: loomloom.LoomLoomConfirmedVideoRequest | None = None,
+    video_script: str = "",
+    local_ai_provider=None,
+    resume_scene_plan: scene_planner.ScenePlan | None = None,
 ):
+    if local_ai.is_local_ai_source(params.video_source):
+        logger.info("\n\n## generating local AI video materials")
+        aspect = getattr(params.video_aspect, "value", params.video_aspect)
+        try:
+            provider = local_ai_provider or local_ai.create_provider(
+                params.video_source,
+                generation_mode=params.local_ai_generation_mode,
+            )
+            sm.state.update_task(
+                task_id,
+                state=const.TASK_STATE_PROCESSING,
+                progress=39,
+                current_stage="scene_planning",
+                local_ai_provider=provider.provider_id,
+                generation_mode=params.local_ai_generation_mode,
+            )
+            scene_plan = resume_scene_plan or scene_planner.get_or_create_scene_plan(
+                task_id,
+                video_script,
+                video_subject=params.video_subject or "",
+                audio_duration=audio_duration,
+                max_scene_duration=local_ai.scene_duration_limit(
+                    provider,
+                    params.video_clip_duration,
+                ),
+                aspect=str(aspect),
+                base_seed=(
+                    params.local_ai_seed
+                    if params.local_ai_seed is not None
+                    else local_ai.provider_base_seed(provider)
+                ),
+                provider_settings=local_ai.provider_generation_settings(provider),
+                visual_style=params.local_ai_visual_style,
+                # The fake provider is a CPU/CI transport test. Keep it independent
+                # from configured LLM/network availability.
+                use_llm=provider.provider_id != local_ai.FAKE_SOURCE_ID,
+            )
+            scenes = list(scene_plan.scenes)
+            sm.state.update_task(
+                task_id,
+                state=const.TASK_STATE_PROCESSING,
+                progress=40,
+                current_stage="local_ai_video",
+                local_ai_provider=provider.provider_id,
+                generation_mode=params.local_ai_generation_mode,
+                scene_plan_source=scene_plan.source,
+                scene_plan_count=len(scenes),
+            )
+
+            def report_scene_progress(
+                current: int,
+                total: int,
+                scene,
+                status: str,
+                reused: bool,
+            ) -> None:
+                completed = current if status == "ready" else max(0, current - 1)
+                progress = min(49, 40 + int((completed / max(1, total)) * 9))
+                sm.state.update_task(
+                    task_id,
+                    state=const.TASK_STATE_PROCESSING,
+                    progress=progress,
+                    current_stage="local_ai_video",
+                    local_ai_provider=provider.provider_id,
+                    generation_mode=params.local_ai_generation_mode,
+                    scene_progress={
+                        "current": current,
+                        "total": total,
+                        "scene_id": scene.scene_id,
+                        "status": status,
+                        "reused": reused,
+                    },
+                )
+
+            generated_materials = local_ai.generate_scene_materials(
+                task_id,
+                provider=provider,
+                scenes=scenes,
+                progress_callback=report_scene_progress,
+                cancel_check=lambda: is_cancellation_requested(task_id),
+            )
+            provenance = generation_manifest.local_ai_material_records(task_id)
+            task_artifacts.patch_script_data(
+                task_id,
+                local_ai_materials=provenance,
+            )
+            sm.state.update_task(
+                task_id,
+                local_ai_materials=provenance,
+                local_ai_variant_material_policy="shared",
+                local_ai_output_variant_count=max(
+                    int(getattr(params, "video_count", 1) or 1),
+                    1,
+                ),
+            )
+            return generated_materials
+        except local_ai.LocalAICancellationRequested:
+            raise
+        except Exception as exc:
+            details = None
+            if isinstance(exc, local_ai.LocalAISceneGenerationError):
+                details = {
+                    "local_ai_provider": exc.provider_id,
+                    "scene_id": exc.scene_id,
+                    "local_ai_error_code": exc.error_code,
+                    "local_ai_error_type": exc.cause_type,
+                    "recoverable": True,
+                    "recovery_action": _local_ai_recovery_action(
+                        stage="materials",
+                        error_code=exc.error_code,
+                    ),
+                }
+            _mark_task_failed(
+                task_id,
+                "materials",
+                f"local AI generation failed: {type(exc).__name__}: {exc}",
+                details=details,
+            )
+            return None
+
     if params.video_source == "local":
         logger.info("\n\n## preprocess local materials")
         materials = video.preprocess_video(
@@ -881,11 +1151,33 @@ def _get_material_source_groups(task_id: str, video_paths: list[str]) -> dict[st
 
 
 def generate_final_videos(
-    task_id, params, downloaded_videos, audio_file, subtitle_path, audio_duration
+    task_id,
+    params,
+    downloaded_videos,
+    audio_file,
+    subtitle_path,
+    audio_duration,
+    *,
+    reuse_existing_generated_bgm: bool = False,
+    generate_missing_bgm: bool = False,
 ):
     final_video_paths = []
     combined_video_paths = []
     warnings = []
+    local_ai_final_duration = float(audio_duration or 0)
+    if local_ai.is_local_ai_source(params.video_source):
+        try:
+            measured_audio_duration = float(
+                voice.get_audio_duration(audio_file) or 0
+            )
+        except Exception as exc:
+            logger.warning(
+                "failed to measure local AI narration for final validation; "
+                f"task_id={task_id}, error={type(exc).__name__}"
+            )
+        else:
+            if math.isfinite(measured_audio_duration) and measured_audio_duration > 0:
+                local_ai_final_duration = measured_audio_duration
     allocate_batch_materials = params.video_count > 1 and params.video_source in {
         "pexels", "pixabay", "coverr", "local"
     }
@@ -903,7 +1195,11 @@ def generate_final_videos(
         and bgm_service.should_use_bgm(params.bgm_type, params.bgm_volume)
     )
     # Matching preserves keyword order; batch allocation varies each keyword's candidates.
-    if params.match_materials_to_script:
+    if local_ai.is_local_ai_source(params.video_source):
+        # Local AI clips are generated against an ordered scene plan. Shuffling them
+        # would detach visuals from the narration beats they were created for.
+        video_concat_mode = VideoConcatMode.sequential
+    elif params.match_materials_to_script:
         video_concat_mode = VideoConcatMode.sequential
     elif params.video_count == 1:
         video_concat_mode = params.video_concat_mode
@@ -970,14 +1266,41 @@ def generate_final_videos(
         # 视频配乐模式先明确禁用默认 BGM 解析，避免旧任务残留的 bgm_file 被
         # 误用。只有音量大于 0 才生成代理并调用付费 API；0 音量统一跳过。
         bgm_file_override = "" if video_music_provider else None
-        if video_music_requested:
-            service = video_music_provider["service"]
-            display_name = video_music_provider["display_name"]
-            warning_code = video_music_provider["warning_code"]
-            generated_bgm_path = path.join(
+        generated_bgm_path = (
+            path.join(
                 utils.task_dir(task_id),
                 (f"{params.bgm_type}-bgm-{index}{video_music_provider['suffix']}"),
             )
+            if video_music_provider is not None
+            else ""
+        )
+        if (
+            video_music_requested
+            and reuse_existing_generated_bgm
+            and generated_bgm_path
+            and path.isfile(generated_bgm_path)
+        ):
+            bgm_file_override = generated_bgm_path
+        elif (
+            video_music_requested
+            and reuse_existing_generated_bgm
+            and not generate_missing_bgm
+        ):
+            logger.warning(
+                "existing generated BGM is unavailable during scene rerender; "
+                f"skip paid regeneration: task_id={task_id}, video_index={index}"
+            )
+            bgm_file_override = ""
+            warnings.append(
+                {
+                    "code": "scene_rerender_bgm_missing",
+                    "video_index": index,
+                }
+            )
+        elif video_music_requested:
+            service = video_music_provider["service"]
+            display_name = video_music_provider["display_name"]
+            warning_code = video_music_provider["warning_code"]
             try:
                 service.generate_bgm(
                     video_path=combined_video_path,
@@ -1005,6 +1328,22 @@ def generate_final_videos(
             params=params,
             bgm_file_override=bgm_file_override,
         )
+        if local_ai.is_local_ai_source(params.video_source):
+            try:
+                video.validate_final_video_output(
+                    final_video_path,
+                    expected_aspect=str(
+                        getattr(params.video_aspect, "value", params.video_aspect)
+                    ),
+                    expected_duration=local_ai_final_duration,
+                    require_audio=True,
+                )
+            except video.FinalVideoValidationError:
+                try:
+                    os.remove(final_video_path)
+                except FileNotFoundError:
+                    pass
+                raise
         if (
             video_music_provider is not None
             and bgm_file_override
@@ -1027,6 +1366,663 @@ def generate_final_videos(
         combined_video_paths.append(combined_video_path)
 
     return final_video_paths, combined_video_paths, warnings
+
+
+def _scene_regeneration_task_root(task_id: str) -> str:
+    tasks_root = path.realpath(utils.task_dir())
+    task_root = path.realpath(path.join(tasks_root, str(task_id)))
+    try:
+        if path.commonpath([tasks_root, task_root]) != tasks_root:
+            raise ValueError("task path is outside the task directory")
+    except ValueError as exc:
+        raise ValueError("invalid task id for scene regeneration") from exc
+    if not path.isdir(task_root):
+        raise FileNotFoundError("task directory does not exist")
+    return task_root
+
+
+def _load_scene_regeneration_context(task_id: str):
+    task_root = _scene_regeneration_task_root(task_id)
+    script_file = path.join(task_root, "script.json")
+    with open(script_file, "r", encoding="utf-8") as stream:
+        script_data = json.load(stream)
+    if not isinstance(script_data, dict):
+        raise ValueError("task script data is invalid")
+
+    raw_params = script_data.get("params")
+    if not isinstance(raw_params, dict):
+        raise ValueError("task parameters are missing")
+    params = VideoParams.model_validate(raw_params)
+    if not local_ai.is_public_source(params.video_source):
+        raise ValueError("scene regeneration requires a public local AI source")
+
+    plan = scene_planner.load_scene_plan(task_id)
+    if plan is None:
+        raise ValueError("scene plan is missing")
+    if generation_manifest.load_manifest(task_id) is None:
+        raise ValueError("generation manifest is missing")
+
+    try:
+        state = sm.state.get_task(task_id) or {}
+    except Exception:
+        state = {}
+
+    audio_file = str(state.get("audio_file") or "").strip()
+    if not audio_file or not path.isfile(audio_file):
+        generated_audio = path.join(task_root, "audio.mp3")
+        if path.isfile(generated_audio):
+            audio_file = generated_audio
+        else:
+            requested_custom = str(params.custom_audio_file or "").strip()
+            if requested_custom:
+                try:
+                    audio_file = resolve_custom_audio_file(task_id, requested_custom)
+                except ValueError:
+                    audio_file = ""
+    if not audio_file or not path.isfile(audio_file):
+        raise ValueError(
+            "existing narration audio is unavailable; restore/regenerate the task first"
+        )
+
+    audio_duration = state.get("audio_duration")
+    if not isinstance(audio_duration, (int, float)) or audio_duration <= 0:
+        audio_duration = voice.get_audio_duration(audio_file)
+    if not audio_duration or audio_duration <= 0:
+        raise ValueError("existing narration audio duration is unavailable")
+
+    subtitle_path = str(state.get("subtitle_path") or "").strip()
+    if not subtitle_path or not path.isfile(subtitle_path):
+        candidate = path.join(task_root, "subtitle.srt")
+        subtitle_path = candidate if path.isfile(candidate) else ""
+
+    return params, plan, audio_file, subtitle_path, float(audio_duration), state
+
+
+def _existing_final_video_paths(task_root: str) -> list[str]:
+    candidates = []
+    for name in os.listdir(task_root):
+        match = re.fullmatch(r"final-(\d+)\.mp4", name)
+        if match:
+            candidates.append((int(match.group(1)), path.join(task_root, name)))
+    return [item[1] for item in sorted(candidates)]
+
+
+def load_local_ai_resume_context(task_id: str) -> dict:
+    """Load the original task inputs and completed artifacts for a same-ID retry."""
+
+    task_root = _scene_regeneration_task_root(task_id)
+    previous = sm.state.get_task(task_id) or {}
+    if is_task_busy(previous):
+        raise RuntimeError("task is already busy")
+    if previous.get("state") == const.TASK_STATE_COMPLETE:
+        raise ValueError("completed task does not need resuming")
+    if not previous and _existing_final_video_paths(task_root):
+        raise ValueError("task already has a final video")
+
+    with open(path.join(task_root, "script.json"), encoding="utf-8") as stream:
+        script_data = json.load(stream)
+    if not isinstance(script_data, dict) or not isinstance(
+        script_data.get("params"), dict
+    ):
+        raise ValueError("saved task parameters are missing")
+    params = VideoParams.model_validate(script_data["params"])
+    if not local_ai.is_local_ai_source(params.video_source):
+        raise ValueError("resume currently supports local AI video tasks")
+    script = script_data.get("script")
+    if not isinstance(script, str) or not script.strip():
+        raise ValueError("saved video script is unavailable")
+    if params.content_mode == "factual":
+        factual_content.validate_saved_approval(
+            task_id, script, factual_content.validate_sources(params)
+        )
+
+    plan = scene_planner.load_scene_plan(task_id)
+    manifest = generation_manifest.load_manifest(task_id)
+    if plan is None or manifest is None:
+        raise ValueError("scene plan or generation manifest is missing")
+    if manifest.get("provider_id") != params.video_source or {
+        scene.scene_id for scene in plan.scenes
+    } != {record.get("scene_id") for record in manifest["scenes"]}:
+        raise ValueError("scene plan and generation manifest do not match the task")
+
+    # Never trust an arbitrary path from persisted task state. Generated and
+    # uploaded narration must both be inside this task's own directory.
+    audio_file = (
+        resolve_custom_audio_file(task_id, params.custom_audio_file)
+        if params.custom_audio_file
+        else path.join(task_root, "audio.mp3")
+    )
+    audio_path = path.realpath(audio_file)
+    if not path.isfile(audio_path) or path.commonpath(
+        [path.realpath(task_root), audio_path]
+    ) != path.realpath(task_root):
+        raise ValueError("saved task narration is unavailable")
+    if voice.get_audio_duration(audio_path) <= 0:
+        raise ValueError("saved task narration is invalid")
+
+    subtitle_file = path.join(task_root, "subtitle.srt")
+    if path.isfile(subtitle_file) and params.subtitle_enabled:
+        if not subtitle.file_to_subtitles(subtitle_file):
+            raise ValueError("saved task subtitles are invalid")
+    return {
+        "params": params,
+        "script": script,
+        "audio_file": audio_path,
+        # The saved plan was generated from this exact duration. Reusing it
+        # avoids a new Scene Director call and preserves all scene prompts.
+        "audio_duration": round(sum(s.target_duration for s in plan.scenes), 3),
+        "subtitle_path": subtitle_file if path.isfile(subtitle_file) else "",
+        "scene_plan": plan,
+    }
+
+
+_LOCAL_AI_RENDER_ONLY_FIELDS = frozenset(
+    {
+        "video_fit_mode",
+        "video_concat_mode",
+        "video_transition_mode",
+        "video_clip_speed",
+        "video_count",
+        "voice_volume",
+        "bgm_volume",
+        "subtitle_enabled",
+        "subtitle_position",
+        "subtitle_display_mode",
+        "subtitle_animation",
+        "custom_position",
+        "font_name",
+        "text_fore_color",
+        "text_background_color",
+        "rounded_subtitle_background",
+        "font_size",
+        "stroke_color",
+        "stroke_width",
+        "n_threads",
+    }
+)
+
+
+def _assert_render_only_params(
+    original: VideoParams,
+    proposed: VideoParams,
+) -> None:
+    """Reject any rerender change that would require new source/audio generation."""
+
+    original_values = original.model_dump(mode="json")
+    proposed_values = proposed.model_dump(mode="json")
+    changed_unsafe = sorted(
+        key
+        for key in original_values.keys() | proposed_values.keys()
+        if key not in _LOCAL_AI_RENDER_ONLY_FIELDS
+        and original_values.get(key) != proposed_values.get(key)
+    )
+    if changed_unsafe:
+        raise ValueError(
+            "render-only rerender cannot change generation inputs: "
+            + ", ".join(changed_unsafe)
+        )
+
+
+def _existing_render_paths(task_root: str) -> list[str]:
+    candidates: list[tuple[int, int, str]] = []
+    for name in os.listdir(task_root):
+        final_match = re.fullmatch(r"final-(\d+)\.mp4", name)
+        combined_match = re.fullmatch(r"combined-(\d+)\.mp4", name)
+        if final_match:
+            candidates.append(
+                (int(final_match.group(1)), 1, path.join(task_root, name))
+            )
+        elif combined_match:
+            candidates.append(
+                (int(combined_match.group(1)), 0, path.join(task_root, name))
+            )
+    return [item[2] for item in sorted(candidates)]
+
+
+def _backup_render_paths(
+    task_root: str,
+    *,
+    suffix: str,
+) -> list[tuple[str, str]]:
+    backups: list[tuple[str, str]] = []
+    for source in _existing_render_paths(task_root):
+        backup = f"{source}.{suffix}"
+        shutil.copy2(source, backup)
+        backups.append((source, backup))
+    return backups
+
+
+def _clear_render_paths(task_root: str) -> None:
+    for candidate in _existing_render_paths(task_root):
+        try:
+            os.remove(candidate)
+        except FileNotFoundError:
+            pass
+
+
+def _restore_render_backups(
+    task_root: str,
+    backups: list[tuple[str, str]],
+) -> None:
+    _clear_render_paths(task_root)
+    for original, backup in backups:
+        if path.isfile(backup):
+            os.replace(backup, original)
+
+
+def _discard_render_backups(backups: list[tuple[str, str]]) -> None:
+    for _, backup in backups:
+        try:
+            os.remove(backup)
+        except FileNotFoundError:
+            pass
+
+
+def validate_local_ai_rerender(
+    task_id: str,
+    params: VideoParams,
+) -> VideoParams:
+    """Validate a proposed render-only rerender before it is queued."""
+
+    (
+        stored_params,
+        _plan,
+        _audio_file,
+        subtitle_path,
+        _audio_duration,
+        prior_state,
+    ) = _load_scene_regeneration_context(task_id)
+    if is_task_busy(prior_state):
+        raise RuntimeError("task is already busy")
+
+    proposed = VideoParams.model_validate(params.model_dump(mode="json"))
+    _assert_render_only_params(stored_params, proposed)
+    if proposed.subtitle_enabled and not subtitle_path:
+        raise ValueError(
+            "render-only rerender cannot enable subtitles because the existing "
+            "task has no subtitle artifact"
+        )
+    generation_manifest.active_scene_paths(task_id)
+    return proposed
+
+
+def rerender_local_ai_task(
+    task_id: str,
+    params: VideoParams | None = None,
+) -> dict:
+    """Rebuild final outputs from stored local-AI materials without inference."""
+
+    (
+        stored_params,
+        _plan,
+        audio_file,
+        subtitle_path,
+        audio_duration,
+        prior_state,
+    ) = _load_scene_regeneration_context(task_id)
+    if is_task_busy(prior_state):
+        raise RuntimeError("task is already busy")
+
+    render_params = (
+        stored_params
+        if params is None
+        else validate_local_ai_rerender(task_id, params)
+    )
+    if params is None and render_params.subtitle_enabled and not subtitle_path:
+        raise ValueError(
+            "render-only rerender cannot enable subtitles because the existing "
+            "task has no subtitle artifact"
+        )
+
+    materials = generation_manifest.active_scene_paths(task_id)
+    task_root = _scene_regeneration_task_root(task_id)
+    previous_final_paths = _existing_final_video_paths(task_root)
+    backups = _backup_render_paths(
+        task_root,
+        suffix="render-only-rerender-backup",
+    )
+
+    sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_PROCESSING,
+        progress=70,
+        current_stage="final_rerender",
+        render_only_rerender=True,
+        render_only_rerender_error=None,
+    )
+
+    try:
+        # Starting from a clean render surface avoids stale final-N/combined-N
+        # files when video_count is reduced. Scene/audio/subtitle artifacts are
+        # untouched and the previous renders are recoverable from backups.
+        _clear_render_paths(task_root)
+        final_paths, combined_paths, warnings = generate_final_videos(
+            task_id,
+            render_params,
+            materials,
+            audio_file,
+            subtitle_path if render_params.subtitle_enabled else "",
+            audio_duration,
+            reuse_existing_generated_bgm=True,
+        )
+    except Exception as exc:
+        _restore_render_backups(task_root, backups)
+        sm.state.update_task(
+            task_id,
+            state=(
+                const.TASK_STATE_COMPLETE
+                if previous_final_paths
+                else const.TASK_STATE_FAILED
+            ),
+            progress=100 if previous_final_paths else 0,
+            current_stage=None,
+            videos=previous_final_paths or prior_state.get("videos"),
+            combined_videos=prior_state.get("combined_videos"),
+            render_only_rerender=True,
+            render_only_rerender_error=f"{type(exc).__name__}: {exc}",
+        )
+        raise
+    else:
+        _discard_render_backups(backups)
+
+    # Persist only after a successful rerender. Script/terms and all
+    # generation-driving parameters remain unchanged by the guard above.
+    task_artifacts.patch_script_data(
+        task_id,
+        params=render_params.model_dump(mode="json"),
+    )
+
+    result = {
+        "videos": final_paths,
+        "combined_videos": combined_paths,
+        "materials": materials,
+        "warnings": warnings,
+        "render_only": True,
+    }
+    sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_COMPLETE,
+        progress=100,
+        current_stage=None,
+        videos=final_paths,
+        combined_videos=combined_paths,
+        materials=materials,
+        audio_file=audio_file,
+        audio_duration=audio_duration,
+        subtitle_path=subtitle_path,
+        warnings=warnings or None,
+        render_only_rerender=True,
+        render_only_rerender_error=None,
+    )
+    return result
+
+
+def regenerate_local_ai_scene(
+    task_id: str,
+    scene_id: int,
+    *,
+    prompt: str | None = None,
+    seed: int | None = None,
+) -> dict:
+    """Regenerate one local-AI scene and rerender using existing task artifacts."""
+
+    params, plan, audio_file, subtitle_path, audio_duration, prior_state = (
+        _load_scene_regeneration_context(task_id)
+    )
+    if is_task_busy(prior_state):
+        raise RuntimeError("task is already busy")
+
+    revised_plan, revised_scene = scene_planner.revise_scene_plan(
+        plan,
+        scene_id,
+        prompt=prompt,
+        seed=seed,
+    )
+    provider_mode = str(
+        revised_scene.provider_settings.get(
+            "mode",
+            params.local_ai_generation_mode,
+        )
+    )
+    provider = local_ai.prepare_provider(
+        params.video_source,
+        generation_mode=provider_mode,
+    )
+
+    task_root = _scene_regeneration_task_root(task_id)
+    previous_final_paths = _existing_final_video_paths(task_root)
+    backups: list[tuple[str, str]] = []
+    for final_path in previous_final_paths:
+        backup_path = f"{final_path}.scene-regeneration-backup"
+        shutil.copy2(final_path, backup_path)
+        backups.append((final_path, backup_path))
+
+    sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_PROCESSING,
+        progress=40,
+        current_stage="scene_regeneration",
+        local_ai_provider=provider.provider_id,
+        generation_mode=provider_mode,
+        scene_progress={
+            "current": 1,
+            "total": 1,
+            "scene_id": revised_scene.scene_id,
+            "status": "generating",
+            "reused": False,
+        },
+        scene_regeneration_error=None,
+    )
+
+    try:
+        new_scene_path = local_ai.regenerate_scene_material(
+            task_id,
+            provider=provider,
+            scene=revised_scene,
+        )
+        scene_planner.save_scene_plan(task_id, revised_plan)
+        materials = generation_manifest.active_scene_paths(task_id)
+        final_paths, combined_paths, warnings = generate_final_videos(
+            task_id,
+            params,
+            materials,
+            audio_file,
+            subtitle_path,
+            audio_duration,
+            reuse_existing_generated_bgm=True,
+        )
+    except Exception as exc:
+        for final_path, backup_path in backups:
+            if path.isfile(backup_path):
+                os.replace(backup_path, final_path)
+        sm.state.update_task(
+            task_id,
+            state=const.TASK_STATE_COMPLETE
+            if previous_final_paths
+            else const.TASK_STATE_FAILED,
+            progress=100 if previous_final_paths else 0,
+            current_stage=None,
+            videos=previous_final_paths or prior_state.get("videos"),
+            scene_regeneration_error=f"{type(exc).__name__}: {exc}",
+            scene_regeneration_scene_id=int(scene_id),
+        )
+        raise
+    else:
+        for _, backup_path in backups:
+            try:
+                os.remove(backup_path)
+            except FileNotFoundError:
+                pass
+
+    result = {
+        "scene_id": revised_scene.scene_id,
+        "scene_file": new_scene_path,
+        "videos": final_paths,
+        "combined_videos": combined_paths,
+        "materials": materials,
+        "warnings": warnings,
+    }
+    sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_COMPLETE,
+        progress=100,
+        current_stage=None,
+        videos=final_paths,
+        combined_videos=combined_paths,
+        materials=materials,
+        audio_file=audio_file,
+        audio_duration=audio_duration,
+        subtitle_path=subtitle_path,
+        warnings=warnings or None,
+        scene_progress={
+            "current": 1,
+            "total": 1,
+            "scene_id": revised_scene.scene_id,
+            "status": "ready",
+            "reused": False,
+        },
+        scene_regeneration_error=None,
+        scene_regeneration_scene_id=revised_scene.scene_id,
+    )
+    return result
+
+
+def restore_local_ai_scene_version(
+    task_id: str,
+    scene_id: int,
+    relative_path: str,
+) -> dict:
+    """Restore one validated scene version and rerender without GPU inference."""
+
+    params, plan, audio_file, subtitle_path, audio_duration, prior_state = (
+        _load_scene_regeneration_context(task_id)
+    )
+    if is_task_busy(prior_state):
+        raise RuntimeError("task is already busy")
+
+    original_manifest = generation_manifest.load_manifest(task_id)
+    if original_manifest is None:
+        raise ValueError("generation manifest is missing")
+    original_manifest = json.loads(json.dumps(original_manifest))
+
+    current_record = generation_manifest.scene_record(
+        original_manifest,
+        int(scene_id),
+    )
+    if current_record.get("active_asset") == str(relative_path):
+        return {
+            "scene_id": int(scene_id),
+            "scene_file": str(
+                generation_manifest.resolve_asset(
+                    task_id,
+                    str(relative_path),
+                )
+            ),
+            "videos": prior_state.get("videos") or [],
+            "combined_videos": prior_state.get("combined_videos") or [],
+            "materials": prior_state.get("materials") or [],
+            "warnings": prior_state.get("warnings") or [],
+            "restored": False,
+        }
+
+    task_root = _scene_regeneration_task_root(task_id)
+    previous_final_paths = _existing_final_video_paths(task_root)
+    backups: list[tuple[str, str]] = []
+    for final_path in previous_final_paths:
+        backup_path = f"{final_path}.scene-version-restore-backup"
+        shutil.copy2(final_path, backup_path)
+        backups.append((final_path, backup_path))
+
+    sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_PROCESSING,
+        progress=70,
+        current_stage="scene_version_restore",
+        scene_regeneration_scene_id=int(scene_id),
+        scene_regeneration_error=None,
+    )
+
+    try:
+        _, restored_scene, restored_path = (
+            generation_manifest.restore_scene_version(
+                task_id,
+                int(scene_id),
+                str(relative_path),
+            )
+        )
+        restored_plan = scene_planner.replace_scene_in_plan(
+            plan,
+            restored_scene,
+            source="version_restore",
+        )
+        scene_planner.save_scene_plan(task_id, restored_plan)
+        materials = generation_manifest.active_scene_paths(task_id)
+        final_paths, combined_paths, warnings = generate_final_videos(
+            task_id,
+            params,
+            materials,
+            audio_file,
+            subtitle_path,
+            audio_duration,
+            reuse_existing_generated_bgm=True,
+        )
+    except Exception as exc:
+        generation_manifest.save_manifest(task_id, original_manifest)
+        scene_planner.save_scene_plan(task_id, plan)
+        for final_path, backup_path in backups:
+            if path.isfile(backup_path):
+                os.replace(backup_path, final_path)
+        sm.state.update_task(
+            task_id,
+            state=const.TASK_STATE_COMPLETE
+            if previous_final_paths
+            else const.TASK_STATE_FAILED,
+            progress=100 if previous_final_paths else 0,
+            current_stage=None,
+            videos=previous_final_paths or prior_state.get("videos"),
+            scene_regeneration_error=f"{type(exc).__name__}: {exc}",
+            scene_regeneration_scene_id=int(scene_id),
+        )
+        raise
+    else:
+        for _, backup_path in backups:
+            try:
+                os.remove(backup_path)
+            except FileNotFoundError:
+                pass
+
+    result = {
+        "scene_id": restored_scene.scene_id,
+        "scene_file": str(restored_path),
+        "videos": final_paths,
+        "combined_videos": combined_paths,
+        "materials": materials,
+        "warnings": warnings,
+        "restored": True,
+    }
+    sm.state.update_task(
+        task_id,
+        state=const.TASK_STATE_COMPLETE,
+        progress=100,
+        current_stage=None,
+        videos=final_paths,
+        combined_videos=combined_paths,
+        materials=materials,
+        audio_file=audio_file,
+        audio_duration=audio_duration,
+        subtitle_path=subtitle_path,
+        warnings=warnings or None,
+        scene_progress={
+            "current": 1,
+            "total": 1,
+            "scene_id": restored_scene.scene_id,
+            "status": "restored",
+            "reused": True,
+        },
+        scene_regeneration_error=None,
+        scene_regeneration_scene_id=restored_scene.scene_id,
+    )
+    return result
 
 
 def _patch_cross_post_state(task_id: str, **kwargs) -> bool | None:
@@ -1383,9 +2379,62 @@ def _run_pipeline(
     voxcpm_reference_audio: bytes | None = None,
     voxcpm_prompt_audio: bytes | None = None,
     voxcpm_prompt_text: str = "",
+    resume_context: dict | None = None,
 ):
     logger.info(f"start task: {task_id}, stop_at: {stop_at}")
-    sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=5)
+    existing_task = sm.state.get_task(task_id)
+    if existing_task is None:
+        sm.state.update_task(
+            task_id,
+            state=const.TASK_STATE_PROCESSING,
+            progress=5,
+            cancel_requested=False,
+        )
+    else:
+        sm.state.patch_task(
+            task_id,
+            state=const.TASK_STATE_PROCESSING,
+            progress=5,
+        )
+    _raise_if_cancelled(task_id, "queued")
+
+    try:
+        factual_sources = factual_content.validate_sources(params)
+    except factual_content.FactualReviewBlocked as exc:
+        return _mark_task_failed(task_id, "factual_review", str(exc))
+
+    prepared_local_ai_provider = None
+    if (
+        stop_at in {"materials", "video"}
+        and local_ai.is_local_ai_source(params.video_source)
+    ):
+        try:
+            if local_ai.is_public_source(params.video_source):
+                local_ai.validate_generation_request(
+                    params.video_source,
+                    generation_mode=params.local_ai_generation_mode,
+                    aspect=params.video_aspect,
+                    clip_duration=params.video_clip_duration,
+                    seed=params.local_ai_seed,
+                )
+            prepared_local_ai_provider = local_ai.prepare_provider(
+                params.video_source,
+                generation_mode=params.local_ai_generation_mode,
+            )
+        except Exception as exc:
+            return _mark_task_failed(
+                task_id,
+                "preflight",
+                f"local AI preflight failed: {type(exc).__name__}: {exc}",
+                details={
+                    "local_ai_provider": str(params.video_source),
+                    "local_ai_error_type": type(exc).__name__,
+                    "recoverable": True,
+                    "recovery_action": _local_ai_recovery_action(
+                        stage="preflight",
+                    ),
+                },
+            )
 
     if (
         stop_at in {"materials", "video"}
@@ -1497,8 +2546,34 @@ def _run_pipeline(
             "in config.toml to a working ffmpeg executable",
         )
 
+    _raise_if_cancelled(task_id, "preflight")
+
     # 1. Generate script
-    video_script = generate_script(task_id, params)
+    try:
+        if resume_context is not None:
+            video_script = resume_context["script"]
+        elif factual_sources:
+            video_script = params.video_script.strip() or factual_content.generate_script(
+                params, factual_sources
+            )
+            factual_content.review_script(task_id, video_script, factual_sources)
+            sm.state.update_task(task_id, factual_review_status="approved")
+        else:
+            video_script = generate_script(task_id, params)
+    except factual_content.FactualReviewBlocked as exc:
+        return _mark_task_failed(task_id, "factual_review", str(exc))
+    except Exception as exc:
+        if not factual_sources:
+            raise
+        logger.warning(
+            f"factual script preparation failed: task_id={task_id}, "
+            f"error_type={type(exc).__name__}"
+        )
+        return _mark_task_failed(
+            task_id,
+            "factual_review",
+            f"factual script preparation unavailable ({type(exc).__name__})",
+        )
     if not video_script or "Error: " in video_script:
         error = (
             video_script.removeprefix("Error: ").strip()
@@ -1510,14 +2585,23 @@ def _run_pipeline(
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=10)
 
     if stop_at == "script":
+        if factual_sources and resume_context is None:
+            # A review-only factual task must remain inspectable after a WebUI
+            # restart, even though it never reaches the keyword/audio stages.
+            save_script_data(task_id, video_script, [], params)
         sm.state.update_task(
             task_id, state=const.TASK_STATE_COMPLETE, progress=100, script=video_script
         )
         return {"script": video_script}
 
+    _raise_if_cancelled(task_id, "script")
+
     # 2. Generate terms
-    video_terms = ""
-    if params.video_source != "local":
+    # Local AI scene prompts are planned after narration duration is known. Do not
+    # spend an extra LLM call on stock-search keywords for that path.
+    is_local_ai_source = local_ai.is_local_ai_source(params.video_source)
+    video_terms = [] if is_local_ai_source else ""
+    if params.video_source != "local" and not is_local_ai_source:
         video_terms = generate_terms(task_id, params, video_script)
         if not video_terms:
             return _mark_task_failed(
@@ -1526,7 +2610,8 @@ def _run_pipeline(
                 "failed to generate video search terms",
             )
 
-    save_script_data(task_id, video_script, video_terms, params)
+    if resume_context is None:
+        save_script_data(task_id, video_script, video_terms, params)
 
     if stop_at == "terms":
         sm.state.update_task(
@@ -1535,6 +2620,8 @@ def _run_pipeline(
         return {"script": video_script, "terms": video_terms}
 
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=20)
+
+    _raise_if_cancelled(task_id, "terms")
 
     # 3. Generate audio
     generate_audio_kwargs = {
@@ -1546,12 +2633,18 @@ def _run_pipeline(
     if voxcpm_prompt_audio is not None:
         generate_audio_kwargs["voxcpm_prompt_audio"] = voxcpm_prompt_audio
         generate_audio_kwargs["voxcpm_prompt_text"] = voxcpm_prompt_text
-    audio_file, audio_duration, sub_maker = generate_audio(
-        task_id,
-        params,
-        video_script,
-        **generate_audio_kwargs,
-    )
+    if resume_context is not None:
+        audio_file = resume_context["audio_file"]
+        audio_duration = resume_context["audio_duration"]
+        sub_maker = None
+        logger.info(f"reuse existing narration for resumed task: {task_id}")
+    else:
+        audio_file, audio_duration, sub_maker = generate_audio(
+            task_id,
+            params,
+            video_script,
+            **generate_audio_kwargs,
+        )
     if not audio_file:
         return _mark_task_failed(
             task_id,
@@ -1570,9 +2663,13 @@ def _run_pipeline(
         )
         return {"audio_file": audio_file, "audio_duration": audio_duration}
 
+    _raise_if_cancelled(task_id, "audio")
+
     # 4. Generate subtitle
-    subtitle_path = generate_subtitle(
-        task_id, params, video_script, sub_maker, audio_file
+    subtitle_path = (
+        resume_context["subtitle_path"]
+        if resume_context is not None
+        else generate_subtitle(task_id, params, video_script, sub_maker, audio_file)
     )
 
     if stop_at == "subtitle":
@@ -1586,6 +2683,8 @@ def _run_pipeline(
 
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=40)
 
+    _raise_if_cancelled(task_id, "subtitle")
+
     # 5. Get video materials
     downloaded_videos = get_video_materials(
         task_id,
@@ -1593,6 +2692,11 @@ def _run_pipeline(
         video_terms,
         audio_duration,
         loomloom_video_request=loomloom_video_request,
+        video_script=video_script,
+        local_ai_provider=prepared_local_ai_provider,
+        resume_scene_plan=(
+            resume_context["scene_plan"] if resume_context is not None else None
+        ),
     )
     if not downloaded_videos:
         return _mark_task_failed(
@@ -1617,17 +2721,36 @@ def _run_pipeline(
     if type(params.video_concat_mode) is str:
         params.video_concat_mode = VideoConcatMode(params.video_concat_mode)
 
+    _raise_if_cancelled(task_id, "materials")
+
     # 6. Generate final videos
-    final_video_paths, combined_video_paths, generation_warnings = (
-        generate_final_videos(
-            task_id,
-            params,
-            downloaded_videos,
-            audio_file,
-            subtitle_path,
-            audio_duration,
+    render_backups = []
+    if resume_context is not None:
+        task_root = _scene_regeneration_task_root(task_id)
+        render_backups = _backup_render_paths(task_root, suffix="resume-backup")
+        _clear_render_paths(task_root)
+    try:
+        final_video_paths, combined_video_paths, generation_warnings = (
+            generate_final_videos(
+                task_id,
+                params,
+                downloaded_videos,
+                audio_file,
+                subtitle_path,
+                audio_duration,
+                reuse_existing_generated_bgm=resume_context is not None,
+                generate_missing_bgm=resume_context is not None,
+            )
         )
-    )
+    except Exception:
+        if resume_context is not None:
+            _restore_render_backups(task_root, render_backups)
+        raise
+    if resume_context is not None:
+        if final_video_paths:
+            _discard_render_backups(render_backups)
+        else:
+            _restore_render_backups(task_root, render_backups)
 
     if not final_video_paths:
         return _mark_task_failed(
@@ -1710,6 +2833,7 @@ def start(
     voxcpm_reference_audio: bytes | None = None,
     voxcpm_prompt_audio: bytes | None = None,
     voxcpm_prompt_text: str = "",
+    resume_context: dict | None = None,
 ):
     """
     执行任务流水线，并确保未预期异常也会转换成可查询的失败状态。
@@ -1728,6 +2852,29 @@ def start(
             voxcpm_reference_audio=voxcpm_reference_audio,
             voxcpm_prompt_audio=voxcpm_prompt_audio,
             voxcpm_prompt_text=voxcpm_prompt_text,
+            resume_context=resume_context,
+        )
+    except TaskCancellationRequested as exc:
+        return _mark_task_cancelled(task_id, exc.stage)
+    except local_ai.LocalAICancellationRequested:
+        return _mark_task_cancelled(task_id, "materials")
+    except video.FinalVideoValidationError as exc:
+        details = {
+            "recoverable": True,
+            "recovery_action": "rerender_final_video",
+        }
+        if local_ai.is_local_ai_source(params.video_source):
+            details["local_ai_provider"] = params.video_source
+        logger.error(
+            "final video validation failed: "
+            f"task_id={task_id}, provider={params.video_source}, "
+            f"stage=video, error_type={type(exc).__name__}"
+        )
+        return _mark_task_failed(
+            task_id,
+            "video",
+            f"{type(exc).__name__}: {exc}",
+            details=details,
         )
     except Exception as exc:
         logger.exception(

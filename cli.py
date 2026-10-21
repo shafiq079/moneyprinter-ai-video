@@ -47,6 +47,9 @@ _CLI_VIDEO_SOURCES = (
     "metaso_minimax",
     "muapi",
     "openai_image",
+    "wan22_local",
+    "ltx25_local",
+    "ltx25_hf",
     "local",
 )
 
@@ -73,6 +76,13 @@ def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed < 1:
         raise argparse.ArgumentTypeError(f"value must be >= 1, got {parsed}")
+    return parsed
+
+
+def _non_negative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError(f"value must be >= 0, got {parsed}")
     return parsed
 
 
@@ -311,6 +321,19 @@ Batch manifests:
         help="complete script; skips LLM script generation when provided",
     )
     content_group.add_argument(
+        "--content-mode",
+        choices=("creative", "factual"),
+        default="creative",
+        help="factual requires cited excerpts and reviews the script before media work",
+    )
+    content_group.add_argument(
+        "--factual-source",
+        action="append",
+        default=[],
+        metavar="'HTTPS URL | title | supporting excerpt'",
+        help="repeat for up to six factual sources; no pages are fetched",
+    )
+    content_group.add_argument(
         "--video-terms",
         default=None,
         help="comma-separated material search terms; generated automatically when omitted",
@@ -345,6 +368,29 @@ Batch manifests:
         default="pexels",
         choices=_CLI_VIDEO_SOURCES,
         help="video material provider; online providers require matching API keys in config.toml",
+    )
+    material_group.add_argument(
+        "--local-ai-generation-mode",
+        choices=("fast", "quality"),
+        default="fast",
+        help=(
+            "local AI generation mode; LTX supports fast/distilled and "
+            "quality/DFR, while Wan supports fast only"
+        ),
+    )
+    material_group.add_argument(
+        "--local-ai-seed",
+        type=_non_negative_int,
+        default=None,
+        help="optional deterministic base seed for local AI scenes",
+    )
+    material_group.add_argument(
+        "--local-ai-visual-style",
+        default=None,
+        help=(
+            "optional visual style/direction for local AI scenes, such as "
+            "'warm 35mm documentary' or 'clean clay stop-motion'"
+        ),
     )
     material_group.add_argument(
         "--video-materials",
@@ -698,10 +744,21 @@ Batch manifests:
             "generates a UUID for every task"
         ),
     )
+    execution_mode.add_argument(
+        "--check-local-ai-source",
+        action="store_true",
+        help=(
+            "run operator preflight for the selected public local AI video source and exit"
+        ),
+    )
     args = parser.parse_args(argv)
+
+    if args.check_local_ai_source and args.batch_file:
+        parser.error("--check-local-ai-source cannot be combined with --batch-file")
 
     if (
         not args.batch_file
+        and not args.check_local_ai_source
         and not args.video_subject.strip()
         and not args.video_script.strip()
     ):
@@ -902,6 +959,7 @@ def build_video_params(args: argparse.Namespace) -> VideoParams:
     # 避免执行 ``cli.py -h`` 时产生配置初始化日志。
     from app.config import config
     from app.models.schema import MaterialInfo, VideoParams
+    from app.services.factual_content import parse_source_line
 
     ui_config = config.ui
 
@@ -924,6 +982,8 @@ def build_video_params(args: argparse.Namespace) -> VideoParams:
     params_kwargs = {
         "video_subject": args.video_subject.strip(),
         "video_script": args.video_script,
+        "content_mode": args.content_mode,
+        "factual_sources": [parse_source_line(line) for line in args.factual_source],
         "video_terms": video_terms,
         "video_source": args.video_source,
         "video_materials": video_materials,
@@ -935,6 +995,9 @@ def build_video_params(args: argparse.Namespace) -> VideoParams:
 
     optional_arg_names = [
         "video_language",
+        "local_ai_generation_mode",
+        "local_ai_seed",
+        "local_ai_visual_style",
         "paragraph_number",
         "video_script_prompt",
         "custom_system_prompt",
@@ -1178,6 +1241,9 @@ def _validate_batch_task_params(
     metaso_minimax_charge_confirmed: bool,
     muapi_charge_confirmed: bool,
 ) -> None:
+    from app.services.factual_content import validate_sources
+
+    validate_sources(params)
     if not params.video_subject.strip() and not params.video_script.strip():
         raise ValueError("one of video_subject or video_script is required")
 
@@ -1477,6 +1543,10 @@ def _validate_cli_files(
     from app.services import bgm as bgm_service
     from app.utils import utils
 
+    from app.services.factual_content import validate_sources
+
+    validate_sources(params)
+
     # FFmpeg 探测已经移到 app/services/task.py 的共享任务流水线（task.start）
     # 里统一做硬性检查：探测失败会让任务以 preflight 阶段失败结束，run_cli()
     # 会据此返回非零退出码。这里不再重复一次不阻断流程的检查，避免与流水线
@@ -1716,6 +1786,23 @@ def _run_batch_tasks(args: argparse.Namespace, tasks: list[VideoParams]) -> int:
 
 def run_cli(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+
+    if args.check_local_ai_source:
+        from app.services import local_ai
+
+        if not local_ai.is_public_source(args.video_source):
+            logger.error(
+                "--check-local-ai-source requires a public local AI source; "
+                f"got {args.video_source}"
+            )
+            return 2
+        status = local_ai.preflight_status(
+            args.video_source,
+            generation_mode=args.local_ai_generation_mode,
+        )
+        print(json.dumps(status, ensure_ascii=False))
+        return 0 if status["ready"] else 1
+
     if args.batch_file:
         try:
             tasks = _build_batch_tasks(args)

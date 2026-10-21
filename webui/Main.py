@@ -36,6 +36,7 @@ from app.models.llm_provider import (
     normalize_provider_override,
 )
 from app.models.schema import (
+    FactualSource,
     MaterialInfo,
     VideoAspect,
     VideoConcatMode,
@@ -46,8 +47,13 @@ from app.models.schema import (
 from app.services import bgm as bgm_service
 from app.services import (
     cache_manager,
+    factual_content,
+    factual_source_import,
+    generation_manifest,
     llm,
+    local_ai,
     loomloom,
+    scene_planner,
     material,
     metaso_minimax,
     muapi,
@@ -62,6 +68,7 @@ from app.services import elevenlabs_music as elevenlabs_music_service
 from app.services import sonilo as sonilo_service
 from app.services import state as sm
 from app.services import task as tm
+from app.services import task_artifacts
 from app.services import version_checker
 from app.utils.logging_utils import configure_terminal_logger
 from app.utils import utils
@@ -134,6 +141,7 @@ VIDEO_SOURCE_GROUPS = {
         "muapi",
     ),
     "ai_image": ("openai_image",),
+    "local_ai_video": ("wan22_local", "ltx25_local", "ltx25_hf"),
     "local": ("local",),
 }
 # Upload-Post 的 API Key 与发布用户分别在两个页面管理，并且发布用户名称
@@ -863,6 +871,7 @@ def _normalize_task_state(state):
     if state in (
         const.TASK_STATE_COMPLETE,
         const.TASK_STATE_FAILED,
+        const.TASK_STATE_CANCELLED,
         const.TASK_STATE_PROCESSING,
     ):
         return state
@@ -912,6 +921,8 @@ def _task_state_label(state, has_video):
         return tr("Task Status Complete")
     if normalized_state == const.TASK_STATE_FAILED:
         return tr("Task Status Failed")
+    if normalized_state == const.TASK_STATE_CANCELLED:
+        return tr("Task Status Cancelled")
     if normalized_state == const.TASK_STATE_PROCESSING:
         return tr("Task Status Processing")
     if has_video:
@@ -923,7 +934,10 @@ def _task_state_filter_key(task):
     normalized_state = _normalize_task_state(task.get("state"))
     if normalized_state == const.TASK_STATE_PROCESSING:
         return "processing"
-    if normalized_state == const.TASK_STATE_FAILED:
+    if normalized_state in {
+        const.TASK_STATE_FAILED,
+        const.TASK_STATE_CANCELLED,
+    }:
         return "failed"
     if normalized_state == const.TASK_STATE_COMPLETE or task["video_file"]:
         return "complete"
@@ -966,6 +980,26 @@ def _scan_history_tasks(limit=30):
         script_data = _safe_load_task_script(task_path)
         params_data = script_data.get("params", {}) if script_data else {}
         video_file = _find_final_task_video(task_path)
+        history_state = const.TASK_STATE_COMPLETE if video_file else None
+        if (
+            not video_file
+            and isinstance(params_data, dict)
+            and local_ai.is_public_source(params_data.get("video_source"))
+        ):
+            manifest_path = os.path.join(
+                task_path, "generated_ai", "generation_manifest.json"
+            )
+            if os.path.isfile(manifest_path):
+                try:
+                    with open(manifest_path, encoding="utf-8") as stream:
+                        manifest_data = json.load(stream)
+                    scenes = manifest_data.get("scenes", [])
+                    if scenes and any(
+                        scene.get("status") != "ready" for scene in scenes
+                    ):
+                        history_state = const.TASK_STATE_FAILED
+                except (OSError, ValueError, AttributeError, TypeError):
+                    logger.debug(f"cannot inspect local AI history: {name}")
         subject = (
             params_data.get("video_subject")
             or script_data.get("script", "")[:40]
@@ -975,7 +1009,7 @@ def _scan_history_tasks(limit=30):
             {
                 "task_id": name,
                 "subject": subject,
-                "state": const.TASK_STATE_COMPLETE if video_file else None,
+                "state": history_state,
                 "progress": 100 if video_file else 0,
                 "mtime": mtime,
                 "task_path": task_path,
@@ -1185,9 +1219,298 @@ def _build_video_download_name(subject, index, total):
     return f"{safe_subject}{suffix}.mp4"
 
 
+def _select_scene_editor_task(task_id: str) -> None:
+    st.session_state["scene_editor_task_id"] = str(task_id)
+
+
+def _render_scene_editor() -> None:
+    task_id = str(st.session_state.get("scene_editor_task_id") or "")
+    if not task_id:
+        return
+
+    tasks_root = os.path.realpath(utils.task_dir())
+    task_path = os.path.realpath(os.path.join(tasks_root, task_id))
+    try:
+        if os.path.commonpath([tasks_root, task_path]) != tasks_root:
+            raise ValueError("scene editor task is outside task directory")
+    except ValueError:
+        st.session_state.pop("scene_editor_task_id", None)
+        return
+
+    try:
+        plan = scene_planner.load_scene_plan(task_id)
+        manifest = generation_manifest.load_manifest(task_id)
+    except ValueError as exc:
+        st.warning(str(exc))
+        return
+    if plan is None or manifest is None:
+        st.info(tr("No Scene Plan"))
+        return
+
+    try:
+        task_state = sm.state.get_task(task_id) or {}
+    except Exception:
+        task_state = {}
+    is_busy = tm.is_task_busy(task_state)
+
+    st.divider()
+    title_cols = st.columns([5, 1], vertical_alignment="center")
+    title_cols[0].subheader(tr("Scene Editor"))
+    if title_cols[1].button(
+        tr("Close"),
+        key=f"close_scene_editor_{task_id}",
+        use_container_width=True,
+    ):
+        st.session_state.pop("scene_editor_task_id", None)
+        return
+
+    regeneration_error = str(
+        task_state.get("scene_regeneration_error") or ""
+    ).strip()
+    if regeneration_error:
+        st.warning(
+            f"{tr('Scene Regeneration Failed')}: {regeneration_error}"
+        )
+
+    for scene in plan.scenes:
+        try:
+            record = generation_manifest.scene_record(
+                manifest,
+                scene.scene_id,
+            )
+        except KeyError:
+            continue
+
+        versions = [
+            item
+            for item in record.get("versions", [])
+            if isinstance(item, str) and item
+        ]
+        active_asset = str(record.get("active_asset") or "")
+        label = (
+            f"{tr('Scene')} {scene.scene_id} · {scene.beat} · "
+            f"{scene.target_duration:.1f}s"
+        )
+        with st.expander(label, expanded=False):
+            if scene.narration_segment:
+                st.caption(scene.narration_segment)
+
+            selected_version = active_asset
+            selected_version_metadata = None
+            if versions:
+                default_index = (
+                    versions.index(active_asset)
+                    if active_asset in versions
+                    else len(versions) - 1
+                )
+                selected_version = st.selectbox(
+                    tr("Scene Versions"),
+                    options=versions,
+                    index=default_index,
+                    format_func=lambda value: (
+                        f"{os.path.basename(value)}"
+                        + (
+                            f" · {tr('Current Version')}"
+                            if value == active_asset
+                            else ""
+                        )
+                    ),
+                    key=f"scene_version_{task_id}_{scene.scene_id}",
+                )
+                try:
+                    preview_path = generation_manifest.resolve_asset(
+                        task_id,
+                        selected_version,
+                    )
+                except ValueError:
+                    preview_path = None
+                if preview_path is not None and preview_path.is_file():
+                    st.video(str(preview_path))
+                selected_version_metadata = (
+                    generation_manifest.scene_version_metadata(
+                        record,
+                        selected_version,
+                    )
+                )
+
+            prompt_value = st.text_area(
+                tr("Scene Prompt"),
+                value=scene.prompt,
+                key=f"scene_prompt_{task_id}_{scene.scene_id}",
+                height=140,
+            )
+            seed_value = int(
+                st.number_input(
+                    tr("Scene Seed"),
+                    min_value=0,
+                    value=max(0, int(scene.seed)),
+                    step=1,
+                    key=f"scene_seed_{task_id}_{scene.scene_id}",
+                )
+            )
+
+            scene_action_cols = st.columns(
+                3,
+                vertical_alignment="center",
+                gap="small",
+            )
+            with scene_action_cols[0]:
+                if st.button(
+                    tr("Regenerate Scene"),
+                    key=f"regenerate_scene_{task_id}_{scene.scene_id}",
+                    use_container_width=True,
+                    icon=":material/refresh:",
+                    disabled=is_busy,
+                    help=tr("Regenerate Scene Help"),
+                ):
+                    try:
+                        webui_task.submit_scene_regeneration(
+                            task_id,
+                            scene.scene_id,
+                            prompt=prompt_value,
+                            seed=seed_value,
+                        )
+                    except Exception as exc:
+                        st.error(
+                            f"{tr('Scene Regeneration Failed')}: {exc}"
+                        )
+                    else:
+                        st.toast(tr("Scene Regeneration Queued"))
+                        st.rerun(scope="fragment")
+
+            with scene_action_cols[1]:
+                if st.button(
+                    tr("New Variation"),
+                    key=f"variation_scene_{task_id}_{scene.scene_id}",
+                    use_container_width=True,
+                    icon=":material/casino:",
+                    disabled=is_busy,
+                    help=tr("New Variation Help"),
+                ):
+                    try:
+                        webui_task.submit_scene_regeneration(
+                            task_id,
+                            scene.scene_id,
+                            prompt=prompt_value,
+                            seed=seed_value + 1,
+                        )
+                    except Exception as exc:
+                        st.error(
+                            f"{tr('Scene Regeneration Failed')}: {exc}"
+                        )
+                    else:
+                        st.toast(tr("Scene Regeneration Queued"))
+                        st.rerun(scope="fragment")
+
+            with scene_action_cols[2]:
+                restore_disabled = (
+                    is_busy
+                    or not selected_version
+                    or selected_version == active_asset
+                    or selected_version_metadata is None
+                )
+                restore_help = (
+                    tr("Legacy Scene Version Help")
+                    if (
+                        selected_version
+                        and selected_version != active_asset
+                        and selected_version_metadata is None
+                    )
+                    else tr("Restore Scene Version Help")
+                )
+                if st.button(
+                    tr("Restore Scene Version"),
+                    key=f"restore_scene_version_{task_id}_{scene.scene_id}",
+                    use_container_width=True,
+                    icon=":material/history:",
+                    disabled=restore_disabled,
+                    help=restore_help,
+                ):
+                    try:
+                        webui_task.submit_scene_version_restore(
+                            task_id,
+                            scene.scene_id,
+                            relative_path=selected_version,
+                        )
+                    except Exception as exc:
+                        st.error(
+                            f"{tr('Scene Regeneration Failed')}: {exc}"
+                        )
+                    else:
+                        st.toast(tr("Scene Version Restore Queued"))
+                        st.rerun(scope="fragment")
+
+
+def _select_artifact_package_task(task_id: str) -> None:
+    st.session_state["artifact_package_task_id"] = str(task_id)
+
+
+def _render_artifact_package_view() -> None:
+    task_id = str(st.session_state.get("artifact_package_task_id") or "")
+    if not task_id:
+        return
+
+    try:
+        task_state = sm.state.get_task(task_id) or {}
+    except Exception:
+        task_state = {}
+
+    try:
+        package = task_artifacts.build_output_package(
+            task_id,
+            task_state=task_state,
+        )
+    except (OSError, ValueError) as exc:
+        st.warning(f"{tr('Artifact Package Unavailable')}: {exc}")
+        return
+
+    st.divider()
+    header_cols = st.columns([5, 1], vertical_alignment="center")
+    header_cols[0].subheader(tr("Artifact Package"))
+    if header_cols[1].button(
+        tr("Close"),
+        key=f"close_artifact_package_{task_id}",
+        use_container_width=True,
+    ):
+        st.session_state.pop("artifact_package_task_id", None)
+        return
+
+    st.caption(tr("Artifact Package Help"))
+    st.json(package)
+
+    if package["factual_review"]:
+        try:
+            review = factual_content.load_review_summary(task_id)
+        except factual_content.FactualReviewBlocked:
+            st.warning(tr("Factual Review Unavailable"))
+            return
+        st.subheader(tr("Factual Review"))
+        if review["status"] == "approved":
+            st.success(tr("Factual Review Approved"))
+        else:
+            st.error(tr("Factual Review Blocked"))
+        if review["reason"]:
+            st.text(review["reason"])
+        if review["status"] == "approved" and package["script"]:
+            script = _safe_load_task_script(utils.task_dir(task_id)).get("script")
+            if (
+                isinstance(script, str)
+                and 0 < len(script) <= factual_content.MAX_SCRIPT_CHARS
+            ):
+                st.subheader(tr("Reviewed Script"))
+                st.text(script)
+        for item in review["claims"]:
+            citations = ", ".join(item["source_ids"]) or tr("No Supporting Source")
+            st.text(f"{item['claim']} [{citations}]")
+        st.caption(tr("Factual Review Sources"))
+        for source in review["sources"]:
+            st.text(f"{source['id']}: {source['title']} — {source['url']}")
+        st.caption(tr("Factual Review Limitation"))
+
+
 def _render_task_table(filtered_tasks, key_prefix):
     with st.container(key=f"task_table_header_{key_prefix}"):
-        header_cols = st.columns([1.1, 1.7, 3.0, 0.8, 1.6], vertical_alignment="center")
+        header_cols = st.columns([1.1, 1.7, 3.0, 0.8, 3.4], vertical_alignment="center")
         header_cols[0].caption(tr("Task Status"))
         header_cols[1].caption(tr("Task Updated At"))
         header_cols[2].caption(tr("Task Subject"))
@@ -1209,6 +1532,33 @@ def _render_task_table(filtered_tasks, key_prefix):
             has_restore_data = os.path.isfile(
                 os.path.join(task["task_path"], "script.json")
             )
+            has_scene_plan = os.path.isfile(
+                os.path.join(task["task_path"], "scene_plan.json")
+            )
+            saved_params = _safe_load_task_script(task["task_path"]).get("params")
+            saved_source = (
+                saved_params.get("video_source")
+                if isinstance(saved_params, dict)
+                else None
+            )
+            can_resume = (
+                not is_busy
+                and _task_state_filter_key(task) in {"failed", "history"}
+                and has_restore_data
+                and has_scene_plan
+                and os.path.isfile(
+                    os.path.join(
+                        task["task_path"], "generated_ai", "generation_manifest.json"
+                    )
+                )
+                and local_ai.is_public_source(saved_source)
+            )
+            has_artifact_package = (
+                task_artifacts.has_local_ai_output_package(task_id)
+                or os.path.isfile(
+                    os.path.join(task["task_path"], "factual_review.json")
+                )
+            )
             safe_task_key = "".join(ch if ch.isalnum() else "_" for ch in task_id)[:40]
 
             # 使用 Streamlit 原生 bordered container + columns 保留每行操作。
@@ -1218,7 +1568,7 @@ def _render_task_table(filtered_tasks, key_prefix):
                 key=f"task_row_{key_prefix}_{safe_task_key}", border=True
             ):
                 row_cols = st.columns(
-                    [1.1, 1.7, 3.0, 0.8, 1.6],
+                    [1.1, 1.7, 3.0, 0.8, 3.4],
                     vertical_alignment="center",
                 )
                 row_cols[0].write(_task_state_label(task["state"], has_video))
@@ -1227,7 +1577,7 @@ def _render_task_table(filtered_tasks, key_prefix):
                 row_cols[3].write(f"{task['progress']}%")
 
                 action_cols = row_cols[4].columns(
-                    4,
+                    8,
                     vertical_alignment="center",
                     gap="small",
                 )
@@ -1267,6 +1617,67 @@ def _render_task_table(filtered_tasks, key_prefix):
                         _queue_task_restore(task_id)
 
                 with action_cols[3]:
+                    resume_label = tr("Resume Task")
+                    if st.button(
+                        resume_label,
+                        key=f"resume_task_{key_prefix}_{task_id}",
+                        use_container_width=True,
+                        icon=":material/play_arrow:",
+                        help=tr("Resume Task Help"),
+                        disabled=not can_resume,
+                    ):
+                        try:
+                            webui_task.submit_local_ai_resume(task_id)
+                        except Exception as exc:
+                            st.error(f"{tr('Resume Task Failed')}: {exc}")
+                        else:
+                            _add_active_generation_task(
+                                task_id, subject=task["subject"]
+                            )
+                            st.session_state["current_generation_task_id"] = task_id
+                            st.toast(tr("Resume Task Queued"))
+                            st.rerun(scope="app")
+
+                with action_cols[4]:
+                    scenes_label = tr("Scenes")
+                    if st.button(
+                        scenes_label,
+                        key=f"scenes_task_{key_prefix}_{task_id}",
+                        use_container_width=True,
+                        icon=":material/view_list:",
+                        help=scenes_label,
+                        disabled=is_processing or not has_scene_plan,
+                    ):
+                        _select_scene_editor_task(task_id)
+
+                with action_cols[5]:
+                    artifacts_label = tr("Artifacts")
+                    if st.button(
+                        artifacts_label,
+                        key=f"artifacts_task_{key_prefix}_{task_id}",
+                        use_container_width=True,
+                        icon=":material/inventory_2:",
+                        help=artifacts_label,
+                        disabled=is_processing or not has_artifact_package,
+                    ):
+                        _select_artifact_package_task(task_id)
+
+                with action_cols[6]:
+                    cancel_label = tr("Cancel Task")
+                    if st.button(
+                        cancel_label,
+                        key=f"cancel_task_{key_prefix}_{task_id}",
+                        use_container_width=True,
+                        icon=":material/stop_circle:",
+                        help=cancel_label,
+                        disabled=not is_processing,
+                    ):
+                        if tm.request_task_cancellation(task_id):
+                            st.toast(tr("Cancellation Requested"))
+                        else:
+                            st.warning(tr("Cancellation Unavailable"))
+
+                with action_cols[7]:
                     delete_label = tr("Delete Task")
                     delete_help = (
                         f"{delete_label} ({tr('Task Status Processing')})"
@@ -1318,6 +1729,10 @@ def _render_task_manager_panel(tasks=None):
             ]
             _render_task_table(filtered_tasks, status_key)
 
+    _render_scene_editor()
+
+    _render_artifact_package_view()
+
     _render_task_video_preview()
 
 
@@ -1348,6 +1763,16 @@ def _render_task_video_preview():
         st.session_state.pop("task_preview_video_file", None)
         return
     st.video(preview_file)
+    with open(preview_file, "rb") as video_file:
+        st.download_button(
+            tr("Download Video"),
+            data=video_file,
+            file_name=os.path.basename(preview_file),
+            mime="video/mp4",
+            key=f"download_task_video_preview_{task_name}",
+            icon=":material/download:",
+            on_click="ignore",
+        )
 
 
 @st.fragment(run_every="2s")
@@ -1440,6 +1865,11 @@ def _apply_pending_task_restore():
         return False
 
     _apply_restored_params(payload["params"])
+    source = str(payload["params"].get("video_source") or "")
+    if local_ai.is_public_source(source):
+        st.session_state["task_restore_source_task_id"] = payload["task_id"]
+    else:
+        st.session_state.pop("task_restore_source_task_id", None)
     st.session_state["task_restore_succeeded"] = True
     logger.info(f"restored task configuration: {payload['task_id']}")
     return True
@@ -1460,6 +1890,14 @@ def _apply_restored_params(params):
     # 文案与高级脚本设置。
     st.session_state["video_subject"] = params.get("video_subject") or ""
     st.session_state["video_script"] = params.get("video_script") or ""
+    _set_stable_widget_value(
+        "content_mode_select", params.get("content_mode") or "creative"
+    )
+    st.session_state["factual_sources_input"] = "\n".join(
+        f"{item['url']} | {item['title']} | {item['excerpt']}"
+        for item in params.get("factual_sources") or []
+        if isinstance(item, dict)
+    )
     st.session_state["video_terms"] = str(video_terms)
     _set_stable_widget_value(
         "script_language_select", params.get("video_language") or ""
@@ -1473,6 +1911,15 @@ def _apply_restored_params(params):
     # 视频设置。素材上传控件不能由服务端写入，因此本地素材需要用户重新选择。
     video_source = params.get("video_source") or "pexels"
     _set_stable_widget_value("video_source_select", video_source)
+    _set_stable_widget_value(
+        "local_ai_generation_mode_select",
+        params.get("local_ai_generation_mode") or "fast",
+    )
+    if params.get("local_ai_seed") is not None:
+        st.session_state["local_ai_seed_input"] = int(params["local_ai_seed"])
+    st.session_state["local_ai_visual_style_input"] = (
+        params.get("local_ai_visual_style") or ""
+    )
     _set_stable_widget_value(
         "video_concat_mode_select", params.get("video_concat_mode") or "random"
     )
@@ -1936,8 +2383,44 @@ def _render_generation_logs(task_id):
     st.code("\n".join(log_records))
 
 
+def _render_scene_plan_preview(task_id):
+    """Show persisted local-AI visual direction without host configuration."""
+    try:
+        plan = scene_planner.load_scene_plan(task_id)
+    except ValueError as exc:
+        logger.warning(
+            f"failed to load scene plan preview: task_id={task_id}, error={exc}"
+        )
+        return
+    if plan is None:
+        return
+
+    with st.expander(tr("Scene Plan"), expanded=False):
+        st.caption(f"{tr('Scene Plan Source')}: {plan.source}")
+        if plan.idea:
+            st.write(plan.idea)
+        if plan.visual_bible:
+            st.markdown(f"**{tr('Visual Bible')}**")
+            st.write(plan.visual_bible)
+        for scene in plan.scenes:
+            st.markdown(
+                f"**{tr('Scene')} {scene.scene_id} · {scene.beat} · "
+                f"{scene.target_duration:.1f}s**"
+            )
+            if scene.narration_segment:
+                st.caption(scene.narration_segment)
+            st.code(scene.prompt, language=None, wrap_lines=True)
+
+
 def _render_generation_task_snapshot(task_id, task):
     """根据状态存储中的快照渲染进度、失败原因或最终成片。"""
+
+    def render_scene_plan_preview():
+        # Focused unit tests compile this renderer in isolation from Main.py.
+        # Keep the M4 preview additive instead of making it a hard dependency.
+        renderer = globals().get("_render_scene_plan_preview")
+        if callable(renderer):
+            renderer(task_id)
     if not task:
         st.info(tr("Generating Video"))
         _render_generation_logs(task_id)
@@ -1951,6 +2434,7 @@ def _render_generation_task_snapshot(task_id, task):
             progress,
             text=f"{tr('Task Progress')}: {progress}%",
         )
+        render_scene_plan_preview()
         _render_generation_logs(task_id)
         return
 
@@ -1958,16 +2442,36 @@ def _render_generation_task_snapshot(task_id, task):
         error = str(task.get("error") or "").strip()
         message = tr("Video Generation Failed")
         st.error(f"{message}: {error}" if error else message)
+        render_scene_plan_preview()
+        _render_generation_logs(task_id)
+        return
+
+    if state == const.TASK_STATE_CANCELLED:
+        st.warning(tr("Video Generation Cancelled"))
+        render_scene_plan_preview()
         _render_generation_logs(task_id)
         return
 
     video_files = task.get("videos") or []
+    if (
+        state == const.TASK_STATE_COMPLETE
+        and not video_files
+        and task.get("factual_review_status") == "approved"
+        and isinstance(task.get("script"), str)
+    ):
+        st.success(tr("Factual Review Approved"))
+        st.subheader(tr("Reviewed Script"))
+        st.text(task["script"])
+        st.caption(tr("Factual Review Only Help"))
+        _render_generation_logs(task_id)
+        return
     if state != const.TASK_STATE_COMPLETE or not video_files:
         st.error(tr("Video Generation Failed"))
         _render_generation_logs(task_id)
         return
 
     st.success(tr("Video Generation Completed"))
+    render_scene_plan_preview()
     for warning in task.get("warnings") or []:
         if isinstance(warning, Mapping) and warning.get("code") == "batch_materials_reused":
             st.warning(
@@ -2053,7 +2557,11 @@ def _render_running_generation_task(task_id):
         return
 
     state = _normalize_task_state((task or {}).get("state"))
-    if state in {const.TASK_STATE_COMPLETE, const.TASK_STATE_FAILED}:
+    if state in {
+        const.TASK_STATE_COMPLETE,
+        const.TASK_STATE_FAILED,
+        const.TASK_STATE_CANCELLED,
+    }:
         _remove_active_generation_task(task_id)
         # 完整页面脚本现在没有耗时生成逻辑，可以安全 rerun 并把结果改为静态
         # 渲染。这样任务结束后不会让浏览器永久保留一个两秒轮询的 Fragment。
@@ -2078,7 +2586,11 @@ def _render_current_generation_task():
         return
 
     state = _normalize_task_state((task or {}).get("state"))
-    if state in {const.TASK_STATE_COMPLETE, const.TASK_STATE_FAILED}:
+    if state in {
+        const.TASK_STATE_COMPLETE,
+        const.TASK_STATE_FAILED,
+        const.TASK_STATE_CANCELLED,
+    }:
         _remove_active_generation_task(task_id)
         _render_generation_task_snapshot(task_id, task)
         return
@@ -4545,14 +5057,20 @@ def _render_local_script_generation(params):
     with st.spinner(tr("Generating Video Script and Keywords")):
 
         def generate_script_and_terms(app_config_snapshot):
-            script = llm.generate_script(
-                video_subject=params.video_subject,
-                language=params.video_language,
-                paragraph_number=params.paragraph_number,
-                video_script_prompt=params.video_script_prompt,
-                custom_system_prompt=params.custom_system_prompt,
-                app_config=app_config_snapshot,
-            )
+            if params.content_mode == "factual":
+                sources = factual_content.validate_sources(params)
+                script = factual_content.generate_script(
+                    params, sources, app_config=app_config_snapshot
+                )
+            else:
+                script = llm.generate_script(
+                    video_subject=params.video_subject,
+                    language=params.video_language,
+                    paragraph_number=params.paragraph_number,
+                    video_script_prompt=params.video_script_prompt,
+                    custom_system_prompt=params.custom_system_prompt,
+                    app_config=app_config_snapshot,
+                )
             terms = llm.generate_terms(
                 params.video_subject,
                 script,
@@ -4562,10 +5080,16 @@ def _render_local_script_generation(params):
             )
             return script, terms
 
-        script, terms = _run_llm_read_operation(
-            "generate_script_and_terms",
-            generate_script_and_terms,
-        )
+        try:
+            script, terms = _run_llm_read_operation(
+                "generate_script_and_terms",
+                generate_script_and_terms,
+            )
+        except ValueError as exc:
+            if params.content_mode != "factual":
+                raise
+            st.error(str(exc))
+            return
         if "Error: " in script:
             st.error(tr(script))
         elif "Error: " in terms:
@@ -4916,6 +5440,77 @@ def _render_script_settings(panel, params):
                     label_visibility="collapsed",
                 ).strip()
 
+            params.content_mode = stable_selectbox(
+                tr("Content Mode"),
+                options=["creative", "factual"],
+                default_value="creative",
+                key="content_mode_select",
+            )
+            if params.content_mode == "factual":
+                source_url = st.text_input(
+                    tr("Source Page URL"),
+                    key="factual_import_url",
+                    help=tr("Source Page Import Help"),
+                    placeholder="https://example.org/article",
+                )
+                if st.button(tr("Import Source Excerpt"), key="factual_import_button"):
+                    try:
+                        existing = [
+                            line.strip()
+                            for line in st.session_state.get(
+                                "factual_sources_input", ""
+                            ).splitlines()
+                            if line.strip()
+                        ]
+                        if len(existing) >= 6:
+                            raise ValueError("six sources already entered")
+                        requested_url = FactualSource.public_citation_url(source_url)
+                        if any(
+                            line.split("|", 1)[0].strip() == requested_url
+                            for line in existing
+                        ):
+                            raise ValueError("source URL already entered")
+                        imported = factual_source_import.import_source(requested_url)
+                        existing.append(
+                            f"{imported.url} | {imported.title} | {imported.excerpt}"
+                        )
+                        st.session_state["factual_sources_input"] = "\n".join(existing)
+                        st.session_state.pop("factual_import_error", None)
+                        st.session_state["factual_import_ready"] = True
+                    except ValueError as exc:
+                        st.session_state["factual_import_error"] = (
+                            f"{tr('Source Page Import Failed')}: {exc}"
+                        )
+                        st.session_state.pop("factual_import_ready", None)
+                if st.session_state.get("factual_import_error"):
+                    st.warning(st.session_state["factual_import_error"])
+                if st.session_state.get("factual_import_ready"):
+                    st.info(tr("Review Imported Excerpt"))
+                raw_sources = st.text_area(
+                    tr("Factual Sources"),
+                    key="factual_sources_input",
+                    height=140,
+                    help=tr("Factual Sources Help"),
+                    placeholder="https://example.org/article | Article title | An excerpt supporting a claim.",
+                )
+                try:
+                    params.factual_sources = [
+                        factual_content.parse_source_line(line)
+                        for line in raw_sources.splitlines()
+                        if line.strip()
+                    ]
+                    factual_content.validate_sources(params)
+                    st.session_state.pop("factual_source_error", None)
+                except ValueError:
+                    params.factual_sources = []
+                    st.session_state["factual_source_error"] = tr(
+                        "Factual Sources Invalid"
+                    )
+                    st.warning(st.session_state["factual_source_error"])
+            else:
+                params.factual_sources = []
+                st.session_state.pop("factual_source_error", None)
+
             video_languages = [
                 (tr("Auto Detect"), ""),
             ]
@@ -5018,15 +5613,25 @@ def _render_script_settings(panel, params):
                         icon=":material/preview:",
                         use_container_width=True,
                     ):
-                        render_script_prompt_preview(
-                            llm.build_script_prompt(
-                                video_subject=params.video_subject,
-                                language=params.video_language,
-                                paragraph_number=params.paragraph_number,
-                                video_script_prompt=params.video_script_prompt,
-                                custom_system_prompt=params.custom_system_prompt,
+                        if params.content_mode == "factual":
+                            try:
+                                sources = factual_content.validate_sources(params)
+                            except ValueError:
+                                st.error(tr("Factual Sources Invalid"))
+                            else:
+                                render_script_prompt_preview(
+                                    factual_content.build_script_prompt(params, sources)
+                                )
+                        else:
+                            render_script_prompt_preview(
+                                llm.build_script_prompt(
+                                    video_subject=params.video_subject,
+                                    language=params.video_language,
+                                    paragraph_number=params.paragraph_number,
+                                    video_script_prompt=params.video_script_prompt,
+                                    custom_system_prompt=params.custom_system_prompt,
+                                )
                             )
-                        )
 
             # 模型发现只增强视频素材，不改变用户明确选择的文案 Provider。
             if _effective_script_generation_backend() == "loomloom":
@@ -5097,6 +5702,9 @@ def _render_video_settings(panel, params):
                 "muapi": tr("MuAPI AI Video"),
                 "loomloom": tr("Shengsuan Cloud AI Video"),
                 "openai_image": tr("OpenAI Compatible Text-to-Image"),
+                "wan22_local": tr("Wan 2.2 Local"),
+                "ltx25_local": tr("LTX 2.5 Local"),
+                "ltx25_hf": "LTX 2.5 Hugging Face",
                 "local": tr("Local file"),
             }
             saved_video_source_name = str(
@@ -5108,6 +5716,7 @@ def _render_video_settings(panel, params):
                     (tr("Stock Video"), VIDEO_SOURCE_GROUPS["stock_video"]),
                     (tr("AI Video"), VIDEO_SOURCE_GROUPS["ai_video"]),
                     (tr("AI Image"), VIDEO_SOURCE_GROUPS["ai_image"]),
+                    (tr("Local AI Video"), VIDEO_SOURCE_GROUPS["local_ai_video"]),
                     (tr("Local Material"), VIDEO_SOURCE_GROUPS["local"]),
                 ),
                 default_value=saved_video_source_name,
@@ -5117,6 +5726,33 @@ def _render_video_settings(panel, params):
                 on_settings=_open_material_settings_dialog,
             )
             _set_runtime_config("app", "video_source", params.video_source)
+
+            local_ai_capability = (
+                local_ai.source_capability(params.video_source)
+                if local_ai.is_public_source(params.video_source)
+                else None
+            )
+            if local_ai_capability is not None:
+                st.caption(
+                    f"Model: {local_ai_capability.model_label} · "
+                    f"Backend: {local_ai_capability.backend_label}"
+                )
+                params.local_ai_generation_mode = stable_selectbox(
+                    tr("Local AI Generation Mode"),
+                    options=list(local_ai_capability.generation_modes),
+                    default_value=_saved_ui_choice(
+                        "local_ai_generation_mode",
+                        list(local_ai_capability.generation_modes),
+                        local_ai_capability.generation_modes[0],
+                    ),
+                    key="local_ai_generation_mode_select",
+                    format_func=local_ai_capability.mode_label,
+                    disabled=len(local_ai_capability.generation_modes) == 1,
+                    help=tr("Local AI Generation Mode Help"),
+                )
+                _set_runtime_config(
+                    "ui", "local_ai_generation_mode", params.local_ai_generation_mode
+                )
 
             loomloom_video_capability = None
             if params.video_source == "loomloom":
@@ -5136,6 +5772,106 @@ def _render_video_settings(panel, params):
                 st.caption(tr("Metaso MiniMax H3 Help"))
             if params.video_source == "muapi":
                 st.caption(tr("MuAPI AI Video Help"))
+            if params.video_source == local_ai.WAN22_SOURCE_ID:
+                st.caption(tr("Wan 2.2 Local Help"))
+                if st.button(
+                    tr("Check Wan 2.2 Readiness"),
+                    key="wan22_local_readiness_button",
+                ):
+                    with st.spinner(tr("Checking Wan 2.2 Readiness")):
+                        readiness = local_ai.preflight_status(
+                            local_ai.WAN22_SOURCE_ID
+                        )
+                    if readiness["ready"]:
+                        st.success(tr("Wan 2.2 Ready"))
+                    else:
+                        st.error(
+                            tr("Wan 2.2 Not Ready").format(
+                                error=readiness["message"]
+                            )
+                        )
+            if params.video_source == local_ai.LTX25_SOURCE_ID:
+                st.caption(tr("LTX 2.5 Local Help"))
+                if st.button(
+                    tr("Check LTX 2.5 Readiness"),
+                    key="ltx25_local_readiness_button",
+                ):
+                    with st.spinner(tr("Checking LTX 2.5 Readiness")):
+                        readiness = local_ai.preflight_status(
+                            local_ai.LTX25_SOURCE_ID,
+                            generation_mode=params.local_ai_generation_mode,
+                        )
+                    if readiness["ready"]:
+                        st.success(tr("LTX 2.5 Ready"))
+                    else:
+                        st.error(
+                            tr("LTX 2.5 Not Ready").format(
+                                error=readiness["message"]
+                            )
+                        )
+            if params.video_source == local_ai.LTX25_HF_SOURCE_ID:
+                st.caption(
+                    "LTX 2.5 runs remotely on your configured Hugging Face ZeroGPU Space."
+                )
+                if st.button(
+                    tr("Check LTX 2.5 Readiness"),
+                    key="ltx25_hf_readiness_button",
+                ):
+                    with st.spinner(tr("Checking LTX 2.5 Readiness")):
+                        readiness = local_ai.preflight_status(
+                            local_ai.LTX25_HF_SOURCE_ID,
+                            generation_mode=params.local_ai_generation_mode,
+                        )
+                    if readiness["ready"]:
+                        st.success(tr("LTX 2.5 Ready"))
+                    else:
+                        st.error(
+                            tr("LTX 2.5 Not Ready").format(
+                                error=readiness["message"]
+                            )
+                        )
+            if local_ai.is_public_source(params.video_source):
+                saved_local_seed = int(config.ui.get("local_ai_seed", 42) or 42)
+                params.local_ai_seed = int(
+                    st.number_input(
+                        tr("Local AI Seed"),
+                        min_value=local_ai_capability.seed_min,
+                        max_value=local_ai_capability.seed_max,
+                        value=min(
+                            max(local_ai_capability.seed_min, saved_local_seed),
+                            local_ai_capability.seed_max,
+                        ),
+                        step=1,
+                        key="local_ai_seed_input",
+                        help=tr("Local AI Seed Help"),
+                    )
+                )
+                _set_runtime_config(
+                    "ui",
+                    "local_ai_seed",
+                    params.local_ai_seed,
+                )
+                params.local_ai_visual_style = st.text_area(
+                    tr("Local AI Visual Style"),
+                    value=_saved_ui_text(
+                        "local_ai_visual_style",
+                        max_length=2000,
+                    ),
+                    key="local_ai_visual_style_input",
+                    max_chars=local_ai_capability.prompt_max_chars,
+                    height=90,
+                    help=tr("Local AI Visual Style Help"),
+                ).strip()
+                st.caption(
+                    "Use this as visual prompt guidance. MoneyPrinter creates "
+                    "scene-specific prompts from your script, and you can edit "
+                    "individual scene prompts before regenerating a scene."
+                )
+                _set_runtime_config(
+                    "ui",
+                    "local_ai_visual_style",
+                    params.local_ai_visual_style,
+                )
             if params.video_source == "local":
                 # Streamlit 的文件类型校验对扩展名大小写敏感，这里同时放行大小写两种形式。
                 local_file_types = sorted(
@@ -5223,6 +5959,15 @@ def _render_video_settings(panel, params):
                 (tr("Portrait"), VideoAspect.portrait.value),
                 (tr("Landscape"), VideoAspect.landscape.value),
             ]
+            if local_ai_capability is not None:
+                ratio_labels = {
+                    VideoAspect.portrait.value: tr("Portrait"),
+                    VideoAspect.landscape.value: tr("Landscape"),
+                }
+                video_aspect_ratios = [
+                    (ratio_labels[value], value)
+                    for value in local_ai_capability.aspect_ratios
+                ]
             if loomloom_video_capability is not None:
                 ratio_labels = {value: label for label, value in video_aspect_ratios}
                 video_aspect_ratios = [
@@ -5247,9 +5992,14 @@ def _render_video_settings(panel, params):
                     video_aspect_ratios[default_aspect_index][1],
                 ),
                 key=f"video_aspect_for_{params.video_source}",
-                format_func=lambda value: dict(
-                    (v, label) for label, v in video_aspect_ratios
-                )[value],
+                format_func=lambda value: (
+                    f"{dict((v, label) for label, v in video_aspect_ratios)[value]} "
+                    f"· {value} · "
+                    f"{local_ai_capability.dimensions_for(value)[0]}×"
+                    f"{local_ai_capability.dimensions_for(value)[1]}"
+                    if local_ai_capability is not None
+                    else dict((v, label) for label, v in video_aspect_ratios)[value]
+                ),
             )
             params.video_aspect = VideoAspect(selected_aspect_ratio)
             _set_runtime_config(
@@ -5281,7 +6031,9 @@ def _render_video_settings(panel, params):
 
             # MiniMax H3 的远端时长范围是 4～15 秒。选择秘塔时使用完整能力
             # 范围，既避免 2/3 秒被按 4 秒计费，也让 WebUI 与 CLI、服务层一致。
-            if params.video_source == "metaso_minimax":
+            if local_ai_capability is not None:
+                video_clip_durations = list(local_ai_capability.clip_durations)
+            elif params.video_source == "metaso_minimax":
                 video_clip_durations = list(
                     range(
                         metaso_minimax.DEFAULT_MIN_DURATION_SECONDS,
@@ -5303,9 +6055,13 @@ def _render_video_settings(panel, params):
                 default_value=_saved_ui_choice(
                     "video_clip_duration",
                     video_clip_durations,
-                    5
-                    if params.video_source in {"metaso_minimax", "muapi"}
-                    else 3,
+                    (
+                        local_ai_capability.default_clip_duration
+                        if local_ai_capability is not None
+                        else 5
+                        if params.video_source in {"metaso_minimax", "muapi"}
+                        else 3
+                    ),
                 ),
                 key="video_clip_duration_select",
                 help=tr("Clip Duration Help"),
@@ -5343,6 +6099,12 @@ def _render_video_settings(panel, params):
                 key="video_count_select",
             )
             _set_runtime_config("ui", "video_count", params.video_count)
+            if local_ai.is_public_source(params.video_source):
+                st.caption(
+                    tr("Local AI Multiple Videos Help").format(
+                        count=params.video_count,
+                    )
+                )
 
             video_codec_options = [
                 (tr("Default Video Encoder"), DEFAULT_VIDEO_CODEC_OPTION),
@@ -7823,14 +8585,123 @@ def _render_generation_controls(
 
     _render_settings_transfer(params)
 
-    start_button = st.button(
-        tr("Generate Video"),
-        use_container_width=True,
-        type="primary",
-        key="generate_video_button",
-        on_click=_prepare_generation_task,
+    rerender_source_task_id = str(
+        st.session_state.get("task_restore_source_task_id") or ""
     )
+    rerender_available = bool(
+        rerender_source_task_id
+        and local_ai.is_public_source(params.video_source)
+        and os.path.isfile(
+            os.path.join(
+                utils.task_dir(rerender_source_task_id),
+                "scene_plan.json",
+            )
+        )
+        and generation_manifest.manifest_path(
+            rerender_source_task_id
+        ).is_file()
+    )
+
+    rerender_button = False
+    if rerender_available:
+        rerender_col, generate_col = st.columns(2)
+        rerender_button = rerender_col.button(
+            tr("Rerender Existing AI Scenes"),
+            use_container_width=True,
+            type="secondary",
+            key="rerender_existing_local_ai_button",
+            icon=":material/movie_edit:",
+            help=tr("Rerender Existing AI Scenes Help"),
+        )
+        start_button = generate_col.button(
+            tr("Generate Video"),
+            use_container_width=True,
+            type="primary",
+            key="generate_video_button",
+            on_click=_prepare_generation_task,
+        )
+    else:
+        start_button = st.button(
+            tr("Generate Video"),
+            use_container_width=True,
+            type="primary",
+            key="generate_video_button",
+            on_click=_prepare_generation_task,
+        )
+
+    review_button = False
+    if params.content_mode == "factual":
+        review_button = st.button(
+            tr("Review Script Only"),
+            use_container_width=True,
+            type="secondary",
+            key="review_factual_script_button",
+            help=tr("Review Script Only Help"),
+            on_click=_prepare_generation_task,
+        )
+
     render_onboarding_tour()
+
+    if review_button:
+        task_id = st.session_state.get("pending_generation_task_id") or str(uuid4())
+        if not params.video_subject and not params.video_script:
+            _remove_active_generation_task(task_id)
+            st.error(tr("Video Script and Subject Cannot Both Be Empty"))
+            st.stop()
+        try:
+            factual_content.validate_sources(params)
+            if st.session_state.get("factual_source_error"):
+                raise ValueError("invalid source line")
+        except ValueError:
+            _remove_active_generation_task(task_id)
+            st.error(tr("Factual Sources Invalid"))
+            st.stop()
+        _save_runtime_config()
+        try:
+            webui_task.submit_generation(
+                task_id=task_id,
+                params=params,
+                capture_logs=not config.ui.get("hide_log", False),
+                stop_at="script",
+            )
+        except Exception:
+            _remove_active_generation_task(task_id)
+            st.error(tr("Factual Review Unavailable"))
+            st.stop()
+        st.session_state["current_generation_task_id"] = task_id
+        st.toast(tr("Factual Review Queued"))
+
+    if rerender_button:
+        _save_runtime_config()
+        try:
+            webui_task.submit_local_ai_rerender(
+                rerender_source_task_id,
+                params,
+                capture_logs=not config.ui.get("hide_log", False),
+            )
+        except Exception as exc:
+            logger.warning(
+                "render-only rerender rejected: "
+                f"task_id={rerender_source_task_id}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            st.error(
+                tr("Rerender Existing AI Scenes Failed").format(
+                    error=str(exc)
+                )
+            )
+        else:
+            _add_active_generation_task(
+                rerender_source_task_id,
+                subject=params.video_subject
+                or params.video_script
+                or rerender_source_task_id,
+            )
+            st.session_state["current_generation_task_id"] = (
+                rerender_source_task_id
+            )
+            st.toast(tr("Rerender Existing AI Scenes Queued"))
+
     if start_button:
         _save_runtime_config()
         task_id = st.session_state.get("pending_generation_task_id") or str(uuid4())
@@ -7842,6 +8713,16 @@ def _render_generation_controls(
             _remove_active_generation_task(task_id)
             st.error(tr("Video Script and Subject Cannot Both Be Empty"))
             st.stop()
+
+        if params.content_mode == "factual":
+            try:
+                factual_content.validate_sources(params)
+                if st.session_state.get("factual_source_error"):
+                    raise ValueError("invalid source line")
+            except ValueError:
+                _remove_active_generation_task(task_id)
+                st.error(tr("Factual Sources Invalid"))
+                st.stop()
 
         voxcpm_reference_audio = None
         voxcpm_prompt_audio = None
@@ -7882,6 +8763,9 @@ def _render_generation_controls(
             "muapi",
             "loomloom",
             "openai_image",
+            "wan22_local",
+            "ltx25_local",
+            "ltx25_hf",
             "local",
         ]:
             _remove_active_generation_task(task_id)
@@ -8177,7 +9061,10 @@ def _render_generation_controls(
         try:
             st.toast(tr("Generating Video"))
             logger.info(tr("Start Generating Video"))
-            logger.info(utils.to_json(params))
+            logged_params = params.model_dump(mode="json")
+            if params.content_mode == "factual":
+                logged_params["factual_sources"] = "<user supplied evidence>"
+            logger.info(utils.to_json(logged_params))
             webui_task.submit_generation(
                 task_id=task_id,
                 params=params,
@@ -8201,6 +9088,7 @@ def _render_generation_controls(
             st.stop()
 
         st.session_state["current_generation_task_id"] = task_id
+        st.session_state.pop("task_restore_source_task_id", None)
         logger.info(f"WebUI generation task submitted: task_id={task_id}")
 
     _render_current_generation_task()

@@ -64,6 +64,78 @@ class TestVideoService(unittest.TestCase):
         vd._runtime_disabled_video_codecs.clear()
         vd._ffmpeg_encoder_exists.cache_clear()
 
+    def test_validate_final_video_output_accepts_expected_media(self):
+        with tempfile.NamedTemporaryFile(suffix=".mp4") as stream:
+            stream.write(b"final-video")
+            stream.flush()
+            clip = types.SimpleNamespace(
+                duration=5.1,
+                size=(1080, 1920),
+                audio=types.SimpleNamespace(duration=5.0),
+            )
+            with (
+                patch.object(
+                    vd,
+                    "_open_video_clip_quietly",
+                    return_value=clip,
+                ) as open_clip,
+                patch.object(vd, "close_clip") as close_clip,
+            ):
+                vd.validate_final_video_output(
+                    stream.name,
+                    expected_aspect="9:16",
+                    expected_duration=5.0,
+                )
+
+        open_clip.assert_called_once_with(stream.name, audio=True)
+        close_clip.assert_called_once_with(clip)
+
+    def test_validate_final_video_output_rejects_missing_audio(self):
+        with tempfile.NamedTemporaryFile(suffix=".mp4") as stream:
+            stream.write(b"final-video")
+            stream.flush()
+            clip = types.SimpleNamespace(
+                duration=5.0,
+                size=(1080, 1920),
+                audio=None,
+            )
+            with (
+                patch.object(vd, "_open_video_clip_quietly", return_value=clip),
+                patch.object(vd, "close_clip"),
+                self.assertRaisesRegex(
+                    vd.FinalVideoValidationError,
+                    "audio stream",
+                ),
+            ):
+                vd.validate_final_video_output(
+                    stream.name,
+                    expected_aspect="9:16",
+                    expected_duration=5.0,
+                )
+
+    def test_validate_final_video_output_rejects_wrong_duration(self):
+        with tempfile.NamedTemporaryFile(suffix=".mp4") as stream:
+            stream.write(b"final-video")
+            stream.flush()
+            clip = types.SimpleNamespace(
+                duration=3.0,
+                size=(1080, 1920),
+                audio=types.SimpleNamespace(duration=3.0),
+            )
+            with (
+                patch.object(vd, "_open_video_clip_quietly", return_value=clip),
+                patch.object(vd, "close_clip"),
+                self.assertRaisesRegex(
+                    vd.FinalVideoValidationError,
+                    "duration differs",
+                ),
+            ):
+                vd.validate_final_video_output(
+                    stream.name,
+                    expected_aspect="9:16",
+                    expected_duration=5.0,
+                )
+
     def test_generate_video_rejects_font_outside_directory_before_opening_media(self):
         """WebUI、CLI 或内部调用绕过 API 时，渲染层也必须阻断越界字体。"""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -391,6 +463,56 @@ class TestVideoService(unittest.TestCase):
                 self.assertEqual(source_video.close_calls, 1)
                 self.assertEqual(voice_source.close_calls, 1)
                 self.assertEqual(final_video.close_calls, 1)
+
+    def test_generate_video_preserves_voice_and_bgm_gain_controls(self):
+        """Local-AI footage uses this same composer, so audio gain controls must remain intact."""
+        params = vd.VideoParams(
+            video_subject="test",
+            subtitle_enabled=False,
+            voice_volume=0.65,
+            bgm_type="sonilo",
+            bgm_volume=0.15,
+        )
+        source_video = _FakeMoviePyClip()
+        voice_source = _FakeMoviePyClip()
+        bgm_source = _FakeMoviePyClip()
+        mixed_audio = _FakeMoviePyClip()
+        final_video = _FakeMoviePyClip()
+        source_video.with_audio_result = final_video
+
+        with (
+            patch.object(
+                vd,
+                "_open_video_clip_quietly",
+                return_value=source_video,
+            ),
+            patch.object(
+                vd,
+                "AudioFileClip",
+                side_effect=[voice_source, bgm_source],
+            ),
+            patch.object(vd.afx, "MultiplyVolume") as multiply_volume,
+            patch.object(vd.afx, "AudioFadeOut"),
+            patch.object(vd, "CompositeAudioClip", return_value=mixed_audio),
+            patch.object(vd, "_write_videofile_with_codec_fallback"),
+            patch.object(
+                vd, "_get_configured_video_codec", return_value="libx264"
+            ),
+        ):
+            result = vd.generate_video(
+                video_path="combined.mp4",
+                audio_path="voice.mp3",
+                subtitle_path="",
+                output_file="final.mp4",
+                params=params,
+                bgm_file_override="generated-bgm.wav",
+            )
+
+        self.assertTrue(result)
+        self.assertEqual(
+            [call.args[0] for call in multiply_volume.call_args_list],
+            [0.65, 0.15],
+        )
 
     def test_generate_video_chooses_looping_by_bgm_file_source(self):
         """默认曲库需要循环，任务层提供的时长适配文件不应依赖提供商名称。"""

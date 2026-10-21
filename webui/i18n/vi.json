@@ -348,6 +348,10 @@
     "Onboarding Next": "Tiếp Theo",
     "Onboarding Done": "Hoàn Tất",
     "Regenerate Task": "Tạo lại",
+    "Resume Task": "Tiếp tục",
+    "Resume Task Help": "Tiếp tục tác vụ AI cục bộ bằng lời thuyết minh, kế hoạch cảnh và các clip hợp lệ đã lưu.",
+    "Resume Task Failed": "Không thể tiếp tục tác vụ",
+    "Resume Task Queued": "Đã xếp hàng để tiếp tục tác vụ",
     "Regenerate Task Confirmation": "Tải kịch bản và cài đặt của tác vụ này? Các giá trị hiện tại sẽ bị thay thế, nhưng tác vụ và video gốc không bị thay đổi.",
     "Load Task Configuration": "Tải cấu hình",
     "Task Restore Failed": "Tác vụ này không có cài đặt có thể tái sử dụng.",
@@ -418,6 +422,7 @@
     "OFox Upstream Vendor Help": "Nhà cung cấp thượng nguồn phục vụ việc tạo video OFox. BytePlus (quốc tế) là mặc định với chính sách nội dung nhất quán; Volcano Engine là nhà cung cấp Trung Quốc đại lục; Tự động để gateway OFox cân bằng tải giữa các nhà cung cấp.",
     "OFox Vendor BytePlus": "BytePlus (quốc tế, mặc định)",
     "OFox Vendor Volcengine": "Volcano Engine (Trung Quốc đại lục)",
-    "OFox Vendor Auto": "Tự động (gateway cân bằng tải)"
+    "OFox Vendor Auto": "Tự động (gateway cân bằng tải)",
+    "Local AI Multiple Videos Help": "Các cảnh AI cục bộ chỉ được tạo một lần cho mỗi tác vụ và được dùng chung cho cả {count} biến thể đầu ra cuối cùng. Tăng giá trị này chỉ chạy lại bước ghép video; không làm tăng số lần suy luận cảnh Wan/LTX trừ khi bạn chủ động tạo lại một cảnh."
   }
 }

@@ -62,6 +62,74 @@ class TestTaskService(unittest.TestCase):
         )
         self.assertFalse(tm.is_task_busy(None))
 
+    def test_request_task_cancellation_only_accepts_processing_task(self):
+        state = MemoryState()
+        state.update_task(
+            "processing",
+            state=tm.const.TASK_STATE_PROCESSING,
+            progress=30,
+        )
+        state.update_task(
+            "complete",
+            state=tm.const.TASK_STATE_COMPLETE,
+            progress=100,
+        )
+
+        with patch.object(tm.sm, "state", state):
+            self.assertTrue(tm.request_task_cancellation("processing"))
+            self.assertTrue(state.get_task("processing")["cancel_requested"])
+            self.assertFalse(tm.request_task_cancellation("complete"))
+            self.assertFalse(tm.request_task_cancellation("missing"))
+
+    def test_queued_cancellation_is_preserved_when_worker_starts(self):
+        state = MemoryState()
+        state.update_task(
+            "cancel-before-start",
+            state=tm.const.TASK_STATE_PROCESSING,
+            progress=0,
+            cancel_requested=True,
+        )
+        params = VideoParams(video_subject="should not generate")
+
+        with (
+            patch.object(tm.sm, "state", state),
+            patch.object(tm, "generate_script") as generate_script,
+        ):
+            result = tm.start(
+                "cancel-before-start",
+                params,
+                stop_at="script",
+            )
+
+        generate_script.assert_not_called()
+        self.assertEqual(result["state"], tm.const.TASK_STATE_CANCELLED)
+        self.assertTrue(result["cancelled"])
+        persisted = state.get_task("cancel-before-start")
+        self.assertEqual(
+            persisted["state"],
+            tm.const.TASK_STATE_CANCELLED,
+        )
+        self.assertEqual(persisted["error"], "Task cancelled by user")
+
+    def test_cancellation_requested_during_script_survives_progress_update(self):
+        state = MemoryState()
+        params = VideoParams(video_subject="cancel during script", video_source="local")
+
+        def generate_script(task_id, _params):
+            self.assertTrue(tm.request_task_cancellation(task_id))
+            return "A finished script."
+
+        with (
+            patch.object(tm.sm, "state", state),
+            patch.object(tm, "generate_script", side_effect=generate_script),
+            patch.object(tm, "generate_audio") as generate_audio,
+        ):
+            result = tm.start("cancel-during-script", params, stop_at="audio")
+
+        generate_audio.assert_not_called()
+        self.assertEqual(result["state"], tm.const.TASK_STATE_CANCELLED)
+        self.assertTrue(state.get_task("cancel-during-script")["cancel_requested"])
+
     def test_generate_script_forwards_advanced_prompt_options(self):
         """
         任务生成入口和 WebUI/API 共用 VideoParams。这里验证自动生成文案时，
@@ -118,6 +186,51 @@ class TestTaskService(unittest.TestCase):
             combine_videos.call_args.kwargs["video_fit_mode"],
             params.video_fit_mode,
         )
+
+    def test_generate_final_videos_validates_local_ai_final_output(self):
+        params = VideoParams(
+            video_subject="test",
+            video_source="wan22_local",
+            video_count=1,
+            subtitle_enabled=False,
+            bgm_type="",
+            bgm_volume=0,
+        )
+
+        validation_error = tm.video.FinalVideoValidationError(
+            "final video is not decodable"
+        )
+        with (
+            patch.object(tm.video, "combine_videos"),
+            patch.object(tm.video, "generate_video", return_value=True),
+            patch.object(tm.voice, "get_audio_duration", return_value=4.2) as measure_audio,
+            patch.object(
+                tm.video,
+                "validate_final_video_output",
+                side_effect=validation_error,
+            ) as validate_output,
+            patch.object(tm.sm.state, "update_task"),
+            self.assertRaises(tm.video.FinalVideoValidationError),
+        ):
+            tm.generate_final_videos(
+                task_id="local-ai-final-validation",
+                params=params,
+                downloaded_videos=["material.mp4"],
+                audio_file="audio.mp3",
+                subtitle_path="",
+                audio_duration=5,
+            )
+
+        validate_output.assert_called_once_with(
+            os.path.join(
+                utils.task_dir("local-ai-final-validation"),
+                "final-1.mp4",
+            ),
+            expected_aspect="9:16",
+            expected_duration=4.2,
+            require_audio=True,
+        )
+        measure_audio.assert_called_once_with("audio.mp3")
 
     def test_generate_final_videos_uses_generated_sonilo_music(self):
         """Sonilo 必须针对每条拼接后的视频生成配乐，并传给最终混音。"""
@@ -688,6 +801,74 @@ class TestTaskService(unittest.TestCase):
         self.assertEqual(failed_task["failed_stage"], "terms")
         self.assertTrue(failed_task["error"])
 
+    def test_generate_audio_no_voice_skips_tts_dispatcher(self):
+        task_id = "test-no-voice-audio"
+        task_dir = utils.task_dir(task_id)
+        params = VideoParams(
+            video_subject="silent local AI video",
+            video_script="",
+            voice_name=tm.voice.NO_VOICE_NAME,
+        )
+        sub_maker = MagicMock()
+
+        try:
+            with (
+                patch.object(
+                    tm.voice,
+                    "prepare_no_voice_audio",
+                    return_value=(sub_maker, 4.2),
+                ) as prepare_no_voice_audio,
+                patch.object(tm.voice, "tts") as tts,
+            ):
+                audio_file, audio_duration, result_sub_maker = tm.generate_audio(
+                    task_id,
+                    params,
+                    "A silent visual story.",
+                )
+        finally:
+            shutil.rmtree(task_dir, ignore_errors=True)
+
+        self.assertEqual(audio_file, os.path.join(task_dir, "audio.mp3"))
+        self.assertEqual(audio_duration, 5)
+        self.assertIs(result_sub_maker, sub_maker)
+        prepare_no_voice_audio.assert_called_once_with(
+            "A silent visual story.",
+            os.path.join(task_dir, "audio.mp3"),
+        )
+        tts.assert_not_called()
+
+    def test_custom_audio_takes_precedence_over_no_voice_sentinel(self):
+        task_id = "test-custom-audio-no-voice"
+        task_dir = utils.task_dir(task_id)
+        custom_audio_file = os.path.join(task_dir, "custom-audio.mp3")
+        with open(custom_audio_file, "wb") as audio:
+            audio.write(b"fake audio")
+
+        params = VideoParams(
+            video_subject="custom audio",
+            custom_audio_file=custom_audio_file,
+            voice_name=tm.voice.NO_VOICE_NAME,
+        )
+        try:
+            with (
+                patch.object(tm.voice, "prepare_no_voice_audio") as prepare_silence,
+                patch.object(tm.voice, "tts") as tts,
+                patch.object(tm.voice, "get_audio_duration", return_value=6),
+            ):
+                audio_file, audio_duration, sub_maker = tm.generate_audio(
+                    task_id,
+                    params,
+                    "script",
+                )
+        finally:
+            shutil.rmtree(task_dir, ignore_errors=True)
+
+        self.assertEqual(audio_file, os.path.realpath(custom_audio_file))
+        self.assertEqual(audio_duration, 6)
+        self.assertIsNone(sub_maker)
+        prepare_silence.assert_not_called()
+        tts.assert_not_called()
+
     def test_generate_audio_uses_custom_file_inside_task_directory(self):
         task_id = "test-custom-audio-safe"
         task_dir = utils.task_dir(task_id)
@@ -835,6 +1016,50 @@ class TestTaskService(unittest.TestCase):
         failed_task = state.get_task(task_id)
         self.assertEqual(failed_task["failed_stage"], "audio")
         self.assertIn("does not exist", failed_task["error"])
+
+    def test_no_voice_subtitles_do_not_transcribe_silence_with_whisper(self):
+        task_id = "test-no-voice-subtitles"
+        task_dir = utils.task_dir(task_id)
+        params = VideoParams(
+            video_subject="silent captions",
+            voice_name=tm.voice.NO_VOICE_NAME,
+            subtitle_enabled=True,
+        )
+        sub_maker = MagicMock()
+
+        def write_subtitle(*, subtitle_file, **_kwargs):
+            Path(subtitle_file).write_text(
+                "1\n00:00:00,000 --> 00:00:03,000\nSilent captions\n\n",
+                encoding="utf-8",
+            )
+
+        try:
+            with (
+                patch.object(
+                    tm.config,
+                    "app",
+                    dict(tm.config.app, subtitle_provider="whisper"),
+                ),
+                patch.object(
+                    tm.voice,
+                    "create_subtitle",
+                    side_effect=write_subtitle,
+                ) as create_subtitle,
+                patch.object(tm.subtitle, "create") as whisper_create,
+            ):
+                subtitle_path = tm.generate_subtitle(
+                    task_id,
+                    params,
+                    "Silent captions",
+                    sub_maker,
+                    os.path.join(task_dir, "audio.mp3"),
+                )
+        finally:
+            shutil.rmtree(task_dir, ignore_errors=True)
+
+        self.assertTrue(subtitle_path.endswith("subtitle.srt"))
+        create_subtitle.assert_called_once()
+        whisper_create.assert_not_called()
 
     def test_generate_audio_prefers_file_duration_over_sub_maker(self):
         # Every fixture deliberately makes the file duration and the SubMaker
@@ -1352,6 +1577,40 @@ class TestTaskService(unittest.TestCase):
                 self.assertEqual(failed_task["state"], tm.const.TASK_STATE_FAILED)
                 self.assertEqual(failed_task["failed_stage"], stage)
                 self.assertTrue(failed_task["error"])
+
+    def test_start_marks_final_video_validation_as_recoverable_video_failure(self):
+        params = VideoParams(
+            video_subject="Coffee",
+            video_source="wan22_local",
+        )
+        state = MemoryState()
+
+        with (
+            patch.object(
+                tm,
+                "_run_pipeline",
+                side_effect=tm.video.FinalVideoValidationError(
+                    "final video is not decodable"
+                ),
+            ),
+            patch.object(tm.sm, "state", state),
+        ):
+            result = tm.start("final-validation-failure", params)
+
+        failed_task = state.get_task("final-validation-failure")
+        self.assertEqual(result, failed_task)
+        self.assertEqual(failed_task["state"], tm.const.TASK_STATE_FAILED)
+        self.assertEqual(failed_task["failed_stage"], "video")
+        self.assertEqual(failed_task["local_ai_provider"], "wan22_local")
+        self.assertTrue(failed_task["recoverable"])
+        self.assertEqual(
+            failed_task["recovery_action"],
+            "rerender_final_video",
+        )
+        self.assertEqual(
+            failed_task["error"],
+            "FinalVideoValidationError: final video is not decodable",
+        )
 
     def test_start_records_unexpected_pipeline_exception(self):
         """未预期异常也必须结束任务，并向 API 暴露原始异常类型和信息。"""
