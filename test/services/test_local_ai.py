@@ -1302,7 +1302,11 @@ class TestLocalAITaskIntegration(LocalAITestCase):
             "verdict": "approved",
             "reason": "Both claims appear in the supplied excerpt",
             "claims": [
-                {"claim": sentence, "source_ids": ["S1"]}
+                {
+                    "claim": sentence,
+                    "source_ids": ["S1"],
+                    "evidence_quotes": {"S1": sentence},
+                }
                 for sentence in factual_content._narration_units(script_text)
             ],
         }

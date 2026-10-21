@@ -301,6 +301,15 @@ ASGI response test covers it. The operator deferred manual real-LLM and live
 public-page testing until the development phase is complete. CPU regression
 tests continue; do not claim real-model acceptance from them.
 
+New factual approvals also require a short, verbatim passage from each cited
+operator-supplied excerpt for each reviewed narration unit. The gate rejects
+missing or invented passages before any audio/video work, and stores accepted
+passages only in the task-local review JSON; WebUI summaries still omit excerpt
+text. Earlier saved approvals remain readable and resumable. A matching passage
+does not prove that a claim is supported or that its source is authentic. Real
+LLM approval/blocking behavior and imported-page acceptance remain on the
+deferred manual verification list.
+
 ## CPU integration and hardening pass
 
 Starting from `269d5c0202492608e2a1309c94afcf1650bea3fc`, the locked

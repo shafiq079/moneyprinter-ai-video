@@ -74,9 +74,13 @@ When the reviewer returns a valid verdict, the task directory records
 individual claims/citations, verdict and limitations. Malformed or unavailable
 LLM responses fail closed and can leave no review file.
 For an approval, the reviewer must return every narration sentence in order
-and verbatim with a citation. A missing, changed or reordered sentence blocks
-approval. This checks coverage of the review response; it does not establish
-that the cited excerpt actually supports every statement in that sentence.
+and verbatim with a citation. For each cited source, it must also return a
+short passage that occurs in that source's accepted excerpt. Missing, changed
+or reordered sentences, missing passages and invented passages block approval.
+The passages are saved in the task-local review JSON but are not repeated in
+the WebUI's read-only summary. Existing saved approvals remain readable and
+resumable. This checks coverage and passage traceability; it does not establish
+that the cited passage supports every statement or that the source is true.
 The artifact package includes its task-relative path. Blocked tasks expose
 `failed_stage=factual_review`; approved tasks continue through MoneyPrinter's
 existing narration, planning, provider and composer. A same-task local-AI
@@ -103,7 +107,9 @@ Resume consistent and never causes a network fetch during retry.
 **Deferred operator acceptance:** With the configured real LLM, run a
 script-only factual task whose claims match a real copied source excerpt and a
 second task with an unsupported claim. Confirm the first review approves and
-the second blocks before media generation. This does not need video/GPU quota.
+the second blocks before media generation. Inspect the first task's saved
+passages and confirm they occur in the cited excerpts. This does not need
+video/GPU quota.
 It is intentionally pending; CPU mock tests cannot measure the real model's
 judgment or verify the source pages.
 The optional import helper is covered by offline network-boundary tests; a

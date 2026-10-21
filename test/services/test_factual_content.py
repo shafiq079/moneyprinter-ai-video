@@ -90,7 +90,13 @@ def test_factual_approval_precedes_audio_and_writes_review(tmp_path):
     review = {
         "verdict": "approved",
         "reason": "Directly supported",
-        "claims": [{"claim": "The Moon has impact craters.", "source_ids": ["S1"]}],
+        "claims": [
+            {
+                "claim": "The Moon has impact craters.",
+                "source_ids": ["S1"],
+                "evidence_quotes": {"S1": SOURCE["excerpt"]},
+            }
+        ],
     }
     with (
         patch.object(task.sm, "state", state),
@@ -113,6 +119,7 @@ def test_factual_approval_precedes_audio_and_writes_review(tmp_path):
     record = json.loads((tmp_path / "factual_review.json").read_text())
     assert record["status"] == "approved"
     assert record["claims"][0]["source_ids"] == ["S1"]
+    assert record["claims"][0]["evidence_quotes"] == {"S1": SOURCE["excerpt"]}
     assert record["sources"][0]["url"] == SOURCE["url"]
     script_data = json.loads((tmp_path / "script.json").read_text())
     assert script_data["script"] == params().video_script
@@ -201,7 +208,13 @@ def test_factual_subject_generates_from_evidence_then_reviews(tmp_path):
     generated = {"script": "The Moon has impact craters."}
     approved = {
         "verdict": "approved",
-        "claims": [{"claim": "The Moon has impact craters.", "source_ids": ["S1"]}],
+        "claims": [
+            {
+                "claim": "The Moon has impact craters.",
+                "source_ids": ["S1"],
+                "evidence_quotes": {"S1": SOURCE["excerpt"]},
+            }
+        ],
     }
     with (
         patch.object(task.sm, "state", state),
@@ -229,7 +242,11 @@ def test_approved_factual_script_reaches_existing_audio_stage(tmp_path):
         return {
             "verdict": "approved",
             "claims": [
-                {"claim": "The Moon has impact craters.", "source_ids": ["S1"]}
+                {
+                    "claim": "The Moon has impact craters.",
+                    "source_ids": ["S1"],
+                    "evidence_quotes": {"S1": SOURCE["excerpt"]},
+                }
             ],
         }
 
@@ -290,15 +307,92 @@ def test_factual_numbers_must_be_in_cited_excerpt():
         )
 
 
+def test_factual_approval_requires_verbatim_passage_from_each_cited_excerpt():
+    sources = [
+        FactualSource(**SOURCE),
+        FactualSource(
+            url="https://example.org/other",
+            title="Other observations",
+            excerpt="A second source also describes impact craters on the Moon.",
+        ),
+    ]
+    claim = "The Moon has impact craters."
+    valid = {
+        "claim": claim,
+        "source_ids": ["S1", "S2"],
+        "evidence_quotes": {
+            "S1": "The Moon has impact craters",
+            "S2": "describes impact craters on the Moon",
+        },
+    }
+    review = factual_content._validated_review(
+        {"verdict": "approved", "claims": [valid]}, claim, sources
+    )
+    assert review["claims"][0]["evidence_quotes"] == valid["evidence_quotes"]
+
+    for quotes in (
+        None,
+        {"S1": valid["evidence_quotes"]["S1"]},
+        {"S1": valid["evidence_quotes"]["S1"], "S2": "Not in this source"},
+        {"S1": valid["evidence_quotes"]["S2"], "S2": valid["evidence_quotes"]["S1"]},
+        {"S1": valid["evidence_quotes"]["S1"], "S2": "bad", "S99": "unknown"},
+    ):
+        invalid = {**valid, "evidence_quotes": quotes}
+        with pytest.raises(factual_content.FactualReviewBlocked, match="passage"):
+            factual_content._validated_review(
+                {"verdict": "approved", "claims": [invalid]}, claim, sources
+            )
+
+
+def test_factual_quote_missing_blocks_before_audio(tmp_path):
+    state = MemoryState()
+    with (
+        patch.object(task.sm, "state", state),
+        patch.object(task.utils, "task_dir", return_value=str(tmp_path)),
+        patch.object(
+            task.factual_content.llm,
+            "generate_json_response",
+            return_value={
+                "verdict": "approved",
+                "claims": [
+                    {"claim": "The Moon has impact craters.", "source_ids": ["S1"]}
+                ],
+            },
+        ),
+        patch.object(task, "generate_audio") as audio,
+        patch.object(task, "get_video_materials") as materials,
+    ):
+        result = task.start("missing-passage", params(), stop_at="video")
+    assert result["failed_stage"] == "factual_review"
+    audio.assert_not_called()
+    materials.assert_not_called()
+    assert not (tmp_path / "factual_review.json").exists()
+
+
 def test_factual_approval_requires_every_narration_unit_in_order():
     script = "The Moon has impact craters. It is made of cheese."
     source = [FactualSource(**SOURCE)]
-    supported = {"claim": "The Moon has impact craters.", "source_ids": ["S1"]}
-    unsupported = {"claim": "It is made of cheese.", "source_ids": ["S1"]}
+    supported = {
+        "claim": "The Moon has impact craters.",
+        "source_ids": ["S1"],
+        "evidence_quotes": {"S1": SOURCE["excerpt"]},
+    }
+    unsupported = {
+        "claim": "It is made of cheese.",
+        "source_ids": ["S1"],
+        "evidence_quotes": {"S1": SOURCE["excerpt"]},
+    }
     for claims in (
         [supported],
         [supported, supported],
-        [supported, {"claim": "It has cheese.", "source_ids": ["S1"]}],
+        [
+            supported,
+            {
+                "claim": "It has cheese.",
+                "source_ids": ["S1"],
+                "evidence_quotes": {"S1": SOURCE["excerpt"]},
+            },
+        ],
         [unsupported, supported],
     ):
         with pytest.raises(factual_content.FactualReviewBlocked, match="cover"):
@@ -312,7 +406,11 @@ def test_incomplete_factual_approval_stops_before_audio(tmp_path):
     incomplete = {
         "verdict": "approved",
         "claims": [
-            {"claim": "The Moon has impact craters.", "source_ids": ["S1"]}
+            {
+                "claim": "The Moon has impact craters.",
+                "source_ids": ["S1"],
+                "evidence_quotes": {"S1": SOURCE["excerpt"]},
+            }
         ],
     }
     with (
@@ -340,6 +438,7 @@ def test_factual_review_prompt_requests_complete_verbatim_coverage():
     prompt = factual_content._review_prompt(script, [FactualSource(**SOURCE)])
     assert '"The Moon has craters.", "Water exists."' in prompt
     assert "copying its text verbatim" in prompt
+    assert "evidence_quotes" in prompt
 
 
 def test_factual_review_units_handle_paragraphs_and_cjk_punctuation():
@@ -479,6 +578,42 @@ def test_saved_review_summary_excludes_excerpts_and_rejects_external_file(tmp_pa
             factual_content.load_review_summary("review-task")
 
 
+def test_new_review_summary_hides_quotes_and_old_approval_remains_readable(tmp_path):
+    task_dir = tmp_path / "review-task"
+    task_dir.mkdir()
+    review = factual_content._validated_review(
+        {
+            "verdict": "approved",
+            "claims": [
+                {
+                    "claim": "The Moon has impact craters.",
+                    "source_ids": ["S1"],
+                    "evidence_quotes": {"S1": SOURCE["excerpt"]},
+                }
+            ],
+        },
+        "The Moon has impact craters.",
+        [FactualSource(**SOURCE)],
+    )
+    target = task_dir / "factual_review.json"
+    target.write_text(json.dumps(review))
+    with patch.object(factual_content.utils, "task_dir", return_value=str(task_dir)):
+        summary = factual_content.load_review_summary("review-task")
+        assert "evidence_quotes" not in summary["claims"][0]
+        assert SOURCE["excerpt"] not in json.dumps(summary)
+        factual_content.validate_saved_approval(
+            "review-task", "The Moon has impact craters.", [FactualSource(**SOURCE)]
+        )
+        review["claims"][0].pop("evidence_quotes")
+        target.write_text(json.dumps(review))
+        assert (
+            factual_content.load_review_summary("review-task")["status"] == "approved"
+        )
+        factual_content.validate_saved_approval(
+            "review-task", "The Moon has impact craters.", [FactualSource(**SOURCE)]
+        )
+
+
 def test_webui_task_manager_displays_blocked_review_without_video(tmp_path):
     task_dir = tmp_path / "review-task"
     task_dir.mkdir()
@@ -524,7 +659,13 @@ def test_webui_artifacts_show_approved_script_only_review_after_restart(tmp_path
     review = factual_content._validated_review(
         {
             "verdict": "approved",
-            "claims": [{"claim": script, "source_ids": ["S1"]}],
+            "claims": [
+                {
+                    "claim": script,
+                    "source_ids": ["S1"],
+                    "evidence_quotes": {"S1": SOURCE["excerpt"]},
+                }
+            ],
         },
         script,
         [FactualSource(**SOURCE)],
