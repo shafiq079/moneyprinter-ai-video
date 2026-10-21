@@ -1471,6 +1471,10 @@ def load_local_ai_resume_context(task_id: str) -> dict:
     script = script_data.get("script")
     if not isinstance(script, str) or not script.strip():
         raise ValueError("saved video script is unavailable")
+    if params.content_mode == "factual":
+        factual_content.validate_saved_approval(
+            task_id, script, factual_content.validate_sources(params)
+        )
 
     plan = scene_planner.load_scene_plan(task_id)
     manifest = generation_manifest.load_manifest(task_id)

@@ -201,3 +201,29 @@ def review_script(task_id: str, script: str, sources: list[FactualSource]) -> di
             result["reason"] or "The script contains claims without supporting evidence"
         )
     return result
+
+
+def validate_saved_approval(
+    task_id: str, script: str, sources: list[FactualSource]
+) -> None:
+    """Reject a factual task resume if its saved approval no longer matches."""
+    target = Path(utils.task_dir(task_id)) / "factual_review.json"
+    try:
+        with target.open(encoding="utf-8") as stream:
+            review = json.load(stream)
+    except (OSError, ValueError) as exc:
+        raise FactualReviewBlocked("Saved factual approval is unavailable") from exc
+
+    expected_sources = [
+        {"id": f"S{index}", **source.model_dump()}
+        for index, source in enumerate(sources, start=1)
+    ]
+    if (
+        not isinstance(review, dict)
+        or review.get("schema_version") != 1
+        or review.get("status") != "approved"
+        or review.get("script_sha256")
+        != hashlib.sha256(script.encode("utf-8")).hexdigest()
+        or review.get("sources") != expected_sources
+    ):
+        raise FactualReviewBlocked("Saved factual approval does not match task inputs")

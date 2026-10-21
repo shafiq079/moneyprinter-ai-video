@@ -63,7 +63,9 @@ The artifact package includes its task-relative path. Blocked tasks expose
 `failed_stage=factual_review`; approved tasks continue through MoneyPrinter's
 existing narration, planning, provider and composer. A same-task local-AI
 resume reuses the approved saved script and media; Regenerate starts a new task
-and runs the review for that new task.
+and runs the review for that new task. Resume rejects a factual task if the
+approved review file is missing or its saved script hash or source excerpts no
+longer match the task inputs. Keep the approved review with the task artifacts.
 
 This is the first Phase 7 slice. Automatic source discovery, independent page
 retrieval and source-authenticity checks are future work, and should be added

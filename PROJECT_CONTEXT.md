@@ -230,6 +230,15 @@ authenticate source pages; automated evidence alignment is not independent
 fact-checking. See `docs/FACTUAL_MODE.md`. Content Factory research remains
 reference only. Automatic discovery/retrieval is a separate future slice.
 
+The following CPU integration check runs an approved factual script through
+the fake local-AI provider, narration, captions, BGM and final MP4 composition.
+It verifies the persisted review, script, scene plan and generation manifest
+without stock-material downloads. Same-task Resume for a factual task now
+requires its saved approved review to match the persisted script hash and exact
+source excerpts. Missing or changed approval data blocks Resume before scene
+generation; creative task recovery is unchanged. This checks task-local
+consistency, not the authenticity or truth of user-supplied evidence.
+
 A manual one-command GPU acceptance pack is also implemented through
 `scripts/local_ai_gpu_validate.py` and
 `app/services/local_ai/gpu_validation.py`. It uses an offline supplied script,

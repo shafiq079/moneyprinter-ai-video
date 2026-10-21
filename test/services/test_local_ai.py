@@ -1,3 +1,4 @@
+import hashlib
 import json
 import shutil
 import subprocess
@@ -13,7 +14,7 @@ from app.models.schema import (
     VideoParams,
     VideoTransitionMode,
 )
-from app.services import generation_manifest, scene_planner, task, video
+from app.services import factual_content, generation_manifest, scene_planner, task, video
 from app.services.local_ai import (
     FAKE_SOURCE_ID,
     LocalAICancellationRequested,
@@ -1271,6 +1272,114 @@ class _OOMFakeProvider(FakeLocalVideoProvider):
 
 
 class TestLocalAITaskIntegration(LocalAITestCase):
+    def test_factual_review_survives_full_fake_video_and_guards_resume(self):
+        task_id = "factual-fake-pipeline"
+        state = MemoryState()
+        script_text = (
+            "A flower opens in the garden at sunrise. "
+            "Green leaves move in a gentle breeze."
+        )
+        source = {
+            "url": "https://example.org/garden",
+            "title": "Garden observations",
+            "excerpt": script_text,
+        }
+        params = VideoParams(
+            video_subject="A garden at sunrise",
+            video_script=script_text,
+            content_mode="factual",
+            factual_sources=[source],
+            video_source=FAKE_SOURCE_ID,
+            video_aspect="9:16",
+            video_clip_duration=1,
+            subtitle_enabled=True,
+            bgm_type="random",
+            bgm_volume=0.1,
+            font_size=32,
+            n_threads=1,
+        )
+        approved = {
+            "verdict": "approved",
+            "reason": "Both claims appear in the supplied excerpt",
+            "claims": [
+                {"claim": sentence, "source_ids": ["S1"]}
+                for sentence in script_text.split(". ")
+            ],
+        }
+
+        def offline_tts(*, voice_file, **_kwargs):
+            audio = self.make_audio(task_id, 2.0)
+            self.assertEqual(str(audio), voice_file)
+            return object()
+
+        def offline_subtitle(*, subtitle_file, **_kwargs):
+            Path(subtitle_file).write_text(
+                "1\n00:00:00,100 --> 00:00:01,700\nA flower opens.\n\n",
+                encoding="utf-8",
+            )
+
+        with (
+            patch.dict("os.environ", {"MPT_ENABLE_LOCAL_AI_FAKE_PROVIDER": "1"}),
+            patch.object(task.sm, "state", state),
+            patch.object(
+                factual_content.llm, "generate_json_response", return_value=approved
+            ) as review_llm,
+            patch.object(task.voice, "tts", side_effect=offline_tts),
+            patch.object(task.voice, "create_subtitle", side_effect=offline_subtitle),
+            patch.object(task.material, "download_videos") as download_videos,
+        ):
+            result = task.start(task_id, params)
+            self.assertEqual(state.get_task(task_id)["state"], task.const.TASK_STATE_COMPLETE)
+            self.assertTrue(Path(result["videos"][0]).is_file())
+            self.assertTrue(Path(result["audio_file"]).is_file())
+            self.assertTrue(Path(result["subtitle_path"]).is_file())
+            self.assertGreaterEqual(len(result["materials"]), 2)
+            download_videos.assert_not_called()
+            review_llm.assert_called_once()
+
+            task_dir = self.task_root / task_id
+            script_path = task_dir / "script.json"
+            script_data = json.loads(script_path.read_text(encoding="utf-8"))
+            review_path = task_dir / "factual_review.json"
+            review = json.loads(review_path.read_text(encoding="utf-8"))
+            self.assertEqual(review["status"], "approved")
+            self.assertEqual(
+                review["script_sha256"],
+                hashlib.sha256(script_text.encode("utf-8")).hexdigest(),
+            )
+            self.assertEqual(script_data["script"], script_text)
+            self.assertEqual(script_data["params"]["content_mode"], "factual")
+            self.assertTrue((task_dir / "scene_plan.json").is_file())
+            self.assertTrue(
+                (task_dir / "generated_ai" / "generation_manifest.json").is_file()
+            )
+
+            state.patch_task(task_id, state=task.const.TASK_STATE_FAILED)
+            self.assertEqual(task.load_local_ai_resume_context(task_id)["script"], script_text)
+
+            script_data["script"] = "An unsupported replacement script."
+            script_path.write_text(json.dumps(script_data), encoding="utf-8")
+            with self.assertRaisesRegex(
+                factual_content.FactualReviewBlocked, "does not match"
+            ):
+                task.load_local_ai_resume_context(task_id)
+
+            script_data["script"] = script_text
+            script_data["params"]["factual_sources"][0]["excerpt"] = (
+                "A different excerpt that does not support this script."
+            )
+            script_path.write_text(json.dumps(script_data), encoding="utf-8")
+            with self.assertRaisesRegex(
+                factual_content.FactualReviewBlocked, "does not match"
+            ):
+                task.load_local_ai_resume_context(task_id)
+
+            review_path.unlink()
+            with self.assertRaisesRegex(
+                factual_content.FactualReviewBlocked, "unavailable"
+            ):
+                task.load_local_ai_resume_context(task_id)
+
     def test_resume_uses_saved_custom_audio_even_if_generated_audio_exists(self):
         task_id = "resume-custom-audio"
         generated = self.make_audio(task_id, 1.9)
