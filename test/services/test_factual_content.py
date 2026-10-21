@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from fastapi.testclient import TestClient
 from streamlit.testing.v1 import AppTest
 
 import cli
@@ -12,6 +13,7 @@ from app.models.schema import FactualSource, TaskVideoRequest, VideoParams
 from app.services import factual_content, task
 from app.services.state import MemoryState
 from app.config import config
+from app import asgi
 from app.controllers.v1 import video as video_controller
 
 
@@ -122,6 +124,30 @@ def test_factual_approval_precedes_audio_and_writes_review(tmp_path):
         )
     assert public["artifact_package"]["factual_review"] == "factual_review.json"
     assert str(tmp_path) not in json.dumps(public)
+
+
+def test_http_task_responses_expose_factual_review_artifact(tmp_path, monkeypatch):
+    task_id = "reviewed-http-task"
+    (tmp_path / "factual_review.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "script.json").write_text("{}", encoding="utf-8")
+    state = MemoryState()
+    state.update_task(task_id, state=1, progress=100)
+    monkeypatch.setitem(config.app, "api_key", "")
+    with (
+        patch.object(video_controller.sm, "state", state),
+        patch.object(video_controller.utils, "task_dir", return_value=str(tmp_path)),
+    ):
+        client = TestClient(asgi.app)
+        detail = client.get(f"/api/v1/tasks/{task_id}")
+        listing = client.get("/api/v1/tasks")
+
+    assert detail.status_code == 200
+    assert listing.status_code == 200
+    for task_data in (detail.json()["data"], listing.json()["data"]["tasks"][0]):
+        package = task_data["artifact_package"]
+        assert package["factual_review"] == "factual_review.json"
+        assert package["script"] == "script.json"
+        assert str(tmp_path) not in json.dumps(task_data)
 
 
 def test_factual_block_stops_before_provider_and_narration(tmp_path):
