@@ -1,6 +1,6 @@
 # MoneyPrinter AI Video — Project Context
 
-Read this file first in every new AI or developer session. `docs/SRS.md` is the full product specification; `docs/MIGRATION_MAP.md` is the file-level porting decision. Update this handoff with every accepted milestone. Local desktop Codex setup and two-machine sync instructions are in `AGENTS.md` and `docs/LOCAL_CODEX_SETUP.md`.
+Read this file first in every new AI or developer session. `docs/SRS.md` is the full product specification; `docs/MIGRATION_MAP.md` is the file-level porting decision. `docs/PRODUCT_VISION.md` preserves the owner's longer-term editable-project and publishing goals separately from implemented scope and unapproved technical proposals. `docs/CHATGPT_PROJECT_SETUP.md` contains the reusable ChatGPT Project handoff. Update this handoff with every accepted milestone. Local desktop Codex setup and two-machine sync instructions are in `AGENTS.md` and `docs/LOCAL_CODEX_SETUP.md`.
 
 ## Canonical product and repository state
 
@@ -11,6 +11,14 @@ Read this file first in every new AI or developer session. `docs/SRS.md` is the 
 - **Completed:** SRS conversion, upstream revalidation and migration decisions; M1 fake-provider foundation; M2/M3 Wan integration and operator surface; M4 Scene Director; LTX 2.5 Fast/DFR; Phase 5 scene iteration; render-only rerender, cancellation, cleanup, provenance/security hardening, true No-Voice local-AI rendering, portable local-AI output packages, per-GPU cross-process runtime serialization, persisted local-AI timing telemetry, local-AI final-output validation, structured local-AI observability, visual-only regeneration/audio-caption reuse regression coverage, final audio gain-control regression coverage, and recoverable final-validation failure classification. Real Wan/LTX inference and Phase 6 quality measurements require GPU hardware and remain deferred.
 
 ## Architecture to preserve
+
+The owner confirmed that a final MP4 alone is not the full long-term product:
+an editable project with independently adjustable scene clips, narration,
+captions and audio remains a deferred goal. The existing Streamlit scene editor
+is the first slice, not a complete multi-track timeline. Earlier proposals
+for a specific editor framework, project-file extension or interchange format
+were not accepted architecture decisions. See `docs/PRODUCT_VISION.md` before
+scoping editor, variable-duration, publishing or channel-automation work.
 
 Task Manager has a separate **Resume** action for failed local-AI tasks with
 saved script/audio/scene plan/manifest. It queues work under the same task ID,

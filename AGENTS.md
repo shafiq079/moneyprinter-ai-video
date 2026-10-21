@@ -2,8 +2,9 @@
 
 Before changing this repository, fetch `origin/development`, check the working
 tree and recent commits, and read `PROJECT_CONTEXT.md` completely. Then read
-`docs/SRS.md`, `docs/MIGRATION_MAP.md`, and the documentation relevant to the
-task (`docs/LOCAL_AI_VIDEO.md` or `docs/FACTUAL_MODE.md`). Treat the repository
+`docs/SRS.md`, `docs/MIGRATION_MAP.md`, `docs/PRODUCT_VISION.md`, and the
+documentation relevant to the task (`docs/LOCAL_AI_VIDEO.md` or
+`docs/FACTUAL_MODE.md`). Treat the repository
 and current remote history as the source of truth if a previous chat differs.
 
 ## Project rules
