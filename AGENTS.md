@@ -19,8 +19,9 @@ and current remote history as the source of truth if a previous chat differs.
   narration/composition pipeline. Use the fake provider for CPU tests. Do not
   claim local Wan/LTX hardware validation without a real GPU run.
 - Creative mode is the default. The first optional factual-mode slice requires
-  operator-supplied excerpts, reviews claims before media generation and does
-  not independently fetch or authenticate sources. See `docs/FACTUAL_MODE.md`.
+  operator-approved excerpts and reviews claims before media generation. The
+  WebUI has an explicit bounded HTTPS import helper, but tasks do not fetch or
+  authenticate cited pages. See `docs/FACTUAL_MODE.md`.
 - Never commit `config.toml`, credentials, checkpoint/model weights, generated
   task media, or machine-specific paths. HF authentication comes from the
   operator's environment (normally `HF_TOKEN`).

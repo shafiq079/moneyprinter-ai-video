@@ -8,13 +8,18 @@ any existing video source. This phase needs no GPU.
 ## What the operator supplies
 
 Add 1–6 distinct source URLs and supporting excerpts. Each URL must be HTTPS,
-without embedded credentials, query parameters or fragments. The app **does not
-fetch the page**: the excerpts are supplied by the operator. The automated
-review checks whether script claims appear supported by those excerpts. It
-cannot establish whether the page is authentic, whether an excerpt was copied
-accurately, or whether the page is authoritative. Review the source and final
-script yourself before publishing a factual video. Never enter secrets in an
-excerpt.
+without embedded credentials, query parameters or fragments. You may paste an
+excerpt yourself. In the WebUI, you may also enter a public HTTPS URL and click
+**Import source excerpt**. This fetches a short suggestion once, fills the
+existing source field and lets you edit it before generation. It rejects private
+network addresses, redirects, non-HTML pages, oversized pages and slow reads.
+Pages that require JavaScript or lack a readable paragraph need a manual excerpt.
+The task itself never fetches a page, and CLI/API callers still supply their own
+excerpts. The automated review checks whether script claims appear supported
+by those excerpts. It cannot establish whether the page is authentic, whether
+an excerpt was copied accurately, or whether the page is authoritative. Review
+the source and final script yourself before publishing a factual video. Never
+enter secrets in an excerpt.
 
 In the WebUI, choose `factual` under **Content mode** and enter one line per
 source:
@@ -74,14 +79,25 @@ titles/URLs. The supporting excerpts remain in the task-local JSON but are not
 repeated in this summary. The view makes the automated decision inspectable;
 the operator still needs to check the underlying sources before publication.
 
+The import button makes one server-side HTTPS request only after you click it.
+The hostname is resolved and checked for public IP addresses, the connection
+is pinned to a checked address with hostname-verified TLS, and redirects are not
+followed. Imported text is a suggestion, not independently verified evidence.
+The accepted URL/title/excerpt then follows exactly the same factual-mode task
+path as a manually pasted source. This keeps saved approvals and same-task
+Resume consistent and never causes a network fetch during retry.
+
 **Deferred operator acceptance:** With the configured real LLM, run a
 script-only factual task whose claims match a real copied source excerpt and a
 second task with an unsupported claim. Confirm the first review approves and
 the second blocks before media generation. This does not need video/GPU quota.
 It is intentionally pending; CPU mock tests cannot measure the real model's
 judgment or verify the source pages.
+The optional import helper is covered by offline network-boundary tests; a
+real public-page import in the operator's WebUI environment remains on the
+same later acceptance list. It should be reviewed as a suggestion before use.
 
-This is the first Phase 7 slice. Automatic source discovery, independent page
+This is an optional Phase 7 workflow. Automatic source discovery, task-time
 retrieval and source-authenticity checks are future work, and should be added
 only after defining safe and dependable research inputs. The older Content
 Factory research module remains reference only; its UI/API/job architecture is

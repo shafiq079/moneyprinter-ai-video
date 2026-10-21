@@ -172,7 +172,7 @@ def _validated_review(payload: dict, script: str, sources: list[FactualSource]) 
         "reason": str(payload.get("reason") or "")[:500],
         "limitations": [
             "Automated evidence alignment does not verify source authenticity or truth.",
-            "Source excerpts were supplied by the user; pages were not fetched.",
+            "The operator accepted the excerpts; the task did not independently fetch or verify the cited pages.",
         ],
     }
 

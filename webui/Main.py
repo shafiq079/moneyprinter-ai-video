@@ -47,6 +47,7 @@ from app.services import bgm as bgm_service
 from app.services import (
     cache_manager,
     factual_content,
+    factual_source_import,
     generation_manifest,
     llm,
     local_ai,
@@ -5425,6 +5426,44 @@ def _render_script_settings(panel, params):
                 key="content_mode_select",
             )
             if params.content_mode == "factual":
+                source_url = st.text_input(
+                    tr("Source Page URL"),
+                    key="factual_import_url",
+                    help=tr("Source Page Import Help"),
+                    placeholder="https://example.org/article",
+                )
+                if st.button(tr("Import Source Excerpt"), key="factual_import_button"):
+                    try:
+                        imported = factual_source_import.import_source(source_url)
+                        existing = [
+                            line.strip()
+                            for line in st.session_state.get(
+                                "factual_sources_input", ""
+                            ).splitlines()
+                            if line.strip()
+                        ]
+                        if len(existing) >= 6:
+                            raise ValueError("six sources already entered")
+                        if any(
+                            line.split("|", 1)[0].strip() == imported.url
+                            for line in existing
+                        ):
+                            raise ValueError("source URL already entered")
+                        existing.append(
+                            f"{imported.url} | {imported.title} | {imported.excerpt}"
+                        )
+                        st.session_state["factual_sources_input"] = "\n".join(existing)
+                        st.session_state.pop("factual_import_error", None)
+                        st.session_state["factual_import_ready"] = True
+                    except ValueError as exc:
+                        st.session_state["factual_import_error"] = (
+                            f"{tr('Source Page Import Failed')}: {exc}"
+                        )
+                        st.session_state.pop("factual_import_ready", None)
+                if st.session_state.get("factual_import_error"):
+                    st.warning(st.session_state["factual_import_error"])
+                if st.session_state.get("factual_import_ready"):
+                    st.info(tr("Review Imported Excerpt"))
                 raw_sources = st.text_area(
                     tr("Factual Sources"),
                     key="factual_sources_input",

@@ -90,7 +90,7 @@ class MaterialInfo:
 
 
 class FactualSource(BaseModel):
-    """User-supplied evidence; URLs are citations, never fetched by the server."""
+    """Operator-approved evidence; task generation never fetches these URLs."""
 
     model_config = ConfigDict(hide_input_in_errors=True)
 

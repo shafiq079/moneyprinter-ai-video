@@ -225,7 +225,7 @@ or video materials. Unsupported/uncertain claims block the task at
 `factual_review` rather than spending video quota. A task-local
 `factual_review.json` records the decision and citations; the output package
 points to it. Creative mode retains its old path. WebUI, CLI, API and batch
-parameters share the same `VideoParams` contract. The app does not fetch or
+parameters share the same `VideoParams` contract. Task generation does not fetch or
 authenticate source pages; automated evidence alignment is not independent
 fact-checking. See `docs/FACTUAL_MODE.md`. Content Factory research remains
 reference only. Automatic discovery/retrieval is a separate future slice.
@@ -266,6 +266,21 @@ acceptance with one supported and one unsupported script is deliberately
 deferred at the operator's request; keep it on the later verification list,
 along with real local-GPU validation. Do not claim the CPU fixtures measure
 real-world factual accuracy.
+
+The next optional factual-mode slice adds an explicit WebUI **Import source
+excerpt** action. It fetches one public HTTPS HTML page into the existing
+editable source field, with DNS/public-address checks, TLS hostname validation
+against a pinned address, no redirects, bounded bytes and a short read deadline.
+The operator accepts or edits the excerpt before task submission. CLI/API
+inputs and the task pipeline still require ordinary excerpts and never fetch
+sources during generation or same-task Resume. No Content Factory research
+module was ported. Automatic discovery, source authentication and a real-LLM
+acceptance run remain deferred.
+The import helper has CPU tests for rejected private/mixed DNS answers,
+redirects, oversized/non-HTML pages, timeouts, pinned TLS hostname and the
+WebUI click-to-edit flow. A live public-page import in the operator environment
+has not yet been exercised; add it to later acceptance without spending GPU
+quota.
 
 ## CPU integration and hardening pass
 
