@@ -73,6 +73,10 @@ When the reviewer returns a valid verdict, the task directory records
 `factual_review.json` with source IDs (`S1`–`S6`), reviewed script hash,
 individual claims/citations, verdict and limitations. Malformed or unavailable
 LLM responses fail closed and can leave no review file.
+For an approval, the reviewer must return every narration sentence in order
+and verbatim with a citation. A missing, changed or reordered sentence blocks
+approval. This checks coverage of the review response; it does not establish
+that the cited excerpt actually supports every statement in that sentence.
 The artifact package includes its task-relative path. Blocked tasks expose
 `failed_stage=factual_review`; approved tasks continue through MoneyPrinter's
 existing narration, planning, provider and composer. A same-task local-AI

@@ -291,6 +291,16 @@ settings for a new full video task; the new task reviews the script again.
 Same-task local-AI Resume and the creative workflow are unchanged. Real LLM
 acceptance remains deferred.
 
+The factual review gate now requires an approved model response to account for
+every ordered narration sentence with its exact text and a cited source ID.
+This closes the gap where an incomplete claim list could approve an unreviewed
+sentence. It is a structural coverage check, not independent verification of
+the cited source or model judgment. HTTP task detail/list responses now retain
+the task-relative `factual_review.json` path in the artifact package; a real
+ASGI response test covers it. The operator deferred manual real-LLM and live
+public-page testing until the development phase is complete. CPU regression
+tests continue; do not claim real-model acceptance from them.
+
 ## CPU integration and hardening pass
 
 Starting from `269d5c0202492608e2a1309c94afcf1650bea3fc`, the locked

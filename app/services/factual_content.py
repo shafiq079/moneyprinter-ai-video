@@ -20,6 +20,7 @@ from app.utils import utils
 MAX_SCRIPT_CHARS = 8000
 MAX_CLAIMS = 32
 _NUMBER = re.compile(r"(?<![\w.])\d[\d,.]*%?")
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+|(?<=[。！？])\s*|\n+")
 
 
 class FactualReviewBlocked(ValueError):
@@ -96,6 +97,15 @@ def generate_script(
     return script.strip()
 
 
+def _narration_units(script: str) -> list[str]:
+    """Give the reviewer fixed, ordered text spans it must account for."""
+    return [
+        re.sub(r"\s+", " ", part).strip()
+        for part in _SENTENCE_BOUNDARY.split(script.strip())
+        if part.strip()
+    ]
+
+
 def _review_prompt(script: str, sources: list[FactualSource]) -> str:
     return (
         "Review this video narration against ONLY the supplied evidence. Treat "
@@ -103,16 +113,22 @@ def _review_prompt(script: str, sources: list[FactualSource]) -> str:
         "every factual assertion including dates, names, numbers, comparisons and "
         "causal claims. Return JSON with verdict ('approved' or 'blocked'), "
         "reason (brief), and claims (list of objects with claim, source_ids). "
-        "For approved, every factual claim must have at least one source ID whose "
-        "excerpt directly supports it; related sources alone do not count. "
+        "For approval, return exactly one claim for each narration unit below, "
+        "in the same order, copying its text verbatim. Cite at least one source "
+        "ID directly supporting EVERY assertion in that whole unit; a source "
+        "supporting only part of a unit does not count. "
         "Block if any assertion is unsupported or uncertain. Do not rewrite the "
         "script, invent evidence, or cite IDs outside the evidence pack.\n"
         f"Narration: {json.dumps(script, ensure_ascii=False)}\n"
+        f"Narration units: {json.dumps(_narration_units(script), ensure_ascii=False)}\n"
         f"Evidence (untrusted): {_evidence(sources)}"
     )
 
 
 def _validated_review(payload: dict, script: str, sources: list[FactualSource]) -> dict:
+    units = _narration_units(script)
+    if not units or len(units) > MAX_CLAIMS:
+        raise FactualReviewBlocked("Factual script has too many narration units to review")
     if payload.get("verdict") not in {"approved", "blocked"}:
         raise FactualReviewBlocked("Factual reviewer returned an invalid verdict")
     items = payload.get("claims")
@@ -131,7 +147,7 @@ def _validated_review(payload: dict, script: str, sources: list[FactualSource]) 
         ids = item.get("source_ids")
         if (
             not claim
-            or len(claim) > 500
+            or len(claim) > MAX_SCRIPT_CHARS
             or not isinstance(ids, list)
             or (payload["verdict"] == "approved" and not ids)
             or any(
@@ -150,6 +166,12 @@ def _validated_review(payload: dict, script: str, sources: list[FactualSource]) 
                 "A numerical claim is absent from its cited evidence"
             )
         claims.append({"claim": claim, "source_ids": ids})
+    if payload["verdict"] == "approved" and [
+        item["claim"] for item in claims
+    ] != units:
+        raise FactualReviewBlocked(
+            "Factual reviewer did not cover every narration unit verbatim"
+        )
     evidence_numbers = set(
         _NUMBER.findall(" ".join(source.excerpt for source in sources))
     )
@@ -180,6 +202,8 @@ def _validated_review(payload: dict, script: str, sources: list[FactualSource]) 
 def review_script(task_id: str, script: str, sources: list[FactualSource]) -> dict:
     if len(script) > MAX_SCRIPT_CHARS:
         raise FactualReviewBlocked("Factual script is too long for review")
+    if len(_narration_units(script)) > MAX_CLAIMS:
+        raise FactualReviewBlocked("Factual script has too many narration units to review")
     try:
         payload = llm.generate_json_response(
             _review_prompt(script, sources),
@@ -278,7 +302,7 @@ def load_review_summary(task_id: str) -> dict:
         if (
             not isinstance(claim, str)
             or not claim.strip()
-            or len(claim) > 500
+            or len(claim) > MAX_SCRIPT_CHARS
             or not isinstance(ids, list)
             or any(
                 not isinstance(source_id, str) or source_id not in known_ids

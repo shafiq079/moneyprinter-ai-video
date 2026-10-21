@@ -228,7 +228,9 @@ def test_approved_factual_script_reaches_existing_audio_stage(tmp_path):
         assert not audio.called
         return {
             "verdict": "approved",
-            "claims": [{"claim": "The Moon has craters", "source_ids": ["S1"]}],
+            "claims": [
+                {"claim": "The Moon has impact craters.", "source_ids": ["S1"]}
+            ],
         }
 
     with (
@@ -286,6 +288,67 @@ def test_factual_numbers_must_be_in_cited_excerpt():
             "The Moon has 99 craters.",
             [FactualSource(**SOURCE)],
         )
+
+
+def test_factual_approval_requires_every_narration_unit_in_order():
+    script = "The Moon has impact craters. It is made of cheese."
+    source = [FactualSource(**SOURCE)]
+    supported = {"claim": "The Moon has impact craters.", "source_ids": ["S1"]}
+    unsupported = {"claim": "It is made of cheese.", "source_ids": ["S1"]}
+    for claims in (
+        [supported],
+        [supported, supported],
+        [supported, {"claim": "It has cheese.", "source_ids": ["S1"]}],
+        [unsupported, supported],
+    ):
+        with pytest.raises(factual_content.FactualReviewBlocked, match="cover"):
+            factual_content._validated_review(
+                {"verdict": "approved", "claims": claims}, script, source
+            )
+
+
+def test_incomplete_factual_approval_stops_before_audio(tmp_path):
+    state = MemoryState()
+    incomplete = {
+        "verdict": "approved",
+        "claims": [
+            {"claim": "The Moon has impact craters.", "source_ids": ["S1"]}
+        ],
+    }
+    with (
+        patch.object(task.sm, "state", state),
+        patch.object(task.utils, "task_dir", return_value=str(tmp_path)),
+        patch.object(
+            task.factual_content.llm, "generate_json_response", return_value=incomplete
+        ),
+        patch.object(task, "generate_audio") as audio,
+        patch.object(task, "get_video_materials") as materials,
+    ):
+        result = task.start(
+            "unreviewed-sentence",
+            params("The Moon has impact craters. It is made of cheese."),
+            stop_at="video",
+        )
+    assert result["failed_stage"] == "factual_review"
+    audio.assert_not_called()
+    materials.assert_not_called()
+    assert not (tmp_path / "factual_review.json").exists()
+
+
+def test_factual_review_prompt_requests_complete_verbatim_coverage():
+    script = "The Moon has craters. Water exists."
+    prompt = factual_content._review_prompt(script, [FactualSource(**SOURCE)])
+    assert '"The Moon has craters.", "Water exists."' in prompt
+    assert "copying its text verbatim" in prompt
+
+
+def test_factual_review_units_handle_paragraphs_and_cjk_punctuation():
+    assert factual_content._narration_units("First claim. Second!\n第三句。第四句？") == [
+        "First claim.",
+        "Second!",
+        "第三句。",
+        "第四句？",
+    ]
 
 
 def test_cli_accepts_manual_sources_and_rejects_missing_evidence():
