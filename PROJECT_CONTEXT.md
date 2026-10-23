@@ -73,6 +73,31 @@ M3 exposed `wan22_local` through WebUI, CLI and API using the same provider/pref
 
 ## Current development boundary
 
+The second editor extension adds visual-only playback reordering through
+**Move earlier / Move later** in the existing Scene Editor. The additive
+manifest `playback_order` lists each stable scene ID exactly once; older
+manifests keep ascending ID order without migration. Scene-plan narration
+segments, fingerprints, active clips and version histories stay attached to
+their original IDs. The editor displays playback position separately.
+Narration and caption timestamps stay fixed; moving visuals can change which
+words they accompany. Clip timing continues to use the existing composer
+settings, with no new trim/duration controls or audio retiming.
+
+The background worker rejects busy/publishing tasks and stale order requests.
+Reordering reuses saved clips/audio/captions/generated BGM without inference or
+publishing. Invalid media or failed rendering restores the previous manifest
+and all final/combined outputs. Resume, regeneration, replacement, restore,
+rerender, provenance and artifact-index scene materials use the saved order.
+Invalid saved orders fail before inference rather than silently resetting.
+See `docs/SCENE_EDITING.md` for the contract and acceptance checks.
+
+Playback-order verification on Python 3.11 passed **136 tests and 10235
+subtests**, covering the new export/Resume/queue/UI cases plus existing local-AI,
+replacement, cleanup, task/artifact and history regressions. Ruff, compileall
+and diff whitespace checks passed. Check CI at the current development head
+for the full Python 3.11/3.13 suites and actual Windows runner result; this
+milestone uses CPU fake media and makes no new GPU or publishing claim.
+
 The first post-orientation editor extension adds validated single-scene MP4
 replacement in the existing Streamlit Scene Editor. See `docs/SCENE_EDITING.md`
 for the additive manifest metadata, asset ownership and change-impact contract.

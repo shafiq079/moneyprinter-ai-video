@@ -1,4 +1,4 @@
-# Scene editing contract: clip replacement
+# Scene editing contract: clips and playback order
 
 This bounded extension uses the existing Streamlit Scene Editor, scene plan,
 generation manifest and MoneyPrinter composer. It does not select a new editor
@@ -25,6 +25,7 @@ framework or project interchange format.
 | Action | Video inference | Narration/captions | Composition |
 | --- | --- | --- | --- |
 | Replace clip | None | Reuse | Rerender |
+| Reorder visuals | None | Reuse at existing audio/caption times | Rerender |
 | Restore generated/imported version | None | Reuse | Rerender |
 | Prompt/seed regeneration | Selected scene only | Reuse | Rerender |
 | Existing render-only changes | None | Reuse | Rerender |
@@ -50,3 +51,38 @@ invalid upload rejection, checksum failures, render rollback and queue failure.
 Assertions must cover no video/TTS/caption/BGM generation on replacement,
 unchanged unrelated scenes/audio/captions, safe task-local paths and truthful
 provenance. Existing provider/recovery/cleanup regressions must remain green.
+
+## Visual playback order
+
+The next accepted extension adds **Move earlier / Move later** to the same
+Scene Editor. `generation_manifest.json` may contain an additive top-level
+`playback_order` list of stable scene IDs. It must contain every scene ID
+exactly once. Existing manifests without the field use ascending scene-ID
+order, with no migration or scene fingerprint change. Invalid saved orders
+block composition/Resume before inference rather than being silently repaired.
+
+Scene IDs, generation order, scene-plan narration segments, target durations,
+version paths and active selections stay unchanged. Only visual playback order
+changes. Each clip keeps its existing duration under the existing composition
+settings; this milestone introduces no trim, speed or duration controls.
+Narration and captions keep their existing timestamps. Consequently footage
+can accompany different words and visual cut times may move when clips have
+different lengths. The editor explains this explicitly. Moving narrated scenes
+together requires a separate audio-segmentation/retiming milestone.
+
+All composition paths use the saved order, including Resume, regeneration,
+replacement, restore and render-only rerender. Provenance and artifact-index
+scene-material lists follow playback order while retaining stable scene IDs.
+Reopening the editor displays saved playback positions alongside those IDs.
+Generation/provider fingerprint checks remain independent of playback order.
+
+The serialized WebUI worker rejects busy/publishing tasks and stale order
+requests. A move queues a render-only transaction using saved narration,
+captions and existing generated BGM, with no LLM, video/TTS/caption generation
+or publishing call. Invalid media or failed composition restores the previous
+manifest and all final/combined outputs. A no-op order does not rerender.
+
+Acceptance includes a three-scene real-media export with verified color
+sequence, unchanged audio/captions/scene versions, restart and cached/partial
+Resume, provider fingerprint changes, imported/versioned scenes, render
+rollback, stale/invalid orders, queue failures and the Streamlit controls.

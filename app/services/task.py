@@ -2048,6 +2048,99 @@ def restore_local_ai_scene_version(
     return result
 
 
+def validate_local_ai_scene_order(
+    task_id: str,
+    playback_order: list[int],
+    *,
+    expected_order: list[int] | None = None,
+    _queued: bool = False,
+) -> list[int]:
+    """Validate a render-only visual order before reserving the task."""
+    params, plan, _audio, captions, _duration, prior = (
+        _load_scene_regeneration_context(task_id)
+    )
+    _assert_scene_edit_available(prior, queued=_queued, stage="scene_reorder")
+    if params.subtitle_enabled and not captions:
+        raise ValueError("existing captions are unavailable; restore them before reordering")
+    manifest = generation_manifest.load_manifest(task_id)
+    current_order = generation_manifest.scene_playback_order(manifest)
+    if set(current_order) != {scene.scene_id for scene in plan.scenes}:
+        raise ValueError("scene plan and generation manifest do not match")
+    generation_manifest.validate_scene_playback_order(manifest, playback_order)
+    if expected_order is not None and current_order != expected_order:
+        raise ValueError("scene order has changed; refresh the Scene Editor")
+    return current_order
+
+
+def reorder_local_ai_scenes(
+    task_id: str,
+    playback_order: list[int],
+    *,
+    expected_order: list[int] | None = None,
+    _queued: bool = False,
+) -> dict:
+    """Rerender visual playback order without changing scene or audio inputs."""
+    current_order = validate_local_ai_scene_order(
+        task_id, playback_order, expected_order=expected_order, _queued=_queued,
+    )
+    params, _plan, audio_file, captions, duration, prior = (
+        _load_scene_regeneration_context(task_id)
+    )
+    task_root = _scene_regeneration_task_root(task_id)
+    previous_finals = _existing_final_video_paths(task_root)
+    if current_order == playback_order:
+        return {"playback_order": current_order, "videos": previous_finals, "reordered": False}
+
+    original_manifest = generation_manifest.load_manifest(task_id)
+    revised_manifest = {**original_manifest, "playback_order": list(playback_order)}
+    backups = _backup_render_paths(task_root, suffix="scene-reorder-backup")
+    sm.state.update_task(
+        task_id, state=const.TASK_STATE_PROCESSING, progress=70,
+        current_stage="scene_reorder", scene_order_error=None,
+    )
+    try:
+        generation_manifest.save_manifest(task_id, revised_manifest)
+        materials = generation_manifest.active_scene_paths(task_id)
+        _clear_render_paths(task_root)
+        finals, combined, warnings = generate_final_videos(
+            task_id, params, materials, audio_file,
+            captions if params.subtitle_enabled else "", duration,
+            reuse_existing_generated_bgm=True,
+        )
+        provenance = generation_manifest.local_ai_material_records(task_id)
+        task_artifacts.patch_script_data(task_id, local_ai_materials=provenance)
+    except Exception as exc:
+        generation_manifest.save_manifest(task_id, original_manifest)
+        _restore_render_backups(task_root, backups)
+        sm.state.update_task(
+            task_id,
+            state=const.TASK_STATE_COMPLETE if previous_finals else const.TASK_STATE_FAILED,
+            progress=100 if previous_finals else 0, current_stage=None,
+            videos=previous_finals,
+            combined_videos=[
+                item for item in _existing_render_paths(task_root)
+                if path.basename(item).startswith("combined-")
+            ],
+            scene_order_error=f"scene reorder failed: {type(exc).__name__}: {exc}",
+        )
+        raise
+    else:
+        _discard_render_backups(backups)
+    sm.state.update_task(
+        task_id, state=const.TASK_STATE_COMPLETE, progress=100, current_stage=None,
+        videos=finals, combined_videos=combined, materials=materials,
+        audio_file=audio_file, audio_duration=duration, subtitle_path=captions,
+        warnings=warnings or None, local_ai_materials=provenance,
+        scene_order_error=None, failed_stage=None, error=None,
+        recoverable=False, recovery_action=None, local_ai_error_code=None,
+    )
+    return {
+        "playback_order": list(playback_order), "videos": finals,
+        "combined_videos": combined, "materials": materials,
+        "warnings": warnings, "reordered": True,
+    }
+
+
 def replace_local_ai_scene_clip(
     task_id: str,
     scene_id: int,

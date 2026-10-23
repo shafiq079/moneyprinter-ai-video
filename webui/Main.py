@@ -1273,7 +1273,21 @@ def _render_scene_editor() -> None:
             f"{tr('Scene Regeneration Failed')}: {regeneration_error}"
         )
 
-    for scene in plan.scenes:
+    order_error = str(task_state.get("scene_order_error") or "").strip()
+    if order_error:
+        st.warning(f"{tr('Scene Reorder Failed')}: {order_error}")
+    try:
+        playback_order = generation_manifest.scene_playback_order(manifest)
+        scenes_by_id = {scene.scene_id: scene for scene in plan.scenes}
+        if set(playback_order) != set(scenes_by_id):
+            raise ValueError("scene plan and generation manifest do not match")
+    except ValueError as exc:
+        st.warning(str(exc))
+        return
+    st.caption(tr("Scene Reorder Help"))
+
+    for position, scene_id in enumerate(playback_order):
+        scene = scenes_by_id[scene_id]
         try:
             record = generation_manifest.scene_record(
                 manifest,
@@ -1289,10 +1303,35 @@ def _render_scene_editor() -> None:
         ]
         active_asset = str(record.get("active_asset") or "")
         label = (
-            f"{tr('Scene')} {scene.scene_id} · {scene.beat} · "
+            f"{position + 1}. {tr('Scene')} {scene.scene_id} · {scene.beat} · "
             f"{scene.target_duration:.1f}s"
         )
         with st.expander(label, expanded=False):
+            move_cols = st.columns(2)
+            for column, offset, title in (
+                (move_cols[0], -1, "Move Earlier"),
+                (move_cols[1], 1, "Move Later"),
+            ):
+                target_position = position + offset
+                if column.button(
+                    tr(title), key=f"move_scene_{offset}_{task_id}_{scene.scene_id}",
+                    disabled=is_busy or not 0 <= target_position < len(playback_order),
+                    use_container_width=True,
+                ):
+                    proposed_order = list(playback_order)
+                    proposed_order[position], proposed_order[target_position] = (
+                        proposed_order[target_position], proposed_order[position]
+                    )
+                    try:
+                        webui_task.submit_scene_reorder(
+                            task_id, proposed_order, expected_order=playback_order,
+                        )
+                    except Exception as exc:
+                        st.error(f"{tr('Scene Reorder Failed')}: {exc}")
+                    else:
+                        st.toast(tr("Scene Reorder Queued"))
+                        st.rerun(scope="fragment")
+
             if scene.narration_segment:
                 st.caption(scene.narration_segment)
 

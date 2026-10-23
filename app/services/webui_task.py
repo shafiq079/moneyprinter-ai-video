@@ -435,6 +435,83 @@ def submit_local_ai_rerender(
         raise
 
 
+def _run_scene_reorder(
+    task_id: str, playback_order: list[int], expected_order: list[int], capture_logs: bool,
+) -> dict:
+    handler = None
+    worker_id = threading.get_ident()
+    try:
+        if capture_logs:
+            handler = logger.add(
+                lambda message: _append_task_log(task_id, str(message)),
+                level="DEBUG", format=format_log_record, colorize=False,
+                filter=lambda record: record["thread"].id == worker_id,
+            )
+        with config.runtime_config_lock():
+            return tm.reorder_local_ai_scenes(
+                task_id, playback_order, expected_order=expected_order, _queued=True,
+            )
+    except Exception as exc:
+        snapshot = sm.state.get_task(task_id) or {}
+        if (
+            snapshot.get("state") == const.TASK_STATE_PROCESSING
+            and snapshot.get("current_stage") == "scene_reorder_queued"
+        ):
+            try:
+                finals = tm._existing_final_video_paths(tm._scene_regeneration_task_root(task_id))
+            except (OSError, ValueError):
+                finals = []
+            sm.state.update_task(
+                task_id,
+                state=const.TASK_STATE_COMPLETE if finals else const.TASK_STATE_FAILED,
+                progress=100 if finals else 0, current_stage=None, videos=finals,
+                scene_order_error=f"scene reorder failed: {type(exc).__name__}: {exc}",
+            )
+        return {"task_id": task_id, "error": str(exc)}
+    finally:
+        if handler is not None:
+            logger.remove(handler)
+
+
+def submit_scene_reorder(
+    task_id: str, playback_order: list[int], *,
+    expected_order: list[int] | None = None, capture_logs: bool = True,
+) -> bool:
+    """Reserve a visual reorder; reject stale UI requests before queueing."""
+    with _resume_submission_lock:
+        current_order = tm.validate_local_ai_scene_order(
+            task_id, playback_order, expected_order=expected_order,
+        )
+        if playback_order == current_order:
+            return False
+        previous = sm.state.get_task(task_id) or {}
+        if not previous:
+            finals = tm._existing_final_video_paths(tm._scene_regeneration_task_root(task_id))
+            previous = {
+                "state": const.TASK_STATE_COMPLETE if finals else const.TASK_STATE_FAILED,
+                "progress": 100 if finals else 0, "videos": finals,
+            }
+        sm.state.update_task(
+            task_id, state=const.TASK_STATE_PROCESSING, progress=70,
+            current_stage="scene_reorder_queued", videos=previous.get("videos"),
+            scene_order_error=None,
+        )
+        try:
+            _task_manager.add_task(
+                _run_scene_reorder, task_id=task_id,
+                playback_order=list(playback_order), expected_order=current_order,
+                capture_logs=capture_logs,
+            )
+        except Exception:
+            sm.state.update_task(
+                task_id, state=previous.get("state", const.TASK_STATE_FAILED),
+                progress=previous.get("progress", 0), current_stage=None,
+                scene_order_error="scene reorder could not be scheduled",
+            )
+            raise
+    return True
+
+
 def _run_scene_clip_replacement(
     task_id: str, scene_id: int, content: bytes, capture_logs: bool,
 ) -> dict:

@@ -30,7 +30,7 @@ contracts, with no mandatory paid video-generation API.
 | --- | --- | --- |
 | AI scene generation | Original clips, scene prompts, continuity, selective retries, reusable assets. | Implemented through local Wan/LTX and remote HF LTX paths; one real seven-scene HF LTX task completed. Real **local** Wan/LTX checkpoint validation and comparative GPU tuning remain deferred. |
 | Editable project | Keep independently editable scene clips, narration/audio, captions, prompts and metadata alongside the final MP4. A bad scene or a render-only change must not invalidate unrelated generated assets. | Scene plan, scene versions, final output and portable artifact references exist. A full editable timeline/project with independent audio/text layers does not. |
-| In-product editor | Eventually provide a small, self-hosted, CapCut-like experience; do not copy or depend on CapCut. The initial release need not be a full multi-track NLE. | Existing Streamlit scene editor covers prompt/seed, preview, regenerate, variation, validated manual clip replacement, version restore, and render-only rerender. Reordering, narration edits and independent timeline layers remain deferred. |
+| In-product editor | Eventually provide a small, self-hosted, CapCut-like experience; do not copy or depend on CapCut. The initial release need not be a full multi-track NLE. | Existing Streamlit scene editor covers prompt/seed, preview, regenerate, variation, validated manual clip replacement, visual playback reordering, version restore, and render-only rerender. Narration edits and independent timeline layers remain deferred. |
 | Scene timing | Let scene count/length follow narration and content instead of forcing every scene to the same fixed length. | Current planner uses measured audio duration, beat weights and a maximum provider-supported scene duration. Semantic timing, editing boundaries and retiming after narration changes need further design and implementation. |
 | Publishing | Complete video generation without an upload dependency. Initially defer upload automation and channel-growth tooling. | Existing optional Upload-Post integration offers YouTube, TikTok and Instagram; operator end-to-end publishing was not established in this development effort. Direct platform OAuth is not an approved replacement. |
 | Factual content | Optional evidence/review mode must not burden creative generation. | User-supplied excerpts, safe one-page import, review-only workflow and structural claim checks exist. Automatic discovery/source authentication and real-model acceptance remain deferred. |
@@ -45,7 +45,8 @@ frontend or renderer in one step:
    media and the active scene-version references. Keep final MP4 export.
 2. Preview, replace and reorder individual scene clips. Validated single-scene
    MP4 replacement is implemented using task-local versions, unchanged scene
-   timing and existing narration/captions. Reordering remains deferred.
+   timing and existing narration/captions. Visual-only reordering is also
+   implemented; narration and captions keep their existing timestamps.
 3. Edit narration text or audio for a selected scene. Rebuild only affected
    narration and captions; recalculate duration and shift later scenes and
    audio cues as required. Define precisely how changes to a voice track relate
@@ -111,7 +112,21 @@ Resume retains imports across model revisions and fails explicitly for missing
 or changed uploads instead of silently generating substitute footage.
 
 This extends the existing Streamlit workflow. It does not select an NLE
-framework, new project-file extension or interchange format. The next candidate
-is explicit scene playback order and timing controls, after defining the effect
-of reordering visuals against fixed narration. Self-contained project export,
-scene-level narration edits and independent audio/text layers remain future work.
+framework, new project-file extension or interchange format.
+
+## Second editable-project extension: visual playback order
+
+The owner approved visual-only reordering as the next bounded milestone.
+**Move earlier / Move later** changes a saved playback-order list independently
+of stable scene IDs, active versions and generation fingerprints. Narration
+and captions stay fixed; the editor explains that moving footage can change
+which words it accompanies. Existing clip durations and composition settings
+remain in effect. Resume and subsequent scene edits retain the saved order.
+Invalid/stale requests are rejected, and failed rendering rolls back order and
+prior outputs. No generation or publishing request is made by a reorder.
+
+The next candidate is scene trim/timing controls with an explicit relationship
+to fixed narration and provider limits. Moving whole narrated scenes requires
+audio/caption segmentation and retiming, which this milestone does not provide.
+Self-contained project export, scene-level narration edits and independent
+audio/text layers remain future work.

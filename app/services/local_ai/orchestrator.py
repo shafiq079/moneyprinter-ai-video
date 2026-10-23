@@ -307,7 +307,13 @@ def generate_scene_materials(
                     False,
                 )
 
-    return outputs
+    # Generation and progress retain stable plan identity. Composition follows
+    # the independently saved visual order, including on a same-task Resume.
+    paths_by_id = dict(zip((scene.scene_id for scene in scenes), outputs))
+    return [
+        paths_by_id[scene_id]
+        for scene_id in generation_manifest.scene_playback_order(manifest)
+    ]
 
 
 def regenerate_scene_material(

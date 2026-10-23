@@ -107,6 +107,43 @@ def save_manifest(task_id: str, manifest: dict[str, Any]) -> None:
     _atomic_write(manifest_path(task_id), manifest)
 
 
+def scene_playback_order(manifest: dict[str, Any]) -> list[int]:
+    """Resolve legacy ID order or a complete, explicit visual playback order."""
+    records = manifest.get("scenes", [])
+    if not records or any(
+        not isinstance(record, dict)
+        or type(record.get("scene_id")) is not int
+        or record["scene_id"] <= 0
+        for record in records
+    ):
+        raise ValueError("generation manifest has invalid scene IDs")
+    scene_ids = [record["scene_id"] for record in records]
+    if len(set(scene_ids)) != len(scene_ids):
+        raise ValueError("generation manifest has duplicate scene IDs")
+    order = manifest.get("playback_order", sorted(scene_ids))
+    validate_scene_playback_order(manifest, order)
+    return list(order)
+
+
+def validate_scene_playback_order(manifest: dict[str, Any], order: list[int]) -> None:
+    """Require each stable scene ID exactly once; never silently repair order."""
+    scene_ids = [record.get("scene_id") for record in manifest["scenes"]]
+    if (
+        not isinstance(order, list)
+        or any(type(scene_id) is not int for scene_id in order)
+        or len(order) != len(scene_ids)
+        or len(set(order)) != len(order)
+        or set(order) != set(scene_ids)
+    ):
+        raise ValueError("playback order must contain every scene ID exactly once")
+
+
+def scenes_in_playback_order(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    order = scene_playback_order(manifest)
+    by_id = {record["scene_id"]: record for record in manifest["scenes"]}
+    return [by_id[scene_id] for scene_id in order]
+
+
 def prepare_manifest(
     task_id: str,
     *,
@@ -116,6 +153,11 @@ def prepare_manifest(
     provider_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     previous = load_manifest(task_id) or {}
+    previous_order = scene_playback_order(previous) if previous else None
+    if "playback_order" in previous and set(previous_order) != {
+        scene.scene_id for scene in scenes
+    }:
+        raise ValueError("saved playback order does not match the scene plan")
     previous_by_id = {
         item.get("scene_id"): item
         for item in previous.get("scenes", [])
@@ -182,6 +224,8 @@ def prepare_manifest(
         "telemetry": sanitize_persisted_metadata(previous_telemetry),
         "scenes": records,
     }
+    if "playback_order" in previous:
+        manifest["playback_order"] = previous_order
     save_manifest(task_id, manifest)
     return manifest
 
@@ -401,10 +445,7 @@ def local_ai_material_records(task_id: str) -> list[dict[str, Any]]:
         default_metadata = {}
 
     records: list[dict[str, Any]] = []
-    for record in sorted(
-        manifest.get("scenes", []),
-        key=lambda item: int(item.get("scene_id", 0)),
-    ):
+    for record in scenes_in_playback_order(manifest):
         if not isinstance(record, dict):
             continue
         active_asset = str(record.get("active_asset") or "")
@@ -476,10 +517,7 @@ def active_scene_paths(task_id: str) -> list[str]:
     if manifest is None:
         raise ValueError("local AI generation manifest is missing")
 
-    records = sorted(
-        manifest.get("scenes", []),
-        key=lambda item: int(item.get("scene_id", 0)),
-    )
+    records = scenes_in_playback_order(manifest)
     if not records:
         raise ValueError("local AI generation manifest contains no scenes")
 

@@ -286,6 +286,23 @@ The artifact index includes the active replacement with manual-upload provenance
 See `docs/SCENE_EDITING.md` for the contract. A portable project archive and
 independent timeline layers remain deferred.
 
+## Change visual playback order
+
+Open **Scene Editor** from Task Manager. Scenes are listed in saved playback
+order, with playback position followed by the permanent scene ID. Expand a
+scene and choose **Move earlier** or **Move later**. A background render applies
+the move; controls are disabled while the task is busy or publishing.
+
+This moves visuals only. Narration and captions keep their existing timestamps,
+so the footage may accompany different words. Each scene keeps its selected
+version, generation inputs and existing clip timing under the current composer
+settings. There are no new duration controls or narration retiming.
+
+Reordering uses existing clips, narration, captions and generated music without
+new AI requests or publishing. Failed rendering restores the previous order
+and outputs. Reopening, Resume and later scene edits retain the saved order.
+Existing tasks default to their original scene-ID order.
+
 ## Local AI generation telemetry
 
 The generation manifest records CPU-safe wall-clock telemetry for local
