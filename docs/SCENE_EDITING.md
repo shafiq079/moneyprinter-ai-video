@@ -86,3 +86,36 @@ Acceptance includes a three-scene real-media export with verified color
 sequence, unchanged audio/captions/scene versions, restart and cached/partial
 Resume, provider fingerprint changes, imported/versioned scenes, render
 rollback, stale/invalid orders, queue failures and the Streamlit controls.
+
+## Fixed-duration clip trims
+
+The Scene Editor now accepts **Clip start (seconds)** for a new MP4 upload or
+**Trim saved clip** for the current active version. The cut keeps the scene's
+existing target duration, saved playback order, narration and caption times.
+The selected start must be finite and non-negative. Insufficient remaining
+footage fails validation; no stretching, looping or frame padding is added.
+An upload still has the existing 100 MiB bound. Saved clips use the same bound.
+
+Trims materialize a new video-only, task-local version through the existing
+replacement transaction. Older versions remain restorable under the existing
+cleanup policy. `import_metadata.start_seconds` records the source-relative
+start. A saved-clip trim additionally records `operation=trim`, the task-relative
+`source_asset`, its hash and `source_origin`. Material provenance labels this
+operation `scene_trim`, rather than claiming a new model call or manual upload.
+The existing `asset_origin=imported` validation category deliberately protects
+these edited clips from model-fingerprint invalidation and checks their saved
+media hash during Resume and restore. Generation recipes remain unchanged.
+The active trim is self-contained; its source reference is provenance and does
+not require retaining that old version forever.
+
+Submission and the worker both bind saved trims to the expected active version.
+Media decoding stays in the serialized worker. Stale versions, busy/publishing
+tasks, missing required captions and damaged imported sources are rejected.
+Render failure restores the previous manifest and final/combined outputs.
+No provider, narration, caption, music-generation or publishing call is added.
+
+Saved versions contain only the footage already persisted. Earlier imports
+were normalized to scene length and discarded excess footage, so they often
+have no room for a later start. Upload the longer original again and select its
+start time before replacing. This milestone does not retain raw uploads,
+change timeline lengths or move narration with visuals.

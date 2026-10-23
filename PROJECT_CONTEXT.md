@@ -73,6 +73,25 @@ M3 exposed `wan22_local` through WebUI, CLI and API using the same provider/pref
 
 ## Current development boundary
 
+The third editor extension adds fixed-duration clip start controls. A new
+upload can start later in its source; a saved active clip can be trimmed when
+it contains enough remaining footage. Each successful cut is a restorable,
+hash-validated version, with `scene_trim` provenance for saved-clip edits.
+The existing replacement transaction preserves narration/captions, playback
+order and unrelated versions and rolls back manifest and final/combined
+outputs on failure. Submission and the worker reject stale active versions.
+No new model or publishing request is made. Old imports contain only their
+normalized footage; excess raw footage was never retained. Upload the original
+again to choose a later section. Timeline-duration editing and audio retiming
+remain deferred. See `docs/SCENE_EDITING.md` for the additive metadata contract.
+
+Verification for this extension: **124 affected editing/recovery/task tests**
+passed. A fresh final acceptance run passed **24 tests and 10231 subtests**,
+including the new trim, upload-start, UI and translation checks after the
+translation additions. Ruff, compilation and whitespace checks passed. The
+full Python/Windows CI result must be checked at the published development
+head. No GPU inference or live publishing acceptance is claimed.
+
 The second editor extension adds visual-only playback reordering through
 **Move earlier / Move later** in the existing Scene Editor. The additive
 manifest `playback_order` lists each stable scene ID exactly once; older
@@ -81,7 +100,7 @@ segments, fingerprints, active clips and version histories stay attached to
 their original IDs. The editor displays playback position separately.
 Narration and caption timestamps stay fixed; moving visuals can change which
 words they accompany. Clip timing continues to use the existing composer
-settings, with no new trim/duration controls or audio retiming.
+settings, with no audio retiming; fixed-duration source trims are described above.
 
 The background worker rejects busy/publishing tasks and stale order requests.
 Reordering reuses saved clips/audio/captions/generated BGM without inference or

@@ -496,7 +496,11 @@ def local_ai_material_records(task_id: str) -> list[dict[str, Any]]:
         if record.get("asset_origin") == "imported":
             records[-1].update(
                 asset_origin="imported",
-                provider="manual_upload",
+                provider=(
+                    "scene_trim"
+                    if (record.get("import_metadata") or {}).get("operation") == "trim"
+                    else "manual_upload"
+                ),
                 model_fingerprint=None,
                 provider_metadata={},
                 generation_settings={},
@@ -504,7 +508,9 @@ def local_ai_material_records(task_id: str) -> list[dict[str, Any]]:
                 generation_seconds=None,
                 validation_seconds=None,
                 import_metadata={
-                    "media_sha256": (record.get("import_metadata") or {}).get("media_sha256")
+                    key: (record.get("import_metadata") or {})[key]
+                    for key in ("media_sha256", "start_seconds", "operation", "source_asset", "source_sha256", "source_origin")
+                    if key in (record.get("import_metadata") or {})
                 },
             )
     return records

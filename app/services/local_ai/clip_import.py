@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import subprocess
 import tempfile
@@ -24,8 +25,19 @@ def validate_upload_bytes(content: bytes) -> None:
         raise ValueError("replacement clip exceeds the 100 MiB limit")
 
 
+def validate_start_seconds(start_seconds: float) -> None:
+    if (
+        isinstance(start_seconds, bool)
+        or not isinstance(start_seconds, (int, float))
+        or not math.isfinite(start_seconds)
+        or start_seconds < 0
+    ):
+        raise ValueError("clip start must be a finite non-negative number")
+
+
 def stage_clip_import(
-    task_id: str, scene: SceneSpec, content: bytes
+    task_id: str, scene: SceneSpec, content: bytes, *, start_seconds: float = 0.0,
+    source_metadata: dict | None = None,
 ) -> tuple[dict, Path]:
     """Publish a validated new file and return an uncommitted manifest snapshot.
 
@@ -33,6 +45,7 @@ def stage_clip_import(
     failure. Input names/paths and raw decoder diagnostics are never persisted.
     """
     validate_upload_bytes(content)
+    validate_start_seconds(start_seconds)
     manifest = generation_manifest.load_manifest(task_id)
     if manifest is None:
         raise ValueError("generation manifest is missing")
@@ -66,6 +79,8 @@ def stage_clip_import(
             "file,pipe",
             "-i",
             str(raw_path),
+            "-ss",
+            f"{start_seconds:.6f}",
             "-map",
             "0:v:0",
             "-an",
@@ -122,7 +137,9 @@ def stage_clip_import(
             status="ready",
             asset_origin="imported",
             import_metadata={
-                "media_sha256": generation_manifest.media_sha256(final_path)
+                **(source_metadata or {}),
+                "media_sha256": generation_manifest.media_sha256(final_path),
+                "start_seconds": float(start_seconds),
             },
             error_type=None,
             error_code=None,

@@ -96,6 +96,159 @@ class TestSceneClipReplacement(LocalAITestCase):
         subprocess.run(command + [str(target)], capture_output=True, check=True)
         return target.read_bytes()
 
+    def long_active_clip(self):
+        record = gm.scene_record(gm.load_manifest(self.task_id), 1)
+        asset = record["active_asset"]
+        destination = gm.resolve_asset(self.task_id, asset)
+        subprocess.run([
+            utils.get_ffmpeg_binary(), "-y", "-f", "lavfi", "-i",
+            "color=c=red:s=90x160:r=24:d=1", "-f", "lavfi", "-i",
+            "color=c=blue:s=90x160:r=24:d=2", "-filter_complex",
+            "[0:v][1:v]concat=n=2:v=1:a=0[out]", "-map", "[out]",
+            "-c:v", "libx264", "-threads", "1", "-pix_fmt", "yuv420p",
+            str(destination),
+        ], capture_output=True, check=True)
+        return asset
+
+    def test_trim_saved_clip_exports_selected_frames_and_preserves_assets(self):
+        asset = self.long_active_clip()
+        before = gm.load_manifest(self.task_id)
+        before["playback_order"] = [2, 1]
+        gm.save_manifest(self.task_id, before)
+        immutable = {name: (self.root / name).read_bytes() for name in (
+            "audio.mp3", "subtitle.srt", "scene_plan.json",
+        )}
+        with (
+            patch.object(task.local_ai, "prepare_provider", side_effect=AssertionError("AI")),
+            patch.object(task.voice, "tts", side_effect=AssertionError("TTS")),
+            patch.object(task, "generate_subtitle", side_effect=AssertionError("caption")),
+            patch.object(task.sonilo, "generate_bgm", side_effect=AssertionError("BGM")),
+            patch.object(task, "_schedule_cross_post", side_effect=AssertionError("publish")),
+        ):
+            result = task.trim_local_ai_scene_clip(self.task_id, 1, 1.5, expected_asset=asset)
+        after = gm.load_manifest(self.task_id)
+        self.assertEqual(gm.scene_record(before, 2), gm.scene_record(after, 2))
+        self.assertEqual(gm.scene_playback_order(after), [2, 1])
+        for name, data in immutable.items():
+            self.assertEqual((self.root / name).read_bytes(), data)
+        for candidate in (result["scene_file"], result["videos"][0]):
+            with av.open(candidate) as container:
+                threshold = 0.1 if candidate == result["scene_file"] else 1.5
+                for frame in container.decode(video=0):
+                    if frame.time >= threshold:
+                        break
+                rgb = frame.to_ndarray(format="rgb24").mean(axis=(0, 1))
+                self.assertGreater(rgb[2], rgb[0] + 100)
+        record = gm.scene_record(after, 1)
+        self.assertEqual(record["import_metadata"]["source_asset"], asset)
+        self.assertEqual(record["import_metadata"]["start_seconds"], 1.5)
+        self.assertEqual(next(r for r in gm.local_ai_material_records(self.task_id) if r["scene_id"] == 1)["provider"], "scene_trim")
+        self.assertIn(asset, record["versions"])
+        provider = FakeLocalVideoProvider()
+        generate_scene_materials(self.task_id, provider=provider, scenes=list(self.plan.scenes))
+        self.assertEqual(provider.generated_scene_ids, [])
+        task.restore_local_ai_scene_version(self.task_id, 1, asset)
+        task.restore_local_ai_scene_version(self.task_id, 1, record["active_asset"])
+        self.assertEqual(next(r for r in gm.local_ai_material_records(self.task_id) if r["scene_id"] == 1)["provider"], "scene_trim")
+
+    def test_upload_start_uses_later_footage_and_rejects_short_remainder(self):
+        asset = self.long_active_clip()
+        content = gm.resolve_asset(self.task_id, asset).read_bytes()
+        manifest, candidate = clip_import.stage_clip_import(
+            self.task_id, self.plan.scenes[0], content, start_seconds=1.5,
+        )
+        with av.open(str(candidate)) as container:
+            self.assertFalse(container.streams.audio)
+            frame = next(container.decode(video=0)).to_ndarray(format="rgb24")
+            self.assertGreater(frame[:, :, 2].mean(), 200)
+        self.assertEqual(gm.scene_record(manifest, 1)["import_metadata"]["start_seconds"], 1.5)
+        with self.assertRaises(ValueError):
+            clip_import.stage_clip_import(self.task_id, self.plan.scenes[0], content, start_seconds=2.8)
+
+    def test_trim_invalid_offsets_and_stale_version_leave_previous_outputs(self):
+        asset = self.long_active_clip()
+        previous = gm.manifest_path(self.task_id).read_bytes()
+        (self.root / "final-1.mp4").write_bytes(b"previous")
+        for offset in (-1, float("nan"), float("inf"), True, "1", 2.8):
+            with self.subTest(offset=offset), self.assertRaises(ValueError):
+                task.trim_local_ai_scene_clip(self.task_id, 1, offset, expected_asset=asset)
+            self.assertEqual(gm.manifest_path(self.task_id).read_bytes(), previous)
+            self.assertEqual((self.root / "final-1.mp4").read_bytes(), b"previous")
+        with self.assertRaisesRegex(ValueError, "changed"):
+            task.trim_local_ai_scene_clip(self.task_id, 1, 1, expected_asset="stale.mp4")
+
+    def test_trim_render_failure_rolls_back_manifest_and_both_outputs(self):
+        asset = self.long_active_clip()
+        before = gm.manifest_path(self.task_id).read_bytes()
+        for name in ("final-1.mp4", "combined-1.mp4"):
+            (self.root / name).write_bytes(b"previous")
+        with patch.object(task, "generate_final_videos", side_effect=RuntimeError("render")):
+            with self.assertRaisesRegex(RuntimeError, "render"):
+                task.trim_local_ai_scene_clip(self.task_id, 1, 1.5, expected_asset=asset)
+        self.assertEqual(gm.manifest_path(self.task_id).read_bytes(), before)
+        for name in ("final-1.mp4", "combined-1.mp4"):
+            self.assertEqual((self.root / name).read_bytes(), b"previous")
+        self.assertFalse((self.root / "generated_ai/scene-001/v002.mp4").exists())
+
+    def test_trim_restart_reuses_cut_after_model_change_and_blocks_damage(self):
+        asset = self.long_active_clip()
+        manifest, candidate = clip_import.stage_clip_import(
+            self.task_id, self.plan.scenes[0], gm.resolve_asset(self.task_id, asset).read_bytes(),
+            start_seconds=1.5, source_metadata={"operation": "trim", "source_asset": asset},
+        )
+        gm.save_manifest(self.task_id, manifest)
+        provider = FakeLocalVideoProvider()
+        provider.model_fingerprint = "fake:new-model"
+        generate_scene_materials(self.task_id, provider=provider, scenes=list(self.plan.scenes))
+        self.assertEqual(provider.generated_scene_ids, [2])
+        self.assertEqual(gm.scene_record(gm.load_manifest(self.task_id), 1)["active_asset"], str(candidate.relative_to(self.root)))
+        candidate.write_bytes(b"damaged")
+        provider = FakeLocalVideoProvider()
+        with self.assertRaises(LocalAISceneGenerationError):
+            generate_scene_materials(self.task_id, provider=provider, scenes=list(self.plan.scenes))
+        self.assertEqual(provider.generated_scene_ids, [])
+
+    def test_stale_queued_trim_and_missing_captions_preserve_newer_version(self):
+        asset = self.long_active_clip()
+        (self.root / "final-1.mp4").write_bytes(b"previous")
+        with patch.object(webui_task._task_manager, "add_task") as queue:
+            webui_task.submit_scene_clip_replacement(
+                self.task_id, 1, b"", start_seconds=1.5, expected_asset=asset, capture_logs=False,
+            )
+        manifest, candidate = clip_import.stage_clip_import(
+            self.task_id, self.plan.scenes[0], self.upload(),
+        )
+        gm.save_manifest(self.task_id, manifest)
+        before = gm.manifest_path(self.task_id).read_bytes()
+        args, kwargs = queue.call_args
+        self.assertIn("error", args[0](**kwargs))
+        self.assertEqual(gm.manifest_path(self.task_id).read_bytes(), before)
+        self.assertEqual((self.root / "final-1.mp4").read_bytes(), b"previous")
+        self.assertEqual(self.state.get_task(self.task_id)["state"], const.TASK_STATE_COMPLETE)
+        (self.root / "subtitle.srt").unlink()
+        with self.assertRaisesRegex(ValueError, "captions"):
+            task.trim_local_ai_scene_clip(self.task_id, 1, 0.1, expected_asset=str(candidate.relative_to(self.root)))
+
+    def test_trim_queue_worker_and_queue_failure_recover(self):
+        asset = self.long_active_clip()
+        with patch.object(webui_task._task_manager, "add_task") as queue:
+            webui_task.submit_scene_clip_replacement(
+                self.task_id, 1, b"", start_seconds=1.5, expected_asset=asset,
+                capture_logs=False,
+            )
+        args, kwargs = queue.call_args
+        result = args[0](**kwargs)
+        self.assertNotIn("error", result)
+        self.assertEqual(self.state.get_task(self.task_id)["state"], const.TASK_STATE_COMPLETE)
+        new_asset = gm.scene_record(gm.load_manifest(self.task_id), 1)["active_asset"]
+        with patch.object(webui_task._task_manager, "add_task", side_effect=RuntimeError("queue")):
+            with self.assertRaisesRegex(RuntimeError, "queue"):
+                webui_task.submit_scene_clip_replacement(
+                    self.task_id, 1, b"", start_seconds=0.1, expected_asset=new_asset,
+                )
+        self.assertEqual(self.state.get_task(self.task_id)["state"], const.TASK_STATE_COMPLETE)
+        self.assertEqual(gm.scene_record(gm.load_manifest(self.task_id), 1)["active_asset"], new_asset)
+
     def replace_clip(self, content=None):
         return task.replace_local_ai_scene_clip(
             self.task_id, 1, self.upload() if content is None else content
@@ -488,7 +641,16 @@ st.session_state["scene_editor_task_id"] = "clip-edit"
         ):
             app.run()
             app.button(key="replace_scene_clip_clip-edit_1").click().run()
-            submit.assert_called_once_with("clip-edit", 1, content)
+            submit.assert_called_once_with("clip-edit", 1, content, start_seconds=0.0)
+        trim_key = "scene_trim_start_clip-edit_1_generated_ai/scene-001/v001.mp4"
+        self.assertTrue(app.button(key="trim_scene_clip_clip-edit_1").disabled)
+        with patch.object(webui_task, "submit_scene_clip_replacement") as submit, patch("streamlit.rerun"):
+            app.number_input(key=trim_key).set_value(0.5).run()
+            app.button(key="trim_scene_clip_clip-edit_1").click().run()
+            submit.assert_called_once_with(
+                "clip-edit", 1, b"", start_seconds=0.5,
+                expected_asset="generated_ai/scene-001/v001.mp4",
+            )
         self.assertFalse(app.exception)
         manifest, _ = clip_import.stage_clip_import(self.task_id, self.plan.scenes[0], content)
         gm.save_manifest(self.task_id, manifest)
@@ -502,3 +664,4 @@ st.session_state["scene_editor_task_id"] = "clip-edit"
         with patch("streamlit.file_uploader", return_value=BytesIO(content)):
             app.run()
         self.assertTrue(app.button(key="replace_scene_clip_clip-edit_1").disabled)
+        self.assertTrue(app.button(key="trim_scene_clip_clip-edit_1").disabled)

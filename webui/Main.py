@@ -1350,26 +1350,21 @@ def _render_scene_editor() -> None:
                     if active_asset in versions
                     else len(versions) - 1
                 )
+                def version_label(value, version_record=record, active=active_asset):
+                    metadata = generation_manifest.scene_version_metadata(version_record, value) or {}
+                    label = os.path.basename(value)
+                    if metadata.get("asset_origin") == "imported":
+                        trimmed = (metadata.get("import_metadata") or {}).get("operation") == "trim"
+                        label += f" · {tr('Trimmed Clip') if trimmed else tr('Uploaded Clip')}"
+                    if value == active:
+                        label += f" · {tr('Current Version')}"
+                    return label
+
                 selected_version = st.selectbox(
                     tr("Scene Versions"),
                     options=versions,
                     index=default_index,
-                    format_func=lambda value, version_record=record, active=active_asset: (
-                        f"{os.path.basename(value)}"
-                        + (
-                            f" · {tr('Uploaded Clip')}"
-                            if (
-                                generation_manifest.scene_version_metadata(version_record, value)
-                                or {}
-                            ).get("asset_origin") == "imported"
-                            else ""
-                        )
-                        + (
-                            f" · {tr('Current Version')}"
-                            if value == active
-                            else ""
-                        )
-                    ),
+                    format_func=version_label,
                     key=version_key,
                 )
                 try:
@@ -1389,7 +1384,30 @@ def _render_scene_editor() -> None:
                 )
 
             if record.get("asset_origin") == "imported":
-                st.caption(tr("Uploaded Clip Active"))
+                trimmed = (record.get("import_metadata") or {}).get("operation") == "trim"
+                st.caption(tr("Trimmed Clip Active") if trimmed else tr("Uploaded Clip Active"))
+            trim_start = st.number_input(
+                tr("Clip Start Seconds"), min_value=0.0, value=0.0, step=0.1,
+                key=f"scene_trim_start_{task_id}_{scene.scene_id}_{active_asset}",
+                disabled=is_busy,
+                help=tr("Clip Trim Help"),
+            )
+            if st.button(
+                tr("Trim Saved Clip"), key=f"trim_scene_clip_{task_id}_{scene.scene_id}",
+                disabled=is_busy or not active_asset or trim_start <= 0,
+                use_container_width=True,
+            ):
+                try:
+                    webui_task.submit_scene_clip_replacement(
+                        task_id, scene.scene_id, b"", start_seconds=float(trim_start),
+                        expected_asset=active_asset,
+                    )
+                except Exception as exc:
+                    st.error(f"{tr('Clip Replacement Failed')}: {exc}")
+                else:
+                    st.toast(tr("Clip Replacement Queued"))
+                    st.rerun(scope="fragment")
+
             upload_key = f"scene_clip_upload_{task_id}_{scene.scene_id}"
             upload_revision = st.session_state.get(f"{upload_key}_revision", 0)
             uploaded_clip = st.file_uploader(
@@ -1407,6 +1425,7 @@ def _render_scene_editor() -> None:
                 try:
                     webui_task.submit_scene_clip_replacement(
                         task_id, scene.scene_id, uploaded_clip.getvalue(),
+                        start_seconds=float(trim_start),
                     )
                 except Exception as exc:
                     st.error(f"{tr('Clip Replacement Failed')}: {exc}")

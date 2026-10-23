@@ -2141,15 +2141,59 @@ def reorder_local_ai_scenes(
     }
 
 
+def validate_local_ai_scene_trim(task_id: str, scene_id: int, expected_asset: str, *, _queued: bool = False, validate_media: bool = False):
+    """Bind a trim to the currently selected version; never trim stale UI footage."""
+    params, plan, _audio, captions, _duration, prior = _load_scene_regeneration_context(task_id)
+    _assert_scene_edit_available(prior, queued=_queued, stage="scene_clip_replacement")
+    if params.subtitle_enabled and not captions:
+        raise ValueError("existing captions are unavailable; restore them before trimming")
+    scene = next((s for s in plan.scenes if s.scene_id == int(scene_id)), None)
+    if scene is None:
+        raise ValueError("scene is missing from scene plan")
+    manifest = generation_manifest.load_manifest(task_id)
+    record = generation_manifest.scene_record(manifest, int(scene_id))
+    if not expected_asset or record.get("active_asset") != expected_asset:
+        raise ValueError("scene version has changed; refresh the Scene Editor")
+    candidate = generation_manifest.resolve_asset(task_id, expected_asset)
+    if validate_media:
+        if record.get("asset_origin") == "imported":
+            generation_manifest.validate_imported_scene(task_id, record, scene)
+        else:
+            from app.services.local_ai.media import validate_video_clip
+            validate_video_clip(candidate, scene)
+    return candidate, record
+
+
+def trim_local_ai_scene_clip(task_id: str, scene_id: int, start_seconds: float, *, expected_asset: str, _queued: bool = False) -> dict:
+    """Make a restorable video-only cut from the saved active clip."""
+    clip_import.validate_start_seconds(start_seconds)
+    candidate, record = validate_local_ai_scene_trim(
+        task_id, scene_id, expected_asset, _queued=_queued, validate_media=True,
+    )
+    if candidate.stat().st_size > clip_import.MAX_CLIP_UPLOAD_BYTES:
+        raise ValueError("saved clip exceeds the 100 MiB editing limit")
+    return replace_local_ai_scene_clip(
+        task_id, scene_id, candidate.read_bytes(), start_seconds=start_seconds,
+        _queued=_queued, _source_metadata={
+            "operation": "trim", "source_asset": expected_asset,
+            "source_sha256": generation_manifest.media_sha256(candidate),
+            "source_origin": record.get("asset_origin") or "generated",
+        },
+    )
+
+
 def replace_local_ai_scene_clip(
     task_id: str,
     scene_id: int,
     content: bytes,
     *,
+    start_seconds: float = 0.0,
+    _source_metadata: dict | None = None,
     _queued: bool = False,
 ) -> dict:
     """Replace one scene's visuals, retaining all audio and generation recipes."""
     clip_import.validate_upload_bytes(content)
+    clip_import.validate_start_seconds(start_seconds)
     params, plan, audio_file, subtitle_path, audio_duration, prior = (
         _load_scene_regeneration_context(task_id)
     )
@@ -2170,7 +2214,10 @@ def replace_local_ai_scene_clip(
         scene_regeneration_scene_id=int(scene_id),
     )
     try:
-        manifest, imported_path = clip_import.stage_clip_import(task_id, scene, content)
+        manifest, imported_path = clip_import.stage_clip_import(
+            task_id, scene, content, start_seconds=start_seconds,
+            source_metadata=_source_metadata,
+        )
         generation_manifest.save_manifest(task_id, manifest)
         materials = generation_manifest.active_scene_paths(task_id)
         _clear_render_paths(task_root)

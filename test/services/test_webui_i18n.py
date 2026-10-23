@@ -99,6 +99,12 @@ ENGLISH_FALLBACK_KEYS = frozenset(
         "Scene Reorder Queued",
         "Uploaded Clip",
         "Uploaded Clip Active",
+        "Clip Start Seconds",
+        "Trim Saved Clip",
+        "Clip Trim Help",
+        "Trimmed Clip",
+        "Trimmed Clip Active",
+
         "Replacement Clip",
         "Replacement Clip Help",
         "Replace Scene Clip",

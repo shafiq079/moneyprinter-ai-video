@@ -10,7 +10,7 @@ from app.models.schema import VideoParams
 from app.services import state as sm
 from app.services import task as tm
 from app.services.loomloom import LoomLoomConfirmedVideoRequest
-from app.services.local_ai.clip_import import validate_upload_bytes
+from app.services.local_ai.clip_import import validate_upload_bytes, validate_start_seconds
 from app.utils.logging_utils import format_log_record
 
 
@@ -514,6 +514,7 @@ def submit_scene_reorder(
 
 def _run_scene_clip_replacement(
     task_id: str, scene_id: int, content: bytes, capture_logs: bool,
+    start_seconds: float = 0.0, expected_asset: str | None = None,
 ) -> dict:
     handler = None
     worker_id = threading.get_ident()
@@ -525,7 +526,13 @@ def _run_scene_clip_replacement(
                 filter=lambda record: record["thread"].id == worker_id,
             )
         with config.runtime_config_lock():
-            return tm.replace_local_ai_scene_clip(task_id, scene_id, content, _queued=True)
+            if expected_asset is not None:
+                return tm.trim_local_ai_scene_clip(
+                    task_id, scene_id, start_seconds, expected_asset=expected_asset, _queued=True,
+                )
+            return tm.replace_local_ai_scene_clip(
+                task_id, scene_id, content, start_seconds=start_seconds, _queued=True,
+            )
     except Exception as exc:
         # Validation can fail before the task service starts its transaction.
         snapshot = sm.state.get_task(task_id) or {}
@@ -551,10 +558,15 @@ def _run_scene_clip_replacement(
 
 def submit_scene_clip_replacement(
     task_id: str, scene_id: int, content: bytes, *, capture_logs: bool = True,
+    start_seconds: float = 0.0, expected_asset: str | None = None,
 ) -> None:
-    """Reserve and queue a bounded immutable upload, without decoding on the UI thread."""
-    validate_upload_bytes(content)
+    """Queue an upload or an expected active-version trim; decode in the worker."""
+    validate_start_seconds(start_seconds)
+    if expected_asset is None:
+        validate_upload_bytes(content)
     with _resume_submission_lock:
+        if expected_asset is not None:
+            tm.validate_local_ai_scene_trim(task_id, scene_id, expected_asset)
         previous = sm.state.get_task(task_id) or {}
         if tm.is_task_busy(previous):
             raise RuntimeError("task is already busy")
@@ -578,6 +590,7 @@ def submit_scene_clip_replacement(
             _task_manager.add_task(
                 _run_scene_clip_replacement, task_id=task_id, scene_id=int(scene_id),
                 content=content, capture_logs=capture_logs,
+                start_seconds=start_seconds, expected_asset=expected_asset,
             )
         except Exception:
             sm.state.update_task(
