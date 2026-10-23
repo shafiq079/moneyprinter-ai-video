@@ -1278,6 +1278,8 @@ def _render_scene_editor() -> None:
         st.warning(f"{tr('Scene Reorder Failed')}: {order_error}")
     try:
         playback_order = generation_manifest.scene_playback_order(manifest)
+        timing_snapshot = generation_manifest.scene_timing_snapshot(manifest)
+        playback_durations = timing_snapshot["durations"]
         scenes_by_id = {scene.scene_id: scene for scene in plan.scenes}
         if set(playback_order) != set(scenes_by_id):
             raise ValueError("scene plan and generation manifest do not match")
@@ -1285,6 +1287,21 @@ def _render_scene_editor() -> None:
         st.warning(str(exc))
         return
     st.caption(tr("Scene Reorder Help"))
+    st.caption(tr("Scene Timing Help"))
+    if task_state.get("scene_timing_error"):
+        st.warning(f"{tr('Scene Timing Failed')}: {task_state['scene_timing_error']}")
+    if st.button(
+        tr("Reset Scene Timing"), key=f"reset_scene_timing_{task_id}",
+        disabled=is_busy or "playback_durations" not in manifest,
+    ):
+        defaults = {str(scene.scene_id): scene.target_duration for scene in plan.scenes}
+        try:
+            webui_task.submit_scene_timing(task_id, defaults, expected_snapshot=timing_snapshot)
+        except Exception as exc:
+            st.error(f"{tr('Scene Timing Failed')}: {exc}")
+        else:
+            st.toast(tr("Scene Timing Queued"))
+            st.rerun(scope="fragment")
 
     for position, scene_id in enumerate(playback_order):
         scene = scenes_by_id[scene_id]
@@ -1304,7 +1321,7 @@ def _render_scene_editor() -> None:
         active_asset = str(record.get("active_asset") or "")
         label = (
             f"{position + 1}. {tr('Scene')} {scene.scene_id} · {scene.beat} · "
-            f"{scene.target_duration:.1f}s"
+            f"{playback_durations[str(scene.scene_id)]:.2f}s"
         )
         with st.expander(label, expanded=False):
             move_cols = st.columns(2)
@@ -1331,6 +1348,30 @@ def _render_scene_editor() -> None:
                     else:
                         st.toast(tr("Scene Reorder Queued"))
                         st.rerun(scope="fragment")
+
+            duration_value = st.number_input(
+                tr("Scene Screen Duration"), min_value=0.001,
+                value=max(0.001, playback_durations[str(scene_id)]), step=0.1,
+                key=f"scene_screen_duration_{task_id}_{scene_id}_{playback_durations[str(scene_id)]}",
+                disabled=is_busy or position == len(playback_order) - 1,
+            )
+            if st.button(
+                tr("Apply Scene Timing"), key=f"apply_scene_timing_{task_id}_{scene_id}",
+                disabled=(is_busy or position == len(playback_order) - 1
+                          or abs(float(duration_value) - playback_durations[str(scene_id)]) < 1e-6),
+                use_container_width=True,
+            ):
+                next_id = str(playback_order[position + 1])
+                proposed = dict(playback_durations)
+                proposed[next_id] += proposed[str(scene_id)] - float(duration_value)
+                proposed[str(scene_id)] = float(duration_value)
+                try:
+                    webui_task.submit_scene_timing(task_id, proposed, expected_snapshot=timing_snapshot)
+                except Exception as exc:
+                    st.error(f"{tr('Scene Timing Failed')}: {exc}")
+                else:
+                    st.toast(tr("Scene Timing Queued"))
+                    st.rerun(scope="fragment")
 
             if scene.narration_segment:
                 st.caption(scene.narration_segment)

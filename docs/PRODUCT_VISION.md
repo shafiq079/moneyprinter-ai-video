@@ -30,8 +30,8 @@ contracts, with no mandatory paid video-generation API.
 | --- | --- | --- |
 | AI scene generation | Original clips, scene prompts, continuity, selective retries, reusable assets. | Implemented through local Wan/LTX and remote HF LTX paths; one real seven-scene HF LTX task completed. Real **local** Wan/LTX checkpoint validation and comparative GPU tuning remain deferred. |
 | Editable project | Keep independently editable scene clips, narration/audio, captions, prompts and metadata alongside the final MP4. A bad scene or a render-only change must not invalidate unrelated generated assets. | Scene plan, scene versions, final output and portable artifact references exist. A full editable timeline/project with independent audio/text layers does not. |
-| In-product editor | Eventually provide a small, self-hosted, CapCut-like experience; do not copy or depend on CapCut. The initial release need not be a full multi-track NLE. | Existing Streamlit scene editor covers prompt/seed, preview, regenerate, variation, validated manual clip replacement, fixed-duration source trims, visual playback reordering, version restore, and render-only rerender. Narration edits and independent timeline layers remain deferred. |
-| Scene timing | Let scene count/length follow narration and content instead of forcing every scene to the same fixed length. | Current planner uses measured audio duration, beat weights and a maximum provider-supported scene duration. Semantic timing, editing boundaries and retiming after narration changes need further design and implementation. |
+| In-product editor | Eventually provide a small, self-hosted, CapCut-like experience; do not copy or depend on CapCut. The initial release need not be a full multi-track NLE. | Existing Streamlit scene editor covers prompt/seed, preview, regenerate, variation, validated manual clip replacement, fixed-duration source trims, visual cut timing, visual playback reordering, version restore, and render-only rerender. Narration edits and independent timeline layers remain deferred. |
+| Scene timing | Let scene count/length follow narration and content instead of forcing every scene to the same fixed length. | Current planner uses measured audio duration, beat weights and a maximum provider-supported scene duration. Visual cut timing rebalances adjacent scenes at fixed total duration. Semantic audio alignment and retiming after narration changes remain deferred. |
 | Publishing | Complete video generation without an upload dependency. Initially defer upload automation and channel-growth tooling. | Existing optional Upload-Post integration offers YouTube, TikTok and Instagram; operator end-to-end publishing was not established in this development effort. Direct platform OAuth is not an approved replacement. |
 | Factual content | Optional evidence/review mode must not burden creative generation. | User-supplied excerpts, safe one-page import, review-only workflow and structural claim checks exist. Automatic discovery/source authentication and real-model acceptance remain deferred. |
 | Deployment | Start with a working single-product workflow; add multi-user infrastructure or new frontend only when real needs justify it. | No decision to add accounts, billing, distributed GPU scheduling, or a React editor now. |
@@ -126,7 +126,8 @@ Invalid/stale requests are rejected, and failed rendering rolls back order and
 prior outputs. No generation or publishing request is made by a reorder.
 
 Fixed-duration source trims are now implemented as the third bounded extension.
-Timeline-duration changes remain a later milestone with an explicit relationship
+Visual cut timing is now implemented while keeping total planned duration fixed.
+Overall-duration changes remain a later milestone with an explicit relationship
 to fixed narration and provider limits. Moving whole narrated scenes requires
 audio/caption segmentation and retiming, which this milestone does not provide.
 Self-contained project export, scene-level narration edits and independent
@@ -142,3 +143,17 @@ Saved trims carry source-version provenance and hash validation through Resume;
 no inference or publishing occurs. Earlier imports discarded excess footage,
 so the original must be uploaded again to select a section no longer present.
 This does not choose a new project format or add timeline/audio retiming.
+
+## Fourth editable-project extension: visual cut timing
+
+The next incremental editor step adds a saved screen-duration map independently
+of generation settings. Changing one duration balances the next scene in saved
+playback order. Narration/captions and total planned visual duration stay fixed.
+The composer uses existing footage at normal speed, rounds cumulative cuts to
+frames and rejects insufficient footage. Reset restores legacy timing behavior.
+The saved map survives reopening, Resume and scene edits, with snapshot checks
+and rollback of timing and prior outputs on failure. New uploads/trims retain
+enough footage for extended slots. Later regeneration keeps its original recipe
+and may require restoring longer footage or resetting timing. No automatic model
+duration increase, audio segmentation, narration editing or project-format
+selection is introduced. See `docs/SCENE_EDITING.md` for the contract.

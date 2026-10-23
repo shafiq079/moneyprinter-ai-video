@@ -61,6 +61,7 @@ def stage_clip_import(
         task_id, scene.scene_id, occupied
     )
     generation_manifest.resolve_asset(task_id, relative)
+    output_duration = max(scene.target_duration, generation_manifest.scene_playback_durations(manifest)[str(scene.scene_id)])
     raw_path = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -101,7 +102,7 @@ def stage_clip_import(
             "-threads",
             "1",
             "-t",
-            f"{scene.target_duration:.3f}",
+            f"{output_duration:.3f}",
             "-movflags",
             "+faststart",
             str(partial_path),
@@ -119,7 +120,7 @@ def stage_clip_import(
         if result.returncode:
             raise ValueError("replacement clip could not be decoded as video")
         probe = validate_video_clip(partial_path, scene)
-        if probe.duration + 0.05 < scene.target_duration:
+        if probe.duration + 0.05 < output_duration:
             raise ValueError("replacement clip is shorter than the scene duration")
 
         old_active = record.get("active_asset")

@@ -1,4 +1,4 @@
-# Scene editing contract: clips and playback order
+# Scene editing contract: clips, playback order and timing
 
 This bounded extension uses the existing Streamlit Scene Editor, scene plan,
 generation manifest and MoneyPrinter composer. It does not select a new editor
@@ -9,9 +9,10 @@ framework or project interchange format.
 - A replacement is an explicitly uploaded MP4, at most 100 MiB. The upload's
   filename and original host path are never persisted. Task and scene IDs must
   resolve to an existing task and scene before files are written.
-- The clip must decode, match the scene aspect, and cover its existing duration.
-  FFmpeg trims from the start, normalizes to H.264/yuv420p and removes audio.
-  There is no speed change, looping, new narration or timeline-duration edit.
+- The clip must decode, match the scene aspect, and cover its generation target
+  and any longer saved playback duration. FFmpeg trims from the selected start,
+  normalizes to H.264/yuv420p and removes audio. There is no speed change,
+  looping or new narration.
 - Only validated media becomes a new `generated_ai/scene-NNN/vNNN.mp4` version.
   Existing versions remain available under the normal cleanup policy.
 - Additive version metadata records `asset_origin=imported` and
@@ -119,3 +120,51 @@ were normalized to scene length and discarded excess footage, so they often
 have no room for a later start. Upload the longer original again and select its
 start time before replacing. This milestone does not retain raw uploads,
 change timeline lengths or move narration with visuals.
+
+## Visual cut timing with a fixed audio track
+
+**Screen duration (seconds)** and **Apply timing with next scene** move one
+visual cut. The following scene in saved playback order balances the difference.
+The last scene has no following scene and is edited through the preceding cut.
+**Reset scene timing** removes the override and restores the original composer
+behavior. Narration, caption timestamps, total planned visual duration, clip
+versions and generation recipes remain unchanged. Moving a visual cut can
+change which spoken words that footage accompanies.
+
+The additive top-level `playback_durations` object maps every stable scene ID
+(as a string) to positive finite seconds. Its sum must match the sum of original
+scene targets within 1 ms. There is no migration for older tasks; absent timing
+metadata preserves their existing composer behavior. Timing values follow scene
+identity when reordered, and remain separate from scene fingerprints and version
+history. Invalid saved maps fail before inference during Resume. Provenance adds
+`playback_duration` only while timing overrides are active.
+
+Timing overrides use normal speed and sequential playback. They replace the
+shared clip-duration cap for this task's local-AI composition. Every selected
+source must contain enough footage. The composer rounds cumulative cuts to the
+output frame grid so rounding does not accumulate across scenes. It rejects
+sub-frame slots and unavailable footage rather than stretching, looping,
+skipping a failed scene or silently repairing timing. The total visual budget
+must cover the recorded narration; final export still ends at narration length.
+Existing non-timing and non-local-AI composition behavior is unchanged.
+
+The serialized worker rechecks order, duration values and active versions from
+an immutable submission snapshot. Busy/publishing tasks, stale requests and
+missing required captions are rejected. The timing transaction backs up and
+restores the previous manifest and final/combined outputs on failure. No LLM,
+video, TTS, caption, generated-music or publishing request is made by a timing
+edit. Resetting also uses the same transaction.
+
+Reopening, cached/partial Resume, reorder, render-only rerender, replacement,
+trim and version restore retain the override. New uploads and trims retain at
+least the longer of the generation target and playback duration. Explicit
+regeneration and model-change Resume still follow their existing generation
+recipes. If a resulting clip cannot cover an extended playback slot, composition
+fails explicitly; restore a longer version or reset timing. Increasing a model's
+requested generation length automatically is outside this milestone.
+
+Acceptance covers exported cut positions, unchanged audio/captions/assets,
+frame rounding, restart and partial Resume, replacement/restore/reset,
+no inference on timing edits, malformed and stale requests, queue failures,
+insufficient footage, render rollback and the Streamlit controls. Independent
+narration/caption editing and changes to overall video length remain deferred.

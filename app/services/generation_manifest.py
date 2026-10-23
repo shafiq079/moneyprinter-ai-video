@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import tempfile
@@ -144,6 +145,30 @@ def scenes_in_playback_order(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     return [by_id[scene_id] for scene_id in order]
 
 
+def scene_playback_durations(manifest: dict[str, Any]) -> dict[str, float]:
+    """Timeline durations are independent of generation inputs and version history."""
+    defaults = {str(record["scene_id"]): float(record["target_duration"])
+                for record in scenes_in_playback_order(manifest)}
+    values = manifest.get("playback_durations", defaults)
+    if not isinstance(values, dict) or set(values) != set(defaults):
+        raise ValueError("saved playback durations must cover every scene exactly once")
+    if any(isinstance(value, bool) or not isinstance(value, (int, float))
+           or not math.isfinite(value) or value <= 0 for value in values.values()):
+        raise ValueError("playback durations must be finite positive numbers")
+    if not math.isclose(sum(values.values()), sum(defaults.values()), abs_tol=0.001, rel_tol=0):
+        raise ValueError("playback timing must preserve the total scene duration")
+    return {key: float(value) for key, value in values.items()}
+
+
+def scene_timing_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "order": scene_playback_order(manifest),
+        "durations": scene_playback_durations(manifest),
+        "assets": {str(record["scene_id"]): record.get("active_asset")
+                   for record in scenes_in_playback_order(manifest)},
+    }
+
+
 def prepare_manifest(
     task_id: str,
     *,
@@ -158,6 +183,8 @@ def prepare_manifest(
         scene.scene_id for scene in scenes
     }:
         raise ValueError("saved playback order does not match the scene plan")
+    if "playback_durations" in previous:
+        scene_playback_durations(previous)
     previous_by_id = {
         item.get("scene_id"): item
         for item in previous.get("scenes", [])
@@ -226,6 +253,9 @@ def prepare_manifest(
     }
     if "playback_order" in previous:
         manifest["playback_order"] = previous_order
+    if "playback_durations" in previous:
+        manifest["playback_durations"] = dict(previous["playback_durations"])
+        scene_playback_durations(manifest)
     save_manifest(task_id, manifest)
     return manifest
 
@@ -444,6 +474,7 @@ def local_ai_material_records(task_id: str) -> list[dict[str, Any]]:
     if not isinstance(default_metadata, dict):
         default_metadata = {}
 
+    playback_durations = scene_playback_durations(manifest) if "playback_durations" in manifest else None
     records: list[dict[str, Any]] = []
     for record in scenes_in_playback_order(manifest):
         if not isinstance(record, dict):
@@ -493,6 +524,8 @@ def local_ai_material_records(task_id: str) -> list[dict[str, Any]]:
                 ),
             }
         )
+        if playback_durations is not None:
+            records[-1]["playback_duration"] = playback_durations[str(record["scene_id"])]
         if record.get("asset_origin") == "imported":
             records[-1].update(
                 asset_origin="imported",
@@ -523,6 +556,8 @@ def active_scene_paths(task_id: str) -> list[str]:
     if manifest is None:
         raise ValueError("local AI generation manifest is missing")
 
+    if "playback_durations" in manifest:
+        scene_playback_durations(manifest)
     records = scenes_in_playback_order(manifest)
     if not records:
         raise ValueError("local AI generation manifest contains no scenes")

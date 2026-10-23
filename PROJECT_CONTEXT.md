@@ -73,6 +73,33 @@ M3 exposed `wan22_local` through WebUI, CLI and API using the same provider/pref
 
 ## Current development boundary
 
+The fourth editor extension adds visual screen-duration controls. Changing one
+scene's duration balances the following scene in playback order; narration,
+caption timestamps and the total planned visual duration remain fixed. Additive
+`playback_durations` metadata is separate from generation targets/fingerprints
+and version history. Existing tasks keep their original composition behavior
+until edited. Reset removes the override. Timing edits require normal speed,
+positive durations and enough saved footage, use cumulative frame rounding,
+and fail explicitly rather than stretching or looping visuals. The transaction
+preserves previous manifest and final/combined outputs on failure. Queued work
+rechecks an immutable snapshot of order, timings and active clips.
+
+Reopening/Resume, reordering and other scene edits retain timing. New uploads
+and trims retain enough footage for extended playback slots. Generation recipes
+remain unchanged; if later regeneration cannot cover a slot, restore a longer
+version or reset timing before rerendering. See `docs/SCENE_EDITING.md` for the
+bounded contract. Whole narrated-scene moves, narration editing and changes to
+total video length remain deferred. No new inference or publishing request is
+made by a timing edit.
+
+Verification: **192 existing affected regression tests** passed. A fresh final
+run passed all **9 timing tests** plus 5 composer checks; 18 UI/translation
+checks and the final no-op UI check also passed. The initial broad run exposed
+a fake-provider fixture issue in the new Resume test; it was corrected and the
+full timing acceptance rerun passed. Ruff, compilation and whitespace checks
+passed. Check full Python 3.11/3.13 and Windows CI at the published head; no real
+GPU or external publishing acceptance is claimed.
+
 The third editor extension adds fixed-duration clip start controls. A new
 upload can start later in its source; a saved active clip can be trimmed when
 it contains enough remaining footage. Each successful cut is a restorable,
@@ -82,8 +109,8 @@ order and unrelated versions and rolls back manifest and final/combined
 outputs on failure. Submission and the worker reject stale active versions.
 No new model or publishing request is made. Old imports contain only their
 normalized footage; excess raw footage was never retained. Upload the original
-again to choose a later section. Timeline-duration editing and audio retiming
-remain deferred. See `docs/SCENE_EDITING.md` for the additive metadata contract.
+again to choose a later section. Changes to total duration and audio retiming remain deferred; visual cut
+timing controls are described above. See `docs/SCENE_EDITING.md` for the additive metadata contract.
 
 Verification for this extension: **124 affected editing/recovery/task tests**
 passed. A fresh final acceptance run passed **24 tests and 10231 subtests**,

@@ -818,6 +818,21 @@ def _fit_clip_to_canvas(
     ).with_duration(clip.duration)
 
 
+def _quantize_scene_durations(durations: List[float]) -> List[float]:
+    """Round cumulative cuts, preventing per-clip rounding from accumulating drift."""
+    elapsed = 0.0
+    previous_frame = 0
+    resolved = []
+    for duration in durations:
+        elapsed += duration
+        end_frame = round(elapsed * fps)
+        if end_frame <= previous_frame:
+            raise ValueError("each scene must occupy at least one output frame")
+        resolved.append((end_frame - previous_frame) / fps)
+        previous_frame = end_frame
+    return resolved
+
+
 def combine_videos(
     combined_video_path: str,
     video_paths: List[str],
@@ -832,6 +847,7 @@ def combine_videos(
     source_usage: dict[str, int] | None = None,
     source_groups: dict[str, str] | None = None,
     used_video_paths: List[str] | None = None,
+    scene_durations: List[float] | None = None,
 ) -> str:
     audio_clip = AudioFileClip(audio_file)
     try:
@@ -861,6 +877,19 @@ def combine_videos(
     # 仍固定读取 3 秒再慢放、裁剪，下一段却从源视频第 3 秒开始，会跳过中间
     # 1.5 秒画面。该计算同时保证不同速度下的源时间线连续且无重叠。
     source_clip_duration = max_clip_duration * normalized_clip_speed
+    if scene_durations is not None:
+        if len(scene_durations) != len(video_paths) or any(
+            isinstance(d, bool) or not isinstance(d, (int, float))
+            or not math.isfinite(d) or d <= 0 for d in scene_durations
+        ):
+            raise ValueError("invalid explicit scene durations")
+        if normalized_clip_speed != 1.0 or video_concat_mode != VideoConcatMode.sequential:
+            raise ValueError("scene timing requires sequential playback at normal speed")
+        if sum(scene_durations) + 1 / fps < audio_duration:
+            raise ValueError("scene timing does not cover narration")
+        scene_durations = _quantize_scene_durations(scene_durations)
+        required_video_duration = audio_duration
+        logger.info("using explicit scene timing without source looping or speed changes")
     output_dir = os.path.dirname(combined_video_path)
 
     aspect = VideoAspect(video_aspect)
@@ -870,12 +899,21 @@ def combine_videos(
     processed_clips = []
     subclipped_items = []
     video_duration = 0
-    for video_path in video_paths:
+    for source_index, video_path in enumerate(video_paths):
         clip = _open_video_clip_quietly(video_path)
         clip_duration = clip.duration
         clip_w, clip_h = clip.size
         close_clip(clip)
         
+        if scene_durations is not None:
+            requested = scene_durations[source_index]
+            if requested > clip_duration + 0.001:
+                raise ValueError("saved clip is too short for its playback duration; restore a longer version or reset scene timing")
+            subclipped_items.append(SubClippedVideoClip(
+                file_path=video_path, start_time=0, end_time=min(requested, clip_duration),
+                width=clip_w, height=clip_h, source_file_path=video_path,
+            ))
+            continue
         start_time = 0
 
         while start_time < clip_duration:
@@ -977,9 +1015,14 @@ def combine_videos(
                 shuffle_transition = random.choice(transition_funcs)
                 clip = shuffle_transition(clip)
 
-            if clip.duration > max_clip_duration:
+            if scene_durations is None and clip.duration > max_clip_duration:
                 clip = clip.subclipped(0, max_clip_duration)
                 
+            if scene_durations is not None:
+                # MoviePy floors duration * fps. A tiny float error (e.g. 4.1 *
+                # 30 == 122.999...) must not drop an intended frame. This never
+                # samples past the last frame's existing source timestamp.
+                clip = clip.with_duration(scene_durations[i] + 1e-9)
             # wirte clip to temp file
             clip_file = f"{output_dir}/temp-clip-{i+1}.mp4"
             _write_videofile_with_codec_fallback(
@@ -1007,9 +1050,16 @@ def combine_videos(
             
         except Exception as e:
             logger.error(f"failed to process clip: {str(e)}")
+            if scene_durations is not None:
+                close_clip(clip)
+                delete_files([item.file_path for item in processed_clips])
+                raise
     
     # loop processed clips until the video duration covers the audio duration and the small safety margin.
-    if video_duration < required_video_duration:
+    if scene_durations is not None and video_duration + 1 / fps < audio_duration:
+        delete_files([item.file_path for item in processed_clips])
+        raise ValueError("rendered scene timing is shorter than narration")
+    if scene_durations is None and video_duration < required_video_duration:
         logger.warning(
             f"video duration ({video_duration:.2f}s) is shorter than required duration "
             f"({required_video_duration:.2f}s), looping clips to match audio length."
