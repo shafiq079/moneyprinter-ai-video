@@ -254,3 +254,39 @@ invalid/final endpoints, source rebinding, no-op and stale requests, immutable
 queued requests, failure rollback, persistence and UI controls. Actual narration
 replacement/text edits, caption rebuilding, automatic alignment and downstream
 retiming remain future work.
+
+## Replacement narration drafts for audition
+
+After preparing previews, listen to the original range and mark it reviewed.
+Upload a WAV, MP3 or M4A file with **Replacement narration**, then choose
+**Save narration draft**. **Preview narration** still plays the original;
+**Preview narration draft** plays the upload. **Remove draft / use original**
+discards the draft. The UI labels drafts as audition-only: exports, rerenders
+and Resume continue to use the original master narration and captions.
+
+Uploads are bounded to 20 MiB and decoded locally to 16 kHz mono PCM WAV.
+Decoded duration must match the saved range within 2 ms; compressed-container
+padding can cause a file to be rejected. No stretching, padding or trimming is
+used to make a mismatched recording fit. WAV is useful for exact-duration edits.
+The original review attests only to the selected source boundaries; it does not
+validate the replacement's words or factual accuracy. No TTS, transcription,
+caption, video, final-composition or publishing request occurs.
+
+Each range may add an optional `replacement` object in `narration_ranges.json`,
+containing only `preview_asset` and `preview_sha256`. Paths are restricted to
+`narration_replacements/<UUID>/scene-NNN.wav`; source filenames/host paths and
+raw uploads are not retained. There is one active draft per range. A new draft
+is decoded and checked before atomic sidecar publication. Failed processing or
+publication preserves the prior draft/map. The serialized queue snapshots the
+request, rejects stale revisions and rechecks source binding before publication;
+it preserves the prior completed/failed task state.
+
+Reopening, preview repair, visual edits and same-task Resume preserve drafts.
+Source audio/script/narration changes require explicit preview preparation and
+clear old drafts. Remove drafts on both sides of a boundary before moving it;
+the service rejects a boundary move that would invalidate an adjacent draft.
+After successful publication, inactive owned draft directories are removed,
+including interrupted upload/decode folders on the next preparation/save.
+Changed or missing draft files fail preview validation; originals stay available.
+This adds saved replacement auditions only. Applying edits to the master track,
+text/TTS editing, caption rebuilding and downstream retiming remain deferred.

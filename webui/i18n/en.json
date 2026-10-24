@@ -687,6 +687,12 @@
     "MuAPI Billing Notice Without Script": "Each generated clip is billed by MuAPI. Enter or generate the video script to see an estimated task count.",
     "Confirm MuAPI Charge": "I understand MuAPI video generation creates paid tasks",
     "Confirm MuAPI Charge Help": "MuAPI clips are submitted one at a time and stop once they cover the voiceover duration. An ambiguous submission is not retried because it may already have created a billable remote task.",
-    "Confirm MuAPI Charge Required": "Please confirm the MuAPI charge before generating the video."
+    "Confirm MuAPI Charge Required": "Please confirm the MuAPI charge before generating the video.",
+    "Narration Draft Help": "Upload a replacement to audition after reviewing the original range. Maximum 20 MiB; duration must match within 2 ms. Drafts do not change the final video, master narration, script or captions. Remove adjacent drafts before changing a boundary.",
+    "Narration Draft Upload": "Replacement narration (WAV, MP3 or M4A)",
+    "Save Narration Draft": "Save narration draft",
+    "Remove Narration Draft": "Remove draft / use original",
+    "Preview Narration Draft": "Preview narration draft",
+    "Narration Draft Saved": "Replacement draft — audition only; final video uses original narration."
   }
 }

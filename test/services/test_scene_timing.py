@@ -139,6 +139,10 @@ class TestSceneTiming(LocalAITestCase):
             expected_revision=task.narration_ranges.revision(self.task_id), end=.8)
         task.edit_local_ai_narration_range(self.task_id, 1,
             expected_revision=task.narration_ranges.revision(self.task_id), reviewed=True)
+        original_audio = task.local_ai_narration_preview(self.task_id, 1)["audio"]
+        task.replace_local_ai_narration_draft(self.task_id, 1,
+            expected_revision=task.narration_ranges.revision(self.task_id), content=original_audio)
+        draft_audio = task.local_ai_narration_preview(self.task_id, 1, replacement=True)["audio"]
         narration_map = (self.root / 'narration_ranges.json').read_bytes()
         with patch.object(task, 'generate_final_videos', side_effect=self.stub_render):
             task.retime_local_ai_scenes(self.task_id, self.durations)
@@ -161,6 +165,7 @@ class TestSceneTiming(LocalAITestCase):
         self.assertNotIn('playback_durations', self.manifest())
         self.assertEqual(gm.scene_playback_order(self.manifest()), [3, 1, 2])
         self.assertEqual((self.root / 'narration_ranges.json').read_bytes(), narration_map)
+        self.assertEqual(task.narration_ranges.preview_payload(self.task_id, self.plan, str(self.root / "audio.mp3"), 1, replacement=True)["audio"], draft_audio)
 
     def test_task_resume_after_restart_uses_saved_timing_and_only_missing_scene(self):
         task.prepare_local_ai_narration_ranges(self.task_id)
@@ -168,6 +173,10 @@ class TestSceneTiming(LocalAITestCase):
             expected_revision=task.narration_ranges.revision(self.task_id), end=.8)
         task.edit_local_ai_narration_range(self.task_id, 1,
             expected_revision=task.narration_ranges.revision(self.task_id), reviewed=True)
+        original_audio = task.local_ai_narration_preview(self.task_id, 1)["audio"]
+        task.replace_local_ai_narration_draft(self.task_id, 1,
+            expected_revision=task.narration_ranges.revision(self.task_id), content=original_audio)
+        draft_audio = task.local_ai_narration_preview(self.task_id, 1, replacement=True)["audio"]
         narration_map = (self.root / 'narration_ranges.json').read_bytes()
         with patch.object(task, 'generate_final_videos', side_effect=self.stub_render):
             task.retime_local_ai_scenes(self.task_id, self.durations)
@@ -191,6 +200,7 @@ class TestSceneTiming(LocalAITestCase):
         self.assertEqual(provider.generated_scene_ids, [3])
         self.assertEqual(gm.scene_playback_durations(self.manifest()), self.durations)
         self.assertEqual((self.root / 'narration_ranges.json').read_bytes(), narration_map)
+        self.assertEqual(task.narration_ranges.preview_payload(self.task_id, self.plan, str(self.root / "audio.mp3"), 1, replacement=True)["audio"], draft_audio)
 
     def test_fractional_cut_rounding_does_not_accumulate_duration_drift(self):
         values = video._quantize_scene_durations([1.01] * 10)

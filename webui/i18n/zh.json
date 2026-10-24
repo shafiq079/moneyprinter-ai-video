@@ -687,6 +687,12 @@
     "MuAPI Billing Notice Without Script": "每段生成视频都会由 MuAPI 计费。填写或生成视频文案后可查看预计任务数量。",
     "Confirm MuAPI Charge": "我已了解 MuAPI 视频生成会创建付费任务",
     "Confirm MuAPI Charge Help": "MuAPI 素材按脚本片段逐段提交，凑够配音所需时长后立即停止。提交状态不明确时不会自动重试，因为远端任务可能已经创建并产生费用。",
-    "Confirm MuAPI Charge Required": "请确认 MuAPI 生成费用后再生成视频。"
+    "Confirm MuAPI Charge Required": "请确认 MuAPI 生成费用后再生成视频。",
+    "Narration Draft Help": "试听替换旁白前，请先听取并确认原始区间。最大 20 MiB；时长误差不得超过 2 毫秒。草稿不会更改最终视频、主旁白、脚本或字幕。调整边界前请先移除相邻草稿。",
+    "Narration Draft Upload": "替换旁白（WAV、MP3 或 M4A）",
+    "Save Narration Draft": "保存旁白草稿",
+    "Remove Narration Draft": "移除草稿 / 使用原始旁白",
+    "Preview Narration Draft": "试听旁白草稿",
+    "Narration Draft Saved": "替换草稿 — 仅供试听；最终视频仍使用原始旁白。"
   }
 }

@@ -1,4 +1,4 @@
-"""Persisted, explicitly estimated narration ranges and offline audio previews."""
+"""Source-bound narration ranges, original previews and replacement auditions."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from app.utils import utils
 _NAME = "narration_ranges.json"
 _MAX_SCENES = 512
 _MAX_SECONDS = 3600
+MAX_REPLACEMENT_BYTES = 20 * 1024 * 1024
 
 
 def _file(task_id: str) -> Path:
@@ -70,6 +71,21 @@ def read_ranges(task_id: str) -> dict | None:
             or not start < end <= duration + 1e-6
         ):
             raise ValueError("invalid narration range boundaries")
+        if "replacement" in item:
+            draft = item["replacement"]
+            if (not isinstance(draft, dict)
+                    or set(draft) != {"preview_asset", "preview_sha256"}
+                    or not isinstance(draft["preview_asset"], str)
+                    or not isinstance(draft["preview_sha256"], str)):
+                raise ValueError("invalid narration replacement metadata")
+            parts = Path(draft["preview_asset"]).parts
+            if (len(parts) != 3 or parts[0] != "narration_replacements"
+                    or len(parts[1]) != 32
+                    or any(c not in "0123456789abcdef" for c in parts[1])
+                    or parts[2] != f"scene-{item['scene_id']:03d}.wav"
+                    or len(draft["preview_sha256"]) != 64
+                    or any(c not in "0123456789abcdef" for c in draft["preview_sha256"])):
+                raise ValueError("invalid narration replacement reference")
         ids.add(item["scene_id"])
         previous = end
     if abs(previous - duration) > 1e-6:
@@ -145,11 +161,12 @@ def load_validated(task_id: str, plan, audio_file: str) -> dict:
     return data
 
 
-def _preview(task_id: str, item: dict) -> Path:
+def _preview(task_id: str, item: dict, *, replacement: bool = False) -> Path:
+    prefix = "narration_replacements/" if replacement else "narration_previews/"
     relative = item.get("preview_asset")
     if (
         not isinstance(relative, str)
-        or not relative.startswith("narration_previews/")
+        or not relative.startswith(prefix)
         or not relative.endswith(".wav")
     ):
         raise ValueError("invalid narration preview reference")
@@ -168,7 +185,8 @@ def _preview(task_id: str, item: dict) -> Path:
         raise ValueError("narration preview changed; prepare previews again")
     with wave.open(str(candidate), "rb") as stream:
         if (
-            stream.getframerate() != 16000
+            stream.getnframes() <= 0
+            or stream.getframerate() != 16000
             or stream.getnchannels() != 1
             or stream.getsampwidth() != 2
             or abs(stream.getnframes() / 16000 - (item["end"] - item["start"])) > 0.002
@@ -177,7 +195,7 @@ def _preview(task_id: str, item: dict) -> Path:
     return candidate
 
 
-def _extract(audio: Path, output: Path, start: float, duration: float) -> None:
+def _extract(audio: Path, output: Path, start: float, duration: float, input_format: str | None = None) -> None:
     command = [
         utils.get_ffmpeg_binary(),
         "-nostdin",
@@ -186,6 +204,7 @@ def _extract(audio: Path, output: Path, start: float, duration: float) -> None:
         "error",
         "-protocol_whitelist",
         "file,pipe",
+        *(["-f", input_format] if input_format else []),
         "-i",
         str(audio),
         "-ss",
@@ -411,6 +430,8 @@ def edit(
         raise ValueError("narration boundary must leave audio in both adjacent ranges")
     if abs(end - left["end"]) < 1 / 32000:
         return data
+    if left.get("replacement") or right.get("replacement"):
+        raise ValueError("remove adjacent narration drafts before moving this boundary")
     left["end"] = right["start"] = end
     checked.difference_update((left["scene_id"], right["scene_id"]))
     data["operator_reviewed_scene_ids"] = sorted(checked)
@@ -425,6 +446,7 @@ def _remove_inactive_previews(task_id: str, data: dict) -> None:
         gm.resolve_asset(task_id, item["preview_asset"]).parent
         for item in data["ranges"]
     }
+    _remove_inactive_replacements(task_id, data)
     preview_root = gm.resolve_asset(task_id, "narration_previews")
     for previous in preview_root.iterdir():
         if (
@@ -437,12 +459,106 @@ def _remove_inactive_previews(task_id: str, data: dict) -> None:
             shutil.rmtree(previous, ignore_errors=True)
 
 
-def preview_payload(task_id: str, plan, audio_file: str, scene_id: int) -> dict:
+def _replacement_preview(task_id: str, item: dict) -> Path:
+    replacement = item.get("replacement")
+    if not isinstance(replacement, dict):
+        raise ValueError("invalid narration replacement draft")
+    return _preview(task_id, {**item, **replacement}, replacement=True)
+
+
+def _remove_inactive_replacements(task_id: str, data: dict) -> None:
+    directory = gm.resolve_asset(task_id, "narration_replacements")
+    if not directory.exists():
+        return
+    keep = {
+        gm.resolve_asset(task_id, item["replacement"]["preview_asset"]).parent
+        for item in data["ranges"] if item.get("replacement")
+    }
+    for old in directory.iterdir():
+        if (old not in keep and not old.is_symlink() and old.is_dir()
+                and len(old.name) == 32
+                and all(c in "0123456789abcdef" for c in old.name)):
+            shutil.rmtree(old, ignore_errors=True)
+
+
+def replace_draft(task_id: str, plan, audio_file: str, scene_id: int, *,
+                  expected_revision: str, content: bytes | None = None) -> dict:
+    """Save or remove an audition-only upload, never edit the master track."""
+    if type(scene_id) is not int:
+        raise ValueError("invalid narration scene ID")
+    if content is not None and (type(content) is not bytes or not 0 < len(content) <= MAX_REPLACEMENT_BYTES):
+        raise ValueError("narration upload must contain at most 20 MiB")
+    input_format = None
+    if content is not None:
+        # Force an audio demuxer so an uploaded playlist/concat document cannot
+        # ask FFmpeg to read arbitrary local files under the file protocol.
+        if content[:4] == b"RIFF" and content[8:12] == b"WAVE":
+            input_format = "wav"
+        elif content[:3] == b"ID3" or (len(content) > 1 and content[0] == 255 and content[1] & 224 == 224):
+            input_format = "mp3"
+        elif content[4:8] == b"ftyp":
+            input_format = "mov"
+        else:
+            raise ValueError("upload a WAV, MP3 or M4A audio file")
+    if revision(task_id) != expected_revision:
+        raise ValueError("narration ranges changed; refresh the Scene Editor")
     data = load_validated(task_id, plan, audio_file)
     item = next((i for i in data["ranges"] if i["scene_id"] == scene_id), None)
     if item is None:
         raise ValueError("scene has no narration range")
-    candidate = _preview(task_id, item)
+    if content is not None and scene_id not in data.get("operator_reviewed_scene_ids", []):
+        raise ValueError("listen to and review the original narration range first")
+    if content is None and "replacement" not in item:
+        return data
+    directory = None
+    try:
+        if content is None:
+            item.pop("replacement", None)
+        else:
+            _preview(task_id, item)
+            directory = gm.resolve_asset(task_id, f"narration_replacements/{uuid.uuid4().hex}")
+            directory.mkdir(parents=True)
+            upload = directory / "upload.audio"
+            upload.write_bytes(content)
+            output = directory / f"scene-{scene_id:03d}.wav"
+            duration = item["end"] - item["start"]
+            # Decode beyond the permitted duration so an overlong upload is
+            # rejected rather than silently trimmed. No time stretching/padding.
+            _extract(upload, output, 0, duration + 0.2, input_format)
+            with wave.open(str(output), "rb") as stream:
+                actual = stream.getnframes() / stream.getframerate()
+            if abs(actual - duration) > 0.002:
+                raise ValueError(f"replacement must match the range duration ({duration:.3f} seconds) within 2 ms")
+            upload.unlink()
+            item["replacement"] = {
+                "preview_asset": output.relative_to(Path(utils.task_dir(task_id)).resolve()).as_posix(),
+                "preview_sha256": gm.media_sha256(output),
+            }
+            _replacement_preview(task_id, item)
+        current_plan = scene_planner.load_scene_plan(task_id)
+        if (current_plan is None
+                or _binding(task_id, current_plan, audio_file)[0] != data["binding"]
+                or revision(task_id) != expected_revision):
+            raise ValueError("narration sources or ranges changed; refresh the Scene Editor")
+        scene_planner._atomic_write_json(_file(task_id), data)
+    except Exception:
+        if directory is not None:
+            shutil.rmtree(directory, ignore_errors=True)
+        raise
+    _remove_inactive_replacements(task_id, data)
+    return data
+
+
+def preview_payload(task_id: str, plan, audio_file: str, scene_id: int, *, replacement: bool = False) -> dict:
+    data = load_validated(task_id, plan, audio_file)
+    item = next((i for i in data["ranges"] if i["scene_id"] == scene_id), None)
+    if item is None:
+        raise ValueError("scene has no narration range")
+    if replacement:
+        item = {**item, **item.get("replacement", {})}
+        if not item["preview_asset"].startswith("narration_replacements/"):
+            raise ValueError("scene has no replacement narration draft")
+    candidate = _preview(task_id, item, replacement=replacement)
     assets = [
         data["binding"]["audio_asset"],
         item["preview_asset"],
@@ -465,6 +581,7 @@ def preview_payload(task_id: str, plan, audio_file: str, scene_id: int) -> dict:
     ):
         raise ValueError("narration sources changed while loading preview")
     return {
+        "replacement": replacement,
         "audio": content,
         "signature": signature,
         "audio_asset": data["binding"]["audio_asset"],

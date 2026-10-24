@@ -418,6 +418,164 @@ class TestNarrationRanges(LocalAITestCase):
             self.state.get_task(self.task_id)["state"], const.TASK_STATE_FAILED
         )
 
+    def draft_audio(self, seconds=1, frequency=220):
+        content = BytesIO()
+        with wave.open(content, "wb") as stream:
+            stream.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+            samples = (np.sin(np.arange(round(seconds * 16000)) * 2 * np.pi * frequency / 16000) * 4000).astype("<i2")
+            stream.writeframes(samples.tobytes())
+        return content.getvalue()
+
+    def review(self, scene_id=1):
+        return task.edit_local_ai_narration_range(
+            self.task_id, scene_id, expected_revision=nr.revision(self.task_id), reviewed=True
+        )
+
+    def save_draft(self, content=None, scene_id=1):
+        return task.replace_local_ai_narration_draft(
+            self.task_id, scene_id, expected_revision=nr.revision(self.task_id), content=content
+        )
+
+    def test_replacement_draft_audition_persistence_and_original_restore(self):
+        self.prepare()
+        self.review()
+        names = ("script.json", "scene_plan.json", "narration.wav")
+        protected = {name: (self.root / name).read_bytes() for name in names}
+        manifest = gm.manifest_path(self.task_id).read_bytes()
+        original = task.local_ai_narration_preview(self.task_id, 1)
+        with (
+            patch.object(task.voice, "tts", side_effect=AssertionError("TTS")),
+            patch.object(task, "generate_final_videos", side_effect=AssertionError("render")),
+            patch.object(task, "generate_subtitle", side_effect=AssertionError("caption")),
+        ):
+            data = self.save_draft(self.draft_audio())
+        self.assertEqual(data["operator_reviewed_scene_ids"], [1])
+        draft_path = gm.resolve_asset(self.task_id, data["ranges"][0]["replacement"]["preview_asset"])
+        self.assertFalse((draft_path.parent / "upload.audio").exists())
+        payload = task.local_ai_narration_preview(self.task_id, 1, replacement=True)
+        self.assertTrue(payload["replacement"])
+        self.assertFalse(nr.preview_is_current(self.task_id, original))
+        with wave.open(BytesIO(payload["audio"])) as stream:
+            samples = np.frombuffer(stream.readframes(stream.getnframes()), dtype="<i2")
+            frequency = np.fft.rfftfreq(len(samples), 1 / 16000)[np.abs(np.fft.rfft(samples)).argmax()]
+        self.assertAlmostEqual(frequency, 220, delta=2)
+        self.assertEqual(task.local_ai_narration_preview(self.task_id, 1)["audio"], original["audio"])
+        # Reopen/reprepare and rebuild a corrupt original preview without losing the draft.
+        self.assertEqual(self.prepare(), data)
+        gm.resolve_asset(self.task_id, data["ranges"][0]["preview_asset"]).unlink()
+        repaired = self.prepare()
+        self.assertEqual(repaired["ranges"][0]["replacement"], data["ranges"][0]["replacement"])
+        self.assertEqual(task.local_ai_narration_preview(self.task_id, 1, replacement=True)["audio"], payload["audio"])
+        self.save_draft(self.draft_audio(frequency=330))
+        self.assertFalse(draft_path.exists())
+        self.assertEqual(len(list((self.root / "narration_replacements").iterdir())), 1)
+        self.save_draft()  # Explicit restore-original removes only the draft.
+        self.assertEqual(list((self.root / "narration_replacements").iterdir()), [])
+        with self.assertRaisesRegex(ValueError, "no replacement"):
+            task.local_ai_narration_preview(self.task_id, 1, replacement=True)
+        for name, content in protected.items():
+            self.assertEqual((self.root / name).read_bytes(), content)
+        self.assertEqual(gm.manifest_path(self.task_id).read_bytes(), manifest)
+
+    def test_replacement_normalizes_stereo_and_rejects_playlists_before_decode(self):
+        self.prepare()
+        self.review()
+        content = BytesIO()
+        with wave.open(content, "wb") as stream:
+            stream.setparams((2, 2, 48000, 0, "NONE", "not compressed"))
+            stream.writeframes(bytes(48000 * 4))
+        self.save_draft(content.getvalue())
+        payload = task.local_ai_narration_preview(self.task_id, 1, replacement=True)
+        with wave.open(BytesIO(payload["audio"])) as stream:
+            self.assertEqual((stream.getnchannels(), stream.getsampwidth(), stream.getframerate(), stream.getnframes()), (1, 2, 16000, 16000))
+        with patch.object(nr, "_extract", side_effect=AssertionError("untrusted playlist decoder")):
+            with self.assertRaisesRegex(ValueError, "audio file"):
+                self.save_draft(b"ffconcat version 1.0\nfile '/private/audio.wav'\n")
+
+    def test_replacement_guards_review_duration_staleness_and_atomic_failure(self):
+        self.prepare()
+        with self.assertRaisesRegex(ValueError, "review"):
+            self.save_draft(self.draft_audio())
+        self.review()
+        self.save_draft(self.draft_audio())
+        before = (self.root / "narration_ranges.json").read_bytes()
+        for content in (b"broken", b"", self.draft_audio(0.5), self.draft_audio(1.1), self.draft_audio(1.3), bytearray(b"bad")):
+            with self.subTest(size=len(content)), self.assertRaises(ValueError):
+                self.save_draft(content)
+            self.assertEqual((self.root / "narration_ranges.json").read_bytes(), before)
+        with patch.object(nr.scene_planner, "_atomic_write_json", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.save_draft(self.draft_audio(frequency=330))
+            with self.assertRaises(OSError):
+                self.save_draft()
+        with self.assertRaisesRegex(ValueError, "changed"):
+            task.replace_local_ai_narration_draft(self.task_id, 1, expected_revision="old", content=self.draft_audio())
+        with self.assertRaisesRegex(ValueError, "remove adjacent"):
+            task.edit_local_ai_narration_range(self.task_id, 1, expected_revision=nr.revision(self.task_id), end=0.8)
+        self.assertEqual((self.root / "narration_ranges.json").read_bytes(), before)
+        self.assertEqual(len(list((self.root / "narration_replacements").iterdir())), 1)
+        data = nr.read_ranges(self.task_id)
+        gm.resolve_asset(self.task_id, data["ranges"][0]["replacement"]["preview_asset"]).write_bytes(b"corrupt")
+        with self.assertRaises(ValueError):
+            task.local_ai_narration_preview(self.task_id, 1, replacement=True)
+        task.local_ai_narration_preview(self.task_id, 1)  # Original is still listenable.
+        self.save_draft()
+        task.edit_local_ai_narration_range(self.task_id, 1, expected_revision=nr.revision(self.task_id), end=0.8)
+
+    def test_replacement_rechecks_revision_after_decode_and_rejects_unsafe_metadata(self):
+        self.prepare()
+        self.review()
+        self.save_draft(self.draft_audio())
+        sidecar = self.root / "narration_ranges.json"
+        before = sidecar.read_bytes()
+        extract = nr._extract
+        def change_revision(*args):
+            extract(*args)
+            sidecar.write_bytes(before + b" ")
+        with patch.object(nr, "_extract", side_effect=change_revision):
+            with self.assertRaisesRegex(ValueError, "changed"):
+                self.save_draft(self.draft_audio())
+        self.assertEqual(sidecar.read_bytes(), before + b" ")
+        self.assertEqual(len(list((self.root / "narration_replacements").iterdir())), 1)
+        with patch.object(nr, "MAX_REPLACEMENT_BYTES", 1):
+            with self.assertRaises(ValueError):
+                webui_task.submit_narration_ranges(self.task_id, edit_request={
+                    "operation": "replacement", "scene_id": 1,
+                    "expected_revision": nr.revision(self.task_id), "content": b"large"})
+        for asset in ("../outside.wav", "narration.wav", "narration_replacements/" + "a" * 32 + "/scene-002.wav"):
+            data = json.loads(before)
+            data["ranges"][0]["replacement"]["preview_asset"] = asset
+            sidecar.write_text(json.dumps(data))
+            with self.subTest(asset=asset), self.assertRaises(ValueError):
+                nr.read_ranges(self.task_id)
+        sidecar.write_bytes(before)
+        task.local_ai_narration_preview(self.task_id, 1, replacement=True)
+
+    def test_replacement_queue_snapshot_status_and_source_change(self):
+        self.prepare()
+        self.review()
+        request = {"operation": "replacement", "scene_id": 1,
+                   "expected_revision": nr.revision(self.task_id), "content": self.draft_audio()}
+        self.state.update_task(self.task_id, state=const.TASK_STATE_FAILED, progress=50)
+        with patch.object(webui_task._task_manager, "add_task") as queue:
+            webui_task.submit_narration_ranges(self.task_id, edit_request=request)
+        request["content"] = b"mutated"
+        call = queue.call_args
+        self.assertTrue(call.args[0](**call.kwargs)["prepared"])
+        self.assertEqual(self.state.get_task(self.task_id)["state"], const.TASK_STATE_FAILED)
+        with patch.object(webui_task._task_manager, "add_task") as queue:
+            webui_task.submit_narration_ranges(self.task_id, edit_request={
+                "operation": "replacement", "scene_id": 1, "expected_revision": nr.revision(self.task_id)})
+        self.audio.write_bytes(self.audio.read_bytes() + b"changed source")
+        before = (self.root / "narration_ranges.json").read_bytes()
+        call = queue.call_args
+        self.assertIn("error", call.args[0](**call.kwargs))
+        self.assertEqual((self.root / "narration_ranges.json").read_bytes(), before)
+        self.assertEqual(self.state.get_task(self.task_id)["state"], const.TASK_STATE_FAILED)
+        rebuilt = self.prepare()
+        self.assertNotIn("replacement", rebuilt["ranges"][0])
+        self.assertEqual(list((self.root / "narration_replacements").iterdir()), [])
+
     def test_scene_editor_labels_estimates_and_plays_validated_clip(self):
         self.prepare()
         source = (Path(__file__).parents[2] / "webui/Main.py").read_text(
@@ -452,6 +610,8 @@ st.session_state['scene_editor_task_id'] = 'narration'
             any("Saved estimated narration 0.00-1.00" in c.value for c in app.caption)
         )
         self.assertTrue(app.button(key="apply_narration_boundary_narration_2").disabled)
+        self.assertTrue(app.button(key="save_narration_draft_narration_1").disabled)
+        self.assertTrue(app.button(key="play_narration_draft_narration_1").disabled)
         with (
             patch.object(webui_task, "submit_narration_ranges") as submit,
             patch("streamlit.rerun"),
@@ -471,6 +631,27 @@ st.session_state['scene_editor_task_id'] = 'narration'
         self.assertEqual(len(app.get("audio")), 1)
         app.run()  # Fragment polling must not remove a playing preview.
         self.assertEqual(len(app.get("audio")), 1)
+        self.review()
+        upload = BytesIO(self.draft_audio())
+        upload.size = len(upload.getvalue())
+        with (patch("streamlit.file_uploader", side_effect=lambda label, **kwargs: upload
+                    if kwargs.get("key", "").startswith("narration_upload_narration_1_") else None),
+              patch.object(webui_task, "submit_narration_ranges") as submit,
+              patch("streamlit.rerun")):
+            app.run()
+            app.button(key="save_narration_draft_narration_1").click().run()
+            submit.assert_called_once_with(self.task_id, edit_request={
+                "operation": "replacement", "scene_id": 1, "expected_revision": nr.revision(self.task_id),
+                "content": upload.getvalue()})
+        self.save_draft(self.draft_audio())
+        app.run()
+        app.button(key="play_narration_draft_narration_1").click().run()
+        self.assertEqual(len(app.get("audio")), 1)
+        self.assertTrue(any("Narration Draft Saved" in c.value for c in app.caption))
+        with patch.object(webui_task, "submit_narration_ranges") as submit, patch("streamlit.rerun"):
+            app.button(key="remove_narration_draft_narration_1").click().run()
+            submit.assert_called_once_with(self.task_id, edit_request={
+                "operation": "replacement", "scene_id": 1, "expected_revision": nr.revision(self.task_id)})
         self.audio.write_bytes(self.audio.read_bytes() + b"changed")
         app.run()
         self.assertEqual(len(app.get("audio")), 0)

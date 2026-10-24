@@ -73,6 +73,35 @@ M3 exposed `wan22_local` through WebUI, CLI and API using the same provider/pref
 
 ## Current development boundary
 
+The seventh editor extension adds saved replacement narration drafts for
+operator-reviewed ranges. WAV/MP3/M4A uploads (20 MiB maximum) must match the
+decoded range duration within 2 ms and are normalized to task-local PCM WAV.
+Original and draft previews remain separately available; remove restores
+original-only playback. Drafts are explicitly audition-only: master narration,
+script, captions, visual generation and final exports remain unchanged.
+
+An optional per-range `replacement` reference/hash in `narration_ranges.json`
+binds each draft to the existing sources/ranges. Queued requests are snapshotted;
+source/revision checks and atomic publication preserve prior assets on failure.
+Only active draft directories remain after successful cleanup. Reopening,
+preview repair, visual edits and Resume retain drafts. Source rebinding clears
+them. Remove adjacent drafts before moving a narration boundary. No TTS,
+transcription, video inference, final composition or publishing is introduced.
+Applying drafts to final narration/captions and downstream retiming remain
+future work. See `docs/SCENE_EDITING.md` for the complete contract.
+
+Verification: **69 affected narration/UI/translation/queue/artifact tests**
+passed, followed by all **9 scene timing/visual-edit/Resume tests** with saved
+drafts. The media checks cover original-vs-draft content, stereo normalization,
+invalid uploads/paths, fixed durations, stale publication, rollback, source
+rebinding, cleanup and restore-original. Streamlit tests cover draft upload,
+preview and remove controls. Ruff, compilation and whitespace checks passed.
+Check the published development head for full Python/Windows CI. No real GPU,
+speech-alignment or publishing acceptance is claimed.
+
+The preceding boundary-review milestone's full Python/Windows CI passed on
+`9415c1b0ba1d842ff0d1529bdca14de452f83e39` (run `40125307648`).
+
 The sixth editor extension adds manual narration boundary adjustment and
 operator review. A range's end moves the next narration range's start in
 original narration order; total audio coverage and endpoints remain fixed.

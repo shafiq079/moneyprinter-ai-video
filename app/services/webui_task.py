@@ -519,6 +519,9 @@ def _run_narration_ranges(task_id: str, previous: dict, edit_request: dict | Non
         with config.runtime_config_lock():
             if edit_request is None:
                 tm.prepare_local_ai_narration_ranges(task_id, _queued=True)
+            elif edit_request.get("operation") == "replacement":
+                request = {k: v for k, v in edit_request.items() if k != "operation"}
+                tm.replace_local_ai_narration_draft(task_id, _queued=True, **request)
             else:
                 tm.edit_local_ai_narration_range(task_id, _queued=True, **edit_request)
         return {"task_id": task_id, "prepared": True}
@@ -537,6 +540,10 @@ def submit_narration_ranges(task_id: str, *, edit_request: dict | None = None) -
     with _resume_submission_lock:
         tm.local_ai_narration_context(task_id)
         if edit_request is not None:
+            if edit_request.get("operation") == "replacement":
+                content = edit_request.get("content")
+                if content is not None and (type(content) is not bytes or not 0 < len(content) <= tm.narration_ranges.MAX_REPLACEMENT_BYTES):
+                    raise ValueError("narration upload must contain at most 20 MiB")
             edit_request = deepcopy(edit_request)
             if tm.narration_ranges.revision(task_id) != edit_request.get("expected_revision"):
                 raise ValueError("narration ranges changed; refresh the Scene Editor")

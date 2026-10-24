@@ -92,6 +92,13 @@ ENGLISH_FALLBACK_KEYS = frozenset(
         "Artifact Package Help",
         "Artifact Package Unavailable",
         "Scene Editor",
+        "Narration Draft Help",
+        "Narration Draft Upload",
+        "Save Narration Draft",
+        "Remove Narration Draft",
+        "Preview Narration Draft",
+        "Narration Draft Saved",
+
         "Adjusted Narration Range",
         "Narration Range End",
         "Apply Narration Boundary",

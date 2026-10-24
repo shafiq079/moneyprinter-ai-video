@@ -1424,18 +1424,53 @@ def _render_scene_editor() -> None:
                     else:
                         st.toast(tr("Narration Previews Queued"))
                         st.rerun(scope="fragment")
+                st.caption(tr("Narration Draft Help"))
+                draft_upload = st.file_uploader(
+                    tr("Narration Draft Upload"), type=["wav", "mp3", "m4a"],
+                    key=f"narration_upload_{task_id}_{scene_id}_{narration_revision}",
+                    disabled=is_busy or not checked,
+                )
+                if st.button(tr("Save Narration Draft"), key=f"save_narration_draft_{task_id}_{scene_id}",
+                             disabled=is_busy or not checked or draft_upload is None):
+                    try:
+                        if draft_upload.size > tm.narration_ranges.MAX_REPLACEMENT_BYTES:
+                            raise ValueError("narration upload must contain at most 20 MiB")
+                        webui_task.submit_narration_ranges(task_id, edit_request={
+                            "operation": "replacement", "scene_id": scene_id,
+                            "expected_revision": narration_revision, "content": draft_upload.getvalue()})
+                    except Exception as exc:
+                        st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
+                    else:
+                        st.toast(tr("Narration Previews Queued"))
+                        st.rerun(scope="fragment")
+                has_draft = bool(narration_range.get("replacement"))
+                if has_draft:
+                    st.caption(tr("Narration Draft Saved"))
+                    if st.button(tr("Remove Narration Draft"), key=f"remove_narration_draft_{task_id}_{scene_id}", disabled=is_busy):
+                        try:
+                            webui_task.submit_narration_ranges(task_id, edit_request={
+                                "operation": "replacement", "scene_id": scene_id,
+                                "expected_revision": narration_revision})
+                        except Exception as exc:
+                            st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
+                        else:
+                            st.toast(tr("Narration Previews Queued"))
+                            st.rerun(scope="fragment")
                 preview_key = f"narration_preview_{task_id}_{scene_id}"
-                if st.button(tr("Preview Narration"), key=f"play_narration_{task_id}_{scene_id}", disabled=is_busy):
+                play_original = st.button(tr("Preview Narration"), key=f"play_narration_{task_id}_{scene_id}", disabled=is_busy)
+                play_draft = st.button(tr("Preview Narration Draft"), key=f"play_narration_draft_{task_id}_{scene_id}", disabled=is_busy or not has_draft)
+                if play_original or play_draft:
                     try:
                         for cached_key in list(st.session_state):
                             if str(cached_key).startswith("narration_preview_"):
                                 st.session_state.pop(cached_key, None)
-                        st.session_state[preview_key] = tm.local_ai_narration_preview(task_id, scene_id)
+                        st.session_state[preview_key] = tm.local_ai_narration_preview(task_id, scene_id, replacement=play_draft)
                     except Exception as exc:
                         st.session_state.pop(preview_key, None)
                         st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
                 preview = st.session_state.get(preview_key)
                 if preview and not is_busy and tm.narration_ranges.preview_is_current(task_id, preview, audio_file=task_state.get("audio_file")):
+                    st.caption(tr("Narration Draft Saved") if preview.get("replacement") else tr("Preview Narration"))
                     st.audio(preview["audio"], format="audio/wav")
                 else:
                     st.session_state.pop(preview_key, None)

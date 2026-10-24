@@ -2173,9 +2173,16 @@ def edit_local_ai_narration_range(task_id: str, scene_id: int, *, expected_revis
                                 expected_revision=expected_revision, end=end, reviewed=reviewed)
 
 
-def local_ai_narration_preview(task_id: str, scene_id: int) -> dict:
+def replace_local_ai_narration_draft(task_id: str, scene_id: int, *, expected_revision: str,
+                                     content: bytes | None = None, _queued: bool = False) -> dict:
+    plan, audio = local_ai_narration_context(task_id, _queued=_queued)
+    return narration_ranges.replace_draft(task_id, plan, audio, scene_id,
+                                         expected_revision=expected_revision, content=content)
+
+
+def local_ai_narration_preview(task_id: str, scene_id: int, *, replacement: bool = False) -> dict:
     plan, audio = local_ai_narration_context(task_id)
-    return narration_ranges.preview_payload(task_id, plan, audio, scene_id)
+    return narration_ranges.preview_payload(task_id, plan, audio, scene_id, replacement=replacement)
 
 
 def validate_local_ai_scene_timing(
