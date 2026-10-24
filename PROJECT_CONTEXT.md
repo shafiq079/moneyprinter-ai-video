@@ -73,6 +73,29 @@ M3 exposed `wan22_local` through WebUI, CLI and API using the same provider/pref
 
 ## Current development boundary
 
+The sixth editor extension adds manual narration boundary adjustment and
+operator review. A range's end moves the next narration range's start in
+original narration order; total audio coverage and endpoints remain fixed.
+Changes are sample-rounded and cannot empty either adjacent range. They rebuild
+previews from existing audio, set `basis=operator_adjusted`, retain initial
+estimation weights and keep `speech_aligned=false`. Explicit user review is
+saved in `operator_reviewed_scene_ids`; moving a boundary clears both affected
+reviews. Source changes re-estimate and clear reviews. Visual edits and Resume
+preserve valid manual ranges/reviews.
+
+The existing serialized narration queue preserves task status and checks saved
+sidecar revisions at submission, execution and publication. Failures preserve
+the prior map/previews. Source audio, captions, script, generation versions,
+visual timing and final exports remain unchanged. No TTS, automatic alignment,
+video generation or publishing is added. Narration replacement and downstream
+retiming remain deferred. See `docs/SCENE_EDITING.md` for the contract.
+
+Verification: **73 affected CPU tests** passed, with **27 final range/UI/
+translation checks** and both manual-range visual-edit/Resume integration
+checks passing. Ruff, compilation and whitespace checks passed. Check the
+published development head for full Python/Windows CI. Operator review is
+not automatic speech-alignment or real-model acceptance.
+
 The fifth editor extension saves estimated narration ranges and offline audio
 previews. **Prepare narration previews** in Scene Editor creates a separate
 `narration_ranges.json`, binding stable scene IDs and narration text to exact

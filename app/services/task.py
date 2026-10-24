@@ -2166,6 +2166,13 @@ def prepare_local_ai_narration_ranges(task_id: str, *, _queued: bool = False) ->
     return narration_ranges.prepare(task_id, plan, audio)
 
 
+def edit_local_ai_narration_range(task_id: str, scene_id: int, *, expected_revision: str,
+                                  end: float | None = None, reviewed: bool = False, _queued: bool = False) -> dict:
+    plan, audio = local_ai_narration_context(task_id, _queued=_queued)
+    return narration_ranges.edit(task_id, plan, audio, scene_id,
+                                expected_revision=expected_revision, end=end, reviewed=reviewed)
+
+
 def local_ai_narration_preview(task_id: str, scene_id: int) -> dict:
     plan, audio = local_ai_narration_context(task_id)
     return narration_ranges.preview_payload(task_id, plan, audio, scene_id)

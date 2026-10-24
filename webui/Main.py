@@ -1287,8 +1287,9 @@ def _render_scene_editor() -> None:
         st.warning(str(exc))
         return
     narration_map = None
+    narration_revision = None
     try:
-        narration_map = tm.narration_ranges.read_ranges(task_id)
+        narration_map, narration_revision = tm.narration_ranges.read_snapshot(task_id)
     except (ValueError, OSError):
         st.warning(tr("Narration Ranges Unavailable"))
     st.caption(tr("Narration Ranges Help"))
@@ -1394,7 +1395,35 @@ def _render_scene_editor() -> None:
                 st.caption(scene.narration_segment)
             narration_range = next((item for item in (narration_map or {}).get("ranges", []) if item["scene_id"] == scene_id), None)
             if narration_range is not None:
-                st.caption(tr("Estimated Narration Range").format(start=narration_range["start"], end=narration_range["end"]))
+                range_label = "Adjusted Narration Range" if narration_map["basis"] == "operator_adjusted" else "Estimated Narration Range"
+                st.caption(tr(range_label).format(start=narration_range["start"], end=narration_range["end"]))
+                last_narration = narration_map["ranges"][-1]["scene_id"] == scene_id
+                boundary = st.number_input(
+                    tr("Narration Range End"), min_value=0.0, value=float(narration_range["end"]), step=0.05,
+                    key=f"narration_end_{task_id}_{scene_id}_{narration_revision}", disabled=is_busy or last_narration,
+                )
+                if st.button(tr("Apply Narration Boundary"), key=f"apply_narration_boundary_{task_id}_{scene_id}",
+                             disabled=is_busy or last_narration or abs(boundary - narration_range["end"]) < 1e-8):
+                    try:
+                        webui_task.submit_narration_ranges(task_id, edit_request={"scene_id": scene_id,
+                            "expected_revision": narration_revision, "end": float(boundary)})
+                    except Exception as exc:
+                        st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
+                    else:
+                        st.toast(tr("Narration Previews Queued"))
+                        st.rerun(scope="fragment")
+                checked = scene_id in narration_map.get("operator_reviewed_scene_ids", [])
+                if checked:
+                    st.caption(tr("Narration Reviewed By You"))
+                if st.button(tr("Mark Narration Reviewed"), key=f"review_narration_{task_id}_{scene_id}", disabled=is_busy or checked):
+                    try:
+                        webui_task.submit_narration_ranges(task_id, edit_request={"scene_id": scene_id,
+                            "expected_revision": narration_revision, "reviewed": True})
+                    except Exception as exc:
+                        st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
+                    else:
+                        st.toast(tr("Narration Previews Queued"))
+                        st.rerun(scope="fragment")
                 preview_key = f"narration_preview_{task_id}_{scene_id}"
                 if st.button(tr("Preview Narration"), key=f"play_narration_{task_id}_{scene_id}", disabled=is_busy):
                     try:

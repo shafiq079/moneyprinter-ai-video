@@ -34,7 +34,7 @@ def read_ranges(task_id: str) -> dict | None:
     if (
         not isinstance(data, dict)
         or data.get("schema_version") != 1
-        or data.get("basis") != "estimated_scene_weights"
+        or data.get("basis") not in ("estimated_scene_weights", "operator_adjusted")
         or data.get("speech_aligned") is not False
         or not isinstance(data.get("ranges"), list)
         or not 0 < len(data["ranges"]) <= _MAX_SCENES
@@ -86,6 +86,13 @@ def read_ranges(task_id: str) -> dict | None:
         ]
     ):
         raise ValueError("narration ranges do not match their bound scenes")
+    reviewed = data.get("operator_reviewed_scene_ids", [])
+    if (
+        not isinstance(reviewed, list)
+        or any(type(i) is not int or i not in ids for i in reviewed)
+        or len(set(reviewed)) != len(reviewed)
+    ):
+        raise ValueError("invalid operator narration review state")
     weights = data.get("estimation_weights")
     if (
         not isinstance(weights, dict)
@@ -214,14 +221,23 @@ def _extract(audio: Path, output: Path, start: float, duration: float) -> None:
         raise ValueError("could not extract narration preview")
 
 
-def prepare(task_id: str, plan, audio_file: str) -> dict:
+def prepare(
+    task_id: str,
+    plan,
+    audio_file: str,
+    *,
+    _revised: dict | None = None,
+    _expected_revision: str | None = None,
+) -> dict:
     binding, audio = _binding(task_id, plan, audio_file)
     try:
         old = read_ranges(task_id)
     except (ValueError, OSError):
         old = None
     reusable = old is not None and old.get("binding") == binding
-    if reusable:
+    if _revised is not None and (not reusable or _revised.get("binding") != binding):
+        raise ValueError("narration sources changed; refresh the Scene Editor")
+    if reusable and _revised is None:
         try:
             for item in old["ranges"]:
                 _preview(task_id, item)
@@ -255,7 +271,8 @@ def prepare(task_id: str, plan, audio_file: str) -> dict:
                 raise ValueError(
                     "decoded audio no longer matches the saved narration ranges"
                 )
-            data = {**old, "ranges": [dict(item) for item in old["ranges"]]}
+            selected = _revised if _revised is not None else old
+            data = {**selected, "ranges": [dict(item) for item in selected["ranges"]]}
         else:
             weights = [scene.target_duration for scene in scenes]
             if any(not math.isfinite(w) or w <= 0 for w in weights):
@@ -314,12 +331,93 @@ def prepare(task_id: str, plan, audio_file: str) -> dict:
             or _binding(task_id, current_plan, audio_file)[0] != binding
         ):
             raise ValueError("narration sources changed during preview extraction")
+        if _expected_revision is not None and revision(task_id) != _expected_revision:
+            raise ValueError("narration ranges changed; refresh the Scene Editor")
         scene_planner._atomic_write_json(_file(task_id), data)
     except Exception:
         shutil.rmtree(directory)
         raise
     _remove_inactive_previews(task_id, data)
     return data
+
+
+def revision(task_id: str) -> str:
+    return gm.media_sha256(_file(task_id))
+
+
+def read_snapshot(task_id: str) -> tuple[dict | None, str | None]:
+    """Pair displayed ranges with the exact revision used for a queued edit."""
+    before = revision(task_id) if _file(task_id).exists() else None
+    data = read_ranges(task_id)
+    after = revision(task_id) if data is not None else None
+    if before != after:
+        raise ValueError("narration ranges changed; refresh the Scene Editor")
+    return data, before
+
+
+def edit(
+    task_id: str,
+    plan,
+    audio_file: str,
+    scene_id: int,
+    *,
+    expected_revision: str,
+    end: float | None = None,
+    reviewed: bool = False,
+) -> dict:
+    """Adjust a shared narration boundary, or record an explicit operator review."""
+    if type(scene_id) is not int or type(reviewed) is not bool:
+        raise ValueError("invalid narration review request")
+    if revision(task_id) != expected_revision:
+        raise ValueError("narration ranges changed; refresh the Scene Editor")
+    data = load_validated(task_id, plan, audio_file)
+    data = json.loads(json.dumps(data))
+    index = next(
+        (n for n, item in enumerate(data["ranges"]) if item["scene_id"] == scene_id),
+        None,
+    )
+    if index is None:
+        raise ValueError("scene has no narration range")
+    checked = set(data.get("operator_reviewed_scene_ids", []))
+    if reviewed:
+        if end is not None:
+            raise ValueError("review and boundary changes are separate actions")
+        # Listenability and source identity must be valid when review is recorded.
+        _preview(task_id, data["ranges"][index])
+        checked.add(scene_id)
+        data["operator_reviewed_scene_ids"] = sorted(checked)
+        current_plan = scene_planner.load_scene_plan(task_id)
+        if (
+            current_plan is None
+            or _binding(task_id, current_plan, audio_file)[0] != data["binding"]
+            or revision(task_id) != expected_revision
+        ):
+            raise ValueError(
+                "narration sources or ranges changed; refresh the Scene Editor"
+            )
+        scene_planner._atomic_write_json(_file(task_id), data)
+        return data
+    if index == len(data["ranges"]) - 1:
+        raise ValueError("the final narration endpoint stays at the audio end")
+    if (
+        isinstance(end, bool)
+        or not isinstance(end, (int, float))
+        or not math.isfinite(end)
+    ):
+        raise ValueError("narration boundary must be a finite number")
+    left, right = data["ranges"][index : index + 2]
+    end = round(end * 16000) / 16000
+    if not left["start"] < end < right["end"]:
+        raise ValueError("narration boundary must leave audio in both adjacent ranges")
+    if abs(end - left["end"]) < 1 / 32000:
+        return data
+    left["end"] = right["start"] = end
+    checked.difference_update((left["scene_id"], right["scene_id"]))
+    data["operator_reviewed_scene_ids"] = sorted(checked)
+    data["basis"] = "operator_adjusted"
+    return prepare(
+        task_id, plan, audio_file, _revised=data, _expected_revision=expected_revision
+    )
 
 
 def _remove_inactive_previews(task_id: str, data: dict) -> None:

@@ -513,11 +513,14 @@ def submit_scene_reorder(
     return True
 
 
-def _run_narration_ranges(task_id: str, previous: dict) -> dict:
+def _run_narration_ranges(task_id: str, previous: dict, edit_request: dict | None = None) -> dict:
     error = None
     try:
         with config.runtime_config_lock():
-            tm.prepare_local_ai_narration_ranges(task_id, _queued=True)
+            if edit_request is None:
+                tm.prepare_local_ai_narration_ranges(task_id, _queued=True)
+            else:
+                tm.edit_local_ai_narration_range(task_id, _queued=True, **edit_request)
         return {"task_id": task_id, "prepared": True}
     except Exception as exc:
         detail = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
@@ -529,10 +532,14 @@ def _run_narration_ranges(task_id: str, previous: dict) -> dict:
             sm.state.update_task(task_id, **previous, narration_ranges_error=error)
 
 
-def submit_narration_ranges(task_id: str) -> None:
+def submit_narration_ranges(task_id: str, *, edit_request: dict | None = None) -> None:
     """Prepare offline previews without changing the video's success/failure state."""
     with _resume_submission_lock:
         tm.local_ai_narration_context(task_id)
+        if edit_request is not None:
+            edit_request = deepcopy(edit_request)
+            if tm.narration_ranges.revision(task_id) != edit_request.get("expected_revision"):
+                raise ValueError("narration ranges changed; refresh the Scene Editor")
         prior = sm.state.get_task(task_id) or {}
         if not prior:
             finals = tm._existing_final_video_paths(tm._scene_regeneration_task_root(task_id))
@@ -543,7 +550,8 @@ def submit_narration_ranges(task_id: str) -> None:
         sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING,
                              current_stage="narration_ranges_queued", narration_ranges_error=None)
         try:
-            _task_manager.add_task(_run_narration_ranges, task_id=task_id, previous=previous)
+            options = {"edit_request": edit_request} if edit_request is not None else {}
+            _task_manager.add_task(_run_narration_ranges, task_id=task_id, previous=previous, **options)
         except Exception:
             sm.state.update_task(task_id, **previous, narration_ranges_error="narration previews could not be scheduled")
             raise

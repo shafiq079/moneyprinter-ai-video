@@ -135,6 +135,10 @@ class TestSceneTiming(LocalAITestCase):
 
     def test_cached_partial_resume_reorder_replacement_and_reset_keep_contract(self):
         task.prepare_local_ai_narration_ranges(self.task_id)
+        task.edit_local_ai_narration_range(self.task_id, 1,
+            expected_revision=task.narration_ranges.revision(self.task_id), end=.8)
+        task.edit_local_ai_narration_range(self.task_id, 1,
+            expected_revision=task.narration_ranges.revision(self.task_id), reviewed=True)
         narration_map = (self.root / 'narration_ranges.json').read_bytes()
         with patch.object(task, 'generate_final_videos', side_effect=self.stub_render):
             task.retime_local_ai_scenes(self.task_id, self.durations)
@@ -160,6 +164,10 @@ class TestSceneTiming(LocalAITestCase):
 
     def test_task_resume_after_restart_uses_saved_timing_and_only_missing_scene(self):
         task.prepare_local_ai_narration_ranges(self.task_id)
+        task.edit_local_ai_narration_range(self.task_id, 1,
+            expected_revision=task.narration_ranges.revision(self.task_id), end=.8)
+        task.edit_local_ai_narration_range(self.task_id, 1,
+            expected_revision=task.narration_ranges.revision(self.task_id), reviewed=True)
         narration_map = (self.root / 'narration_ranges.json').read_bytes()
         with patch.object(task, 'generate_final_videos', side_effect=self.stub_render):
             task.retime_local_ai_scenes(self.task_id, self.durations)

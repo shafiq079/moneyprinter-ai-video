@@ -249,6 +249,119 @@ class TestNarrationRanges(LocalAITestCase):
         self.assertEqual((self.root / "narration_ranges.json").read_bytes(), previous)
         self.assertEqual(len(list((self.root / "narration_previews").iterdir())), 1)
 
+    def test_operator_adjustment_recuts_audio_and_invalidates_both_reviews(self):
+        self.prepare()
+        protected = {
+            name: (self.root / name).read_bytes()
+            for name in ("script.json", "scene_plan.json", "narration.wav")
+        }
+        manifest = gm.manifest_path(self.task_id).read_bytes()
+        for scene_id in (1, 2):
+            task.edit_local_ai_narration_range(
+                self.task_id,
+                scene_id,
+                expected_revision=nr.revision(self.task_id),
+                reviewed=True,
+            )
+        self.assertEqual(
+            nr.read_ranges(self.task_id)["operator_reviewed_scene_ids"], [1, 2]
+        )
+        with (
+            patch.object(task.voice, "tts", side_effect=AssertionError("TTS")),
+            patch.object(
+                task, "generate_final_videos", side_effect=AssertionError("render")
+            ),
+        ):
+            data = task.edit_local_ai_narration_range(
+                self.task_id, 1, expected_revision=nr.revision(self.task_id), end=0.75
+            )
+        self.assertEqual(data["basis"], "operator_adjusted")
+        self.assertFalse(data["speech_aligned"])
+        self.assertEqual(data["operator_reviewed_scene_ids"], [])
+        self.assertEqual(
+            [(r["start"], r["end"]) for r in data["ranges"]], [(0, 0.75), (0.75, 3)]
+        )
+        for scene_id, duration in ((1, 0.75), (2, 2.25)):
+            payload = task.local_ai_narration_preview(self.task_id, scene_id)
+            with wave.open(BytesIO(payload["audio"])) as audio:
+                self.assertEqual(audio.getnframes(), round(duration * 16000))
+        self.assertEqual(nr.prepare(self.task_id, self.plan, str(self.audio)), data)
+        for name, content in protected.items():
+            self.assertEqual((self.root / name).read_bytes(), content)
+        self.assertEqual(gm.manifest_path(self.task_id).read_bytes(), manifest)
+        # Rebinding changed audio must discard review claims from the old source.
+        self.audio.write_bytes(self.audio.read_bytes() + b"new source")
+        rebuilt = self.prepare()
+        self.assertEqual(rebuilt["basis"], "estimated_scene_weights")
+        self.assertEqual(rebuilt.get("operator_reviewed_scene_ids", []), [])
+
+    def test_boundary_guards_stale_requests_and_publication_failure_preserve_map(self):
+        self.prepare()
+        before = (self.root / "narration_ranges.json").read_bytes()
+        expected = nr.revision(self.task_id)
+        for end in (-1, 3, float("nan"), float("inf"), True, "1"):
+            with self.subTest(end=end), self.assertRaises(ValueError):
+                task.edit_local_ai_narration_range(
+                    self.task_id, 1, expected_revision=expected, end=end
+                )
+        with self.assertRaises(ValueError):
+            task.edit_local_ai_narration_range(
+                self.task_id, 2, expected_revision=expected, end=2.5
+            )
+        with self.assertRaisesRegex(ValueError, "changed"):
+            task.edit_local_ai_narration_range(
+                self.task_id, 1, expected_revision="stale", end=0.5
+            )
+        task.edit_local_ai_narration_range(
+            self.task_id, 1, expected_revision=expected, end=1
+        )
+        with patch.object(
+            nr.scene_planner, "_atomic_write_json", side_effect=OSError("disk full")
+        ):
+            with self.assertRaises(OSError):
+                task.edit_local_ai_narration_range(
+                    self.task_id, 1, expected_revision=expected, end=0.8
+                )
+        self.assertEqual((self.root / "narration_ranges.json").read_bytes(), before)
+        self.assertEqual(len(list((self.root / "narration_previews").iterdir())), 1)
+
+    def test_range_edit_queue_snapshot_and_stale_worker_restore_status(self):
+        self.prepare()
+        request = {
+            "scene_id": 1,
+            "expected_revision": nr.revision(self.task_id),
+            "end": 0.8,
+        }
+        with patch.object(webui_task._task_manager, "add_task") as queue:
+            webui_task.submit_narration_ranges(self.task_id, edit_request=request)
+        request["end"] = 0.5
+        call = queue.call_args
+        self.assertTrue(call.args[0](**call.kwargs)["prepared"])
+        self.assertEqual(nr.read_ranges(self.task_id)["ranges"][0]["end"], 0.8)
+        self.assertEqual(
+            self.state.get_task(self.task_id)["state"], const.TASK_STATE_COMPLETE
+        )
+        with patch.object(webui_task._task_manager, "add_task") as queue:
+            webui_task.submit_narration_ranges(
+                self.task_id,
+                edit_request={
+                    "scene_id": 1,
+                    "expected_revision": nr.revision(self.task_id),
+                    "reviewed": True,
+                },
+            )
+        # Simulate an external metadata update after the request was queued.
+        data = nr.read_ranges(self.task_id)
+        data["operator_reviewed_scene_ids"] = [2]
+        (self.root / "narration_ranges.json").write_text(json.dumps(data))
+        before = (self.root / "narration_ranges.json").read_bytes()
+        call = queue.call_args
+        self.assertIn("error", call.args[0](**call.kwargs))
+        self.assertEqual((self.root / "narration_ranges.json").read_bytes(), before)
+        self.assertEqual(
+            self.state.get_task(self.task_id)["state"], const.TASK_STATE_COMPLETE
+        )
+
     def test_invalid_boundaries_paths_no_voice_and_busy_fail_safely(self):
         data = self.prepare()
         bad = {**data, "ranges": [dict(item) for item in data["ranges"]]}
@@ -338,6 +451,22 @@ st.session_state['scene_editor_task_id'] = 'narration'
         self.assertTrue(
             any("Saved estimated narration 0.00-1.00" in c.value for c in app.caption)
         )
+        self.assertTrue(app.button(key="apply_narration_boundary_narration_2").disabled)
+        with (
+            patch.object(webui_task, "submit_narration_ranges") as submit,
+            patch("streamlit.rerun"),
+        ):
+            field = f"narration_end_narration_1_{nr.revision(self.task_id)}"
+            app.number_input(key=field).set_value(0.75).run()
+            app.button(key="apply_narration_boundary_narration_1").click().run()
+            submit.assert_called_once_with(
+                self.task_id,
+                edit_request={
+                    "scene_id": 1,
+                    "expected_revision": nr.revision(self.task_id),
+                    "end": 0.75,
+                },
+            )
         app.button(key="play_narration_narration_1").click().run()
         self.assertEqual(len(app.get("audio")), 1)
         app.run()  # Fragment polling must not remove a playing preview.

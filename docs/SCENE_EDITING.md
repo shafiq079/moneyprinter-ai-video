@@ -216,3 +216,41 @@ No Voice/custom audio, path bounds, queued errors/status restoration, artifact
 serialization, and estimate-labelled Streamlit playback. This remains a
 read-only narration foundation: text/audio edits, verified speech alignment,
 caption rebuilding and downstream retiming are later milestones.
+
+## Operator-adjusted narration boundaries and review
+
+The next bounded step adds **Narration boundary end (seconds)** and **Apply
+narration boundary**. The chosen end also becomes the following narration
+range's start, in original narration/scene-ID order, independently of visual
+playback order. The audio starts at zero and the final endpoint remains fixed.
+Boundaries must be finite, sample-rounded and leave non-empty audio on both
+sides. The last range's start is changed through its preceding boundary.
+
+A successful change sets `basis=operator_adjusted` and rebuilds the preview set
+from the same source audio. It never modifies source audio, captions, script,
+visual timing, generated clips or final exports. `speech_aligned` remains false.
+Original estimation weights are retained for traceability. **Mark range reviewed
+after listening** records an explicit user assertion in the optional
+`operator_reviewed_scene_ids` list; it does not run a model or independently
+verify spoken words. The UI labels adjusted ranges and operator reviews
+separately from initial estimates.
+
+Moving a boundary clears reviews on both adjacent ranges. Other reviews remain
+valid for the unchanged source. Preparing changed audio/script/scene narration
+rebinds the map, restores initial estimates and clears previous reviews.
+Reopening, ordinary preview preparation, damaged-preview recovery, Resume and
+visual edits retain valid manual adjustments and reviews.
+
+Actions use the serialized narration-preview queue and preserve prior task
+success/failure status. Both submission and worker reject stale sidecar
+revisions; publication also rechecks the revision after extraction. Source
+bindings must still match. Failed extraction or publication retains the prior
+map and active previews. A no-op boundary does not rewrite the map. User review
+updates metadata without decoding or generating speech. No TTS, transcription,
+video inference, final composition or publishing call is introduced.
+
+Acceptance covers real cut durations, adjacent continuity, review invalidation,
+invalid/final endpoints, source rebinding, no-op and stale requests, immutable
+queued requests, failure rollback, persistence and UI controls. Actual narration
+replacement/text edits, caption rebuilding, automatic alignment and downstream
+retiming remain future work.

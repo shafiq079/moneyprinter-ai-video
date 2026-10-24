@@ -30,7 +30,7 @@ contracts, with no mandatory paid video-generation API.
 | --- | --- | --- |
 | AI scene generation | Original clips, scene prompts, continuity, selective retries, reusable assets. | Implemented through local Wan/LTX and remote HF LTX paths; one real seven-scene HF LTX task completed. Real **local** Wan/LTX checkpoint validation and comparative GPU tuning remain deferred. |
 | Editable project | Keep independently editable scene clips, narration/audio, captions, prompts and metadata alongside the final MP4. A bad scene or a render-only change must not invalidate unrelated generated assets. | Scene plan, scene versions, final output and portable artifact references exist. A full editable timeline/project with independent audio/text layers does not. |
-| In-product editor | Eventually provide a small, self-hosted, CapCut-like experience; do not copy or depend on CapCut. The initial release need not be a full multi-track NLE. | Existing Streamlit scene editor covers prompt/seed, preview, regenerate, variation, validated manual clip replacement, fixed-duration source trims, visual cut timing, visual playback reordering, version restore, render-only rerender, and saved estimated narration ranges/audio previews. Narration edits and independent timeline layers remain deferred. |
+| In-product editor | Eventually provide a small, self-hosted, CapCut-like experience; do not copy or depend on CapCut. The initial release need not be a full multi-track NLE. | Existing Streamlit scene editor covers prompt/seed, preview, regenerate, variation, validated manual clip replacement, fixed-duration source trims, visual cut timing, visual playback reordering, version restore, render-only rerender, and saved narration ranges/audio previews with manual boundary adjustment and operator review. Narration edits and independent timeline layers remain deferred. |
 | Scene timing | Let scene count/length follow narration and content instead of forcing every scene to the same fixed length. | Current planner uses measured audio duration, beat weights and a maximum provider-supported scene duration. Visual cut timing rebalances adjacent scenes at fixed total duration. Semantic audio alignment and retiming after narration changes remain deferred. |
 | Publishing | Complete video generation without an upload dependency. Initially defer upload automation and channel-growth tooling. | Existing optional Upload-Post integration offers YouTube, TikTok and Instagram; operator end-to-end publishing was not established in this development effort. Direct platform OAuth is not an approved replacement. |
 | Factual content | Optional evidence/review mode must not burden creative generation. | User-supplied excerpts, safe one-page import, review-only workflow and structural claim checks exist. Automatic discovery/source authentication and real-model acceptance remain deferred. |
@@ -169,3 +169,15 @@ speech alignment. Preparation uses existing audio only and preserves task
 status and prior artifacts on failure. This does not implement narration text
 editing, TTS rebuilding, verified alignment or audio/caption retiming. Those
 remain the next narration milestones after validating this foundation.
+
+## Sixth editable-project extension: narration boundary review
+
+Operators can adjust shared narration boundaries and explicitly mark ranges
+reviewed after listening. Coverage stays contiguous, with fixed audio endpoints,
+and remains separate from visual order/timing. Manual changes recut previews
+without changing original audio, captions or final video. Moving a boundary
+clears both adjacent reviews; changed source bindings clear all old reviews.
+Revision checks and atomic publication protect newer edits and prior previews.
+Operator review is a user assertion, with no claim of automatic speech alignment.
+This prepares for later narration replacement without implementing TTS/text
+editing, caption rebuilding or downstream retiming yet.
