@@ -8,6 +8,7 @@ import os
 import queue
 import re
 import shutil
+import ssl
 import subprocess
 import tempfile
 import threading
@@ -1205,7 +1206,7 @@ def create_edge_tts_communicate(
 
 def get_edge_tts_timeout_seconds() -> Union[float, None]:
     """
-    获取 Azure TTS V1 单次流式请求的超时时间。
+    获取 Azure TTS V1 流式请求无数据超时时间。
 
     背景：
     Edge consumer TTS 在网络不通、服务端限流、voice 与文本语言不匹配等场景下，
@@ -1213,7 +1214,7 @@ def get_edge_tts_timeout_seconds() -> Union[float, None]:
     默认超时，避免 WebUI 任务长期无反馈。
 
     使用方式：
-    - 默认 30 秒，覆盖常见短视频脚本的首包等待时间；
+    - 默认等待首包或下一个数据块最多 30 秒；持续有数据的长脚本可继续生成；
     - 如用户处于慢网络或代理环境，可在 `config.toml` 里设置
       `edge_tts_timeout = 60`；
     - 设置为 0 或负数表示显式禁用超时，保留完全向后兼容。
@@ -1223,6 +1224,8 @@ def get_edge_tts_timeout_seconds() -> Union[float, None]:
     )
     try:
         timeout_seconds = float(raw_timeout)
+        if not math.isfinite(timeout_seconds):
+            raise ValueError("timeout must be finite")
     except (TypeError, ValueError):
         logger.warning(
             "invalid edge_tts_timeout: "
@@ -1292,48 +1295,58 @@ def _stream_edge_tts_sync_with_timeout(
 def stream_edge_tts_chunks(
     communicate, on_chunk, timeout_seconds: Union[float, None] = None
 ) -> None:
+    """Consume Edge TTS with propagated errors and a per-event idle timeout.
+
+    Prefer the official async stream even when stream_sync exists. Keep a
+    sync-only fallback for legacy adapters; None disables the timeout.
     """
-    统一消费 edge_tts 的同步流和旧版异步流。
+    # The pinned library's stream_sync() leaves queue.get() waiting forever
+    # if its async worker raises (e.g. a rejected WebSocket handshake). Consume
+    # the async API directly so errors propagate and timeouts cancel the request.
+    if callable(getattr(communicate, "stream", None)):
+        async def _consume_async_stream():
+            stream = communicate.stream()
+            try:
+                while True:
+                    try:
+                        if timeout_seconds:
+                            chunk = await asyncio.wait_for(
+                                stream.__anext__(), timeout=timeout_seconds
+                            )
+                        else:
+                            chunk = await stream.__anext__()
+                    except StopAsyncIteration:
+                        return
+                    except asyncio.TimeoutError as exc:
+                        raise TimeoutError(
+                            f"edge_tts received no stream data for {timeout_seconds:g}s"
+                        ) from exc
+                    on_chunk(chunk)
+            finally:
+                close = getattr(stream, "aclose", None)
+                if close is not None:
+                    await close()
 
-    edge_tts 7.x 提供 `stream_sync()`，可以在同步函数里直接迭代；
-    更早的版本通常只有异步 `stream()`。为了让 `azure_tts_v1()` 在
-    旧依赖残留场景下仍能继续工作，这里统一做一层流式兼容。
-
-    Args:
-        communicate: edge_tts.Communicate 实例
-        on_chunk: 每拿到一个事件块时执行的回调
-        timeout_seconds: 单次流式请求总超时；为 None 时不启用超时。
-    """
-    if hasattr(communicate, "stream_sync"):
-        if timeout_seconds:
-            _stream_edge_tts_sync_with_timeout(
-                communicate, on_chunk, timeout_seconds
-            )
-            return
-
-        for chunk in communicate.stream_sync():
-            on_chunk(chunk)
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(_consume_async_stream())
+        finally:
+            try:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            finally:
+                loop.close()
         return
 
-    if not hasattr(communicate, "stream"):
-        raise AttributeError("edge_tts communicate object has no stream method")
-
-    async def _consume_async_stream():
-        async for chunk in communicate.stream():
-            on_chunk(chunk)
-
-    # 这里显式创建独立事件循环，而不是复用外部上下文，目的是避免
-    # 在同步调用栈里遇到“当前线程没有事件循环”或跨线程复用循环的问题。
-    loop = asyncio.new_event_loop()
-    try:
+    # Compatibility for a sync-only adapter. Official Edge TTS versions provide
+    # stream(); retain a bounded fallback for older wrappers/test adapters.
+    if callable(getattr(communicate, "stream_sync", None)):
         if timeout_seconds:
-            loop.run_until_complete(
-                asyncio.wait_for(_consume_async_stream(), timeout=timeout_seconds)
-            )
+            _stream_edge_tts_sync_with_timeout(communicate, on_chunk, timeout_seconds)
         else:
-            loop.run_until_complete(_consume_async_stream())
-    finally:
-        loop.close()
+            for chunk in communicate.stream_sync():
+                on_chunk(chunk)
+        return
+    raise AttributeError("edge_tts communicate object has no stream method")
 
 
 def azure_tts_v1(
@@ -1376,7 +1389,21 @@ def azure_tts_v1(
             logger.info(f"completed, output file: {voice_file}")
             return sub_maker
         except Exception as e:
-            logger.error(f"failed, error: {str(e)}")
+            # Raw handshake errors include request URLs/token query strings.
+            # Report the useful failure class/status without those URLs.
+            status = getattr(e, "status", None)
+            if isinstance(e, ssl.SSLError):
+                reason = "TLS certificate verification failed; check the host's trusted CA certificates/proxy"
+            elif isinstance(e, TimeoutError):
+                reason = "no stream data before timeout; check TTS connectivity"
+            elif isinstance(status, int):
+                reason = f"HTTP {status}; verify Edge TTS dependency, service access and network/proxy"
+            else:
+                reason = "request failed; verify voice parameters, output access and TTS connectivity"
+            logger.error(
+                f"Edge TTS failed: version={getattr(edge_tts, '__version__', 'unknown')}, "
+                f"error_type={type(e).__name__}; {reason}"
+            )
             # TTS 流式写入如果在首包前超时或网络异常，会留下 0 字节音频文件。
             # 这种文件既不可播放，也可能误导后续排查，因此失败后只清理空文件；
             # 如果已经写入了部分数据，则保留现场文件，便于分析服务端返回内容。

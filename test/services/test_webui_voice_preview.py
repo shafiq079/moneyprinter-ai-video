@@ -683,3 +683,55 @@ def test_webui_worker_forwards_voice_preview_to_pipeline():
         )
 
     assert start.call_args.kwargs["voice_preview"] == preview
+
+
+def test_edge_audio_generation_for_stock_sources_and_voice_samples(tmp_path):
+    """Exercise real TTS dispatch, MP3 probing and preview cleanup offline."""
+    import math
+    import os
+    from uuid import uuid4
+    from loguru import logger
+
+    fixture = tmp_path / "fixture.mp3"
+    assert voice.generate_silent_audio(0.6, str(fixture))
+    audio = fixture.read_bytes()
+
+    class Transport:
+        async def stream(self):
+            yield {"type": "audio", "data": audio}
+            yield {"type": "WordBoundary", "offset": 0, "duration": 5_000_000, "text": "Hello"}
+
+        def stream_sync(self):
+            raise AssertionError("must use the error-propagating async API")
+
+    # Only transport is mocked. Keep voice.tts, SubMaker, task.generate_audio,
+    # media decoding and the WebUI preview implementation real.
+    tree = ast.parse(WEBUI_MAIN.read_text(encoding="utf-8"))
+    function = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_synthesize_voice_preview")
+    namespace = {
+        "os": os, "uuid4": uuid4, "math": math, "hashlib": hashlib,
+        "utils": utils, "voice": voice, "logger": logger,
+        "config": SimpleNamespace(try_runtime_config_lock=lambda: nullcontext(True)),
+        "_detect_audio_mime": lambda *_: "audio/mpeg",
+    }
+    exec(compile(ast.Module(body=[function], type_ignores=[]), str(WEBUI_MAIN), "exec"), namespace)
+    with patch.object(voice, "create_edge_tts_communicate", side_effect=lambda *_: Transport()):
+        for source in ("pexels", "pixabay"):
+            root = tmp_path / source
+            root.mkdir()
+            with patch.object(utils, "task_dir", return_value=str(root)):
+                params = VideoParams(video_subject="Audio regression", video_source=source, voice_name="en-AU-NatashaNeural-Female")
+                audio_file, duration, maker = tm.generate_audio(source, params, "Hello")
+            assert Path(audio_file).read_bytes() == audio
+            assert duration > 0
+            assert maker.get_srt()
+        with patch.object(utils, "storage_dir", return_value=str(tmp_path)):
+            for preview_type in ("sample", "full"):
+                preview = namespace["_synthesize_voice_preview"](
+                    content="Hello", preview_type=preview_type, selected_tts_server="azure-tts-v1",
+                    voice_name="en-AU-NatashaNeural-Female", voice_rate=1, voice_volume=1,
+                )
+                assert preview["audio_bytes"] == audio
+                assert preview["duration"] > 0
+                assert preview["sub_maker"].get_srt()
+                assert not list(tmp_path.glob("tmp-voice-*.mp3"))

@@ -496,3 +496,38 @@ modules.
 
 The application intentionally fails closed. It does not fall back to a paid
 remote video provider when `wan22_local` is selected.
+
+
+## Shared Edge TTS troubleshooting (all video sources)
+
+Pexels, Pixabay and AI video sources use the same narration stage. If **Voice
+sample** and full generation both fail, check the TTS logs before changing
+material-provider credentials. The free Azure TTS v1 option uses `edge-tts`;
+it is separate from key-based Azure TTS v2.
+
+The application now pins `edge-tts==7.3.1`, including upstream service-protocol
+and server-date parsing fixes absent in 7.2.7. Update the environment as well as
+code, because `sh webui.sh` reuses an existing `.venv`:
+
+```bash
+git pull --ff-only origin development
+uv sync --frozen
+uv run --no-sync python -c "import edge_tts; print(edge_tts.__version__)"
+sh webui.sh
+```
+
+Stop the running WebUI before restarting. The printed version should be 7.3.1.
+Try a short **Voice sample** with the intended voice, then full narration.
+The shared adapter now exposes connection/service errors instead of allowing
+the library's synchronous worker to hide them behind repeated timeouts.
+`[app].edge_tts_timeout` defaults to 30 seconds without a new event, including
+the first event. Healthy longer responses can continue; setting 0 disables the
+application timeout. Increasing it does not repair certificate or HTTP errors.
+
+Logs identify TLS certificate errors, HTTP status where available and other
+exception classes without printing request URL tokens. For TLS failures,
+check the Codespace/host CA certificates and any HTTPS proxy's trusted CA.
+Keep TLS verification enabled. A 403 or other rejection still requires checking
+service access/network conditions; an upgraded package is not proof of live
+availability. Our development environment's short live check failed TLS
+verification, so operator-environment speech acceptance remains outstanding.

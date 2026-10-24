@@ -73,6 +73,41 @@ M3 exposed `wan22_local` through WebUI, CLI and API using the same provider/pref
 
 ## Current development boundary
 
+### Edge TTS audio regression investigation
+
+Verification: **196 affected voice, WebUI preview, task and queue tests passed**,
+with 6 optional integration tests skipped. The added offline integration uses
+real dispatch, MP3 decoding, SubMaker and WebUI sample/full preview cleanup for
+both stock sources; only the external TTS transport is replaced. Idle timeout,
+cancellation/closure, immediate upstream errors, legacy compatibility and safe
+failure logs are covered. Frozen dependency sync, lock validation, Ruff,
+compilation and whitespace checks passed. This is not live speech acceptance.
+
+The operator's Pexels task and both short/full voice previews failed with
+three exact 30-second Edge TTS timeouts. These share `voice.azure_tts_v1` and
+fail before stock-material retrieval. Recent scene/narration editor work did
+not change that provider. The application was pinned to `edge-tts==7.2.7`.
+Upstream 7.3.0 adds the updated service token protocol and 7.3.1 fixes
+locale-dependent server-date parsing. Both install manifests and the focused
+`uv.lock` entry now pin 7.3.1; unrelated dependencies are unchanged.
+
+The official synchronous wrapper can hide async-worker exceptions while
+waiting on a queue. Our adapter now consumes the async stream directly,
+propagates errors and cancels/closes stalled requests. `edge_tts_timeout`
+(default 30 seconds) limits waiting for the next event, including the first,
+rather than cutting off a healthy long response at 30 seconds total. Sync-only
+legacy adapters retain their bounded fallback. Failure logs include version,
+error class and safe status/TLS guidance without raw request URLs/tokens.
+
+A live short Microsoft request from this development environment failed with
+`ClientConnectorCertificateError`. This is not proof of the operator's network
+failure or successful live synthesis. Keep certificate verification enabled;
+verify the real voice sample/full narration in the operator's Codespace after
+`git pull --ff-only origin development` and `uv sync --frozen`, then restart
+`sh webui.sh`. That launcher reuses the existing `.venv` and does not update
+installed dependencies merely because code was pulled.
+
+
 The seventh editor extension adds saved replacement narration drafts for
 operator-reviewed ranges. WAV/MP3/M4A uploads (20 MiB maximum) must match the
 decoded range duration within 2 ms and are normalized to task-local PCM WAV.

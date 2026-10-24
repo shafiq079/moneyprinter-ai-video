@@ -326,6 +326,88 @@ class TestVoiceService(unittest.TestCase):
             self.assertEqual(len(sub_maker.events), 1)
             self.assertEqual(sub_maker.events[0]["type"], "WordBoundary")
 
+    def test_edge_stream_propagates_real_provider_error_instead_of_sync_timeout(self):
+        request = vs.create_edge_tts_communicate("hello", "en-AU-NatashaNeural", "+0%")
+        async def rejected():
+            raise ConnectionError("rejected connection")
+            yield  # Make this an async generator, like the actual library API.
+        with patch.object(request, "stream", rejected), patch.object(
+            request, "stream_sync", side_effect=AssertionError("unsafe sync wrapper")
+        ):
+            with self.assertRaisesRegex(ConnectionError, "rejected connection"):
+                vs.stream_edge_tts_chunks(request, lambda _: None, timeout_seconds=0.1)
+
+    def test_edge_stream_timeout_resets_after_each_event_and_closes_generator(self):
+        events = []
+        closed = []
+        class Progressing:
+            async def stream(self):
+                try:
+                    for i in range(12):
+                        await asyncio.sleep(0.01)
+                        yield {"type": "audio", "data": bytes([i])}
+                finally:
+                    closed.append(True)
+        # A healthy response may take longer overall than its idle timeout.
+        vs.stream_edge_tts_chunks(Progressing(), events.append, timeout_seconds=0.08)
+        self.assertEqual(len(events), 12)
+        self.assertEqual(closed, [True])
+        class Stalled:
+            async def stream(self):
+                try:
+                    yield {"type": "audio", "data": b"first"}
+                    await asyncio.sleep(10)
+                finally:
+                    closed.append(True)
+        with self.assertRaisesRegex(TimeoutError, "no stream data"):
+            vs.stream_edge_tts_chunks(Stalled(), events.append, timeout_seconds=0.02)
+        self.assertEqual(closed, [True, True])
+
+    def test_edge_stream_closes_after_callback_failure_and_supports_disabled_timeout(self):
+        closed = []
+        class Request:
+            async def stream(self):
+                try:
+                    yield {"type": "audio", "data": b"audio"}
+                finally:
+                    closed.append(True)
+        def disk_full(_chunk):
+            raise OSError("disk full")
+        with self.assertRaisesRegex(OSError, "disk full"):
+            vs.stream_edge_tts_chunks(Request(), disk_full, timeout_seconds=1)
+        events = []
+        vs.stream_edge_tts_chunks(Request(), events.append, timeout_seconds=None)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(closed, [True, True])
+        with self.assertRaises(AttributeError):
+            vs.stream_edge_tts_chunks(object(), events.append, timeout_seconds=1)
+
+    def test_edge_provider_failure_logs_safe_error_class_without_request_url(self):
+        import ssl
+        class FailedRequest:
+            async def stream(self):
+                raise ssl.SSLCertVerificationError("https://service/?token=private-value")
+                yield
+        with tempfile.TemporaryDirectory() as root, patch.object(
+            vs, "create_edge_tts_communicate", return_value=FailedRequest()
+        ), patch.object(vs.logger, "error") as log:
+            output = Path(root) / "failed.mp3"
+            self.assertIsNone(vs.azure_tts_v1("hello", "en-AU-NatashaNeural", 1, str(output)))
+            self.assertFalse(output.exists())
+        self.assertEqual(log.call_count, 3)
+        message = " ".join(str(call.args) for call in log.call_args_list)
+        self.assertIn("SSLCertVerificationError", message)
+        self.assertIn("trusted CA", message)
+        self.assertNotIn("private-value", message)
+        self.assertNotIn("https://", message)
+
+    def test_edge_timeout_rejects_non_finite_settings(self):
+        for value in (float("nan"), float("inf"), "invalid", None):
+            with self.subTest(value=value), patch.dict(vs.config.app, edge_tts_timeout=value):
+                self.assertEqual(vs.get_edge_tts_timeout_seconds(), 30)
+        with patch.dict(vs.config.app, edge_tts_timeout=0):
+            self.assertIsNone(vs.get_edge_tts_timeout_seconds())
+
     def test_azure_tts_v1_times_out_hanging_stream_sync(self):
         """
         验证 Azure TTS V1 在 edge_tts 同步流卡住时能够快速失败。
