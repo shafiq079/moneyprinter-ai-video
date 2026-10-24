@@ -513,6 +513,42 @@ def submit_scene_reorder(
     return True
 
 
+def _run_narration_ranges(task_id: str, previous: dict) -> dict:
+    error = None
+    try:
+        with config.runtime_config_lock():
+            tm.prepare_local_ai_narration_ranges(task_id, _queued=True)
+        return {"task_id": task_id, "prepared": True}
+    except Exception as exc:
+        detail = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+        error = f"narration previews failed: {detail}"
+        return {"task_id": task_id, "error": detail}
+    finally:
+        snapshot = sm.state.get_task(task_id) or {}
+        if snapshot.get("current_stage") == "narration_ranges_queued":
+            sm.state.update_task(task_id, **previous, narration_ranges_error=error)
+
+
+def submit_narration_ranges(task_id: str) -> None:
+    """Prepare offline previews without changing the video's success/failure state."""
+    with _resume_submission_lock:
+        tm.local_ai_narration_context(task_id)
+        prior = sm.state.get_task(task_id) or {}
+        if not prior:
+            finals = tm._existing_final_video_paths(tm._scene_regeneration_task_root(task_id))
+            prior = {"state": const.TASK_STATE_COMPLETE if finals else const.TASK_STATE_FAILED,
+                     "progress": 100 if finals else 0}
+        previous = {"state": prior.get("state"), "progress": prior.get("progress", 0),
+                    "current_stage": prior.get("current_stage")}
+        sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING,
+                             current_stage="narration_ranges_queued", narration_ranges_error=None)
+        try:
+            _task_manager.add_task(_run_narration_ranges, task_id=task_id, previous=previous)
+        except Exception:
+            sm.state.update_task(task_id, **previous, narration_ranges_error="narration previews could not be scheduled")
+            raise
+
+
 def _run_scene_timing(
     task_id: str, durations: dict[str, float], expected_snapshot: dict, capture_logs: bool,
 ) -> dict:

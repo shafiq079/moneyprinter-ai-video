@@ -354,6 +354,7 @@ class TaskArtifactPackageData(BaseModel):
     scene_plan: Optional[str] = None
     factual_review: Optional[str] = None
     generation_manifest: Optional[str] = None
+    narration_ranges: Optional[str] = None
     scene_materials: List[str] = Field(default_factory=list)
 
 

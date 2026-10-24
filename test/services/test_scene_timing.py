@@ -134,6 +134,8 @@ class TestSceneTiming(LocalAITestCase):
         self.assertEqual(self.state.get_task(self.task_id)['state'], const.TASK_STATE_COMPLETE)
 
     def test_cached_partial_resume_reorder_replacement_and_reset_keep_contract(self):
+        task.prepare_local_ai_narration_ranges(self.task_id)
+        narration_map = (self.root / 'narration_ranges.json').read_bytes()
         with patch.object(task, 'generate_final_videos', side_effect=self.stub_render):
             task.retime_local_ai_scenes(self.task_id, self.durations)
             task.reorder_local_ai_scenes(self.task_id, [3, 1, 2])
@@ -154,8 +156,11 @@ class TestSceneTiming(LocalAITestCase):
             task.retime_local_ai_scenes(self.task_id, {'1': 1, '2': 1, '3': 1})
         self.assertNotIn('playback_durations', self.manifest())
         self.assertEqual(gm.scene_playback_order(self.manifest()), [3, 1, 2])
+        self.assertEqual((self.root / 'narration_ranges.json').read_bytes(), narration_map)
 
     def test_task_resume_after_restart_uses_saved_timing_and_only_missing_scene(self):
+        task.prepare_local_ai_narration_ranges(self.task_id)
+        narration_map = (self.root / 'narration_ranges.json').read_bytes()
         with patch.object(task, 'generate_final_videos', side_effect=self.stub_render):
             task.retime_local_ai_scenes(self.task_id, self.durations)
         scene_three = gm.scene_record(self.manifest(), 3)['active_asset']
@@ -177,6 +182,7 @@ class TestSceneTiming(LocalAITestCase):
         self.assertTrue(result['videos'])
         self.assertEqual(provider.generated_scene_ids, [3])
         self.assertEqual(gm.scene_playback_durations(self.manifest()), self.durations)
+        self.assertEqual((self.root / 'narration_ranges.json').read_bytes(), narration_map)
 
     def test_fractional_cut_rounding_does_not_accumulate_duration_drift(self):
         values = video._quantize_scene_durations([1.01] * 10)

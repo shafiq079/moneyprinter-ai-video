@@ -225,7 +225,7 @@ def build_output_package(
             if relative and relative not in scene_materials:
                 scene_materials.append(relative)
 
-    return {
+    package = {
         "schema_version": OUTPUT_PACKAGE_SCHEMA_VERSION,
         "task_id": str(task_id),
         "final_videos": final_videos,
@@ -238,6 +238,11 @@ def build_output_package(
         "generation_manifest": generation_manifest,
         "scene_materials": scene_materials,
     }
+    narration = _task_relative_existing_file(task_id, root / "narration_ranges.json")
+    if narration:
+        package["narration_ranges"] = narration
+    return package
+
 
 
 def has_local_ai_output_package(task_id: str) -> bool:

@@ -168,3 +168,51 @@ frame rounding, restart and partial Resume, replacement/restore/reset,
 no inference on timing edits, malformed and stale requests, queue failures,
 insufficient footage, render rollback and the Streamlit controls. Independent
 narration/caption editing and changes to overall video length remain deferred.
+
+## Estimated narration ranges and offline previews
+
+**Prepare narration previews** explicitly creates `narration_ranges.json` and
+short task-local PCM WAV previews from existing narration. Each stable scene ID
+receives a saved start/end range. The initial ranges divide the measured decoded
+audio length by the original scene-duration weights, in ascending scene-ID
+order. They are labelled **estimated**, with `speech_aligned=false`; they do
+not prove where a sentence was spoken. No alignment model, TTS, transcription,
+video inference, final composition or publishing is called.
+
+The separate sidecar records the exact source audio hash, task-relative audio
+reference, script hash, scene IDs/text, initial estimation weights, measured
+sample duration and range/preview hashes. It is deliberately separate from
+visual playback order, screen durations, prompts, seeds and generated versions.
+Reopening and Resume preserve it; visual reorder, retiming, replacement and
+restore do not rewrite the ranges. The output package/API optionally indexes
+the sidecar as `narration_ranges`.
+
+Preview preparation runs in the existing serialized WebUI queue. It restores
+the prior completed or failed task status; preparing previews never makes a
+failed video task successful. Busy/publishing tasks are rejected. No Voice's
+silent timing track is excluded, while custom recorded audio takes precedence.
+Audio must be task-local. This first preview slice bounds work to 512 scenes
+and one hour of audio, with fixed 16 kHz mono PCM preview output and bounded
+FFmpeg calls. A temporary decoded track avoids MP3 encoder-padding errors and
+is removed before publication; source audio/captions/video remain unchanged.
+
+A valid saved map and previews are reused without rewriting. Explicit preparation
+after changed audio, script or scene narration creates a new estimated map.
+Damaged/missing previews are rebuilt using the same saved ranges when source
+bindings still match. Extraction or atomic-write failure preserves the prior
+sidecar and active preview set. Successful publication removes inactive owned
+preview sets, keeping storage bounded. All persisted references are task-relative.
+
+**Preview narration** validates source identity, range coverage, scene binding,
+preview checksum and decoded duration before serving an actual cut WAV. The UI
+keeps at most one preview cached and clears it when source/plan/script/sidecar
+files or the selected audio change. Saved range labels may remain visible until
+explicitly rebuilt, but changed sources cannot load old audio previews.
+
+Acceptance includes two-tone audio cut content/duration, MP3 padding, saved
+range persistence across visual edits and full restart/partial Resume, stale
+source rejection, damaged-preview recovery, extraction/publication rollback,
+No Voice/custom audio, path bounds, queued errors/status restoration, artifact
+serialization, and estimate-labelled Streamlit playback. This remains a
+read-only narration foundation: text/audio edits, verified speech alignment,
+caption rebuilding and downstream retiming are later milestones.

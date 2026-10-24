@@ -73,6 +73,34 @@ M3 exposed `wan22_local` through WebUI, CLI and API using the same provider/pref
 
 ## Current development boundary
 
+The fifth editor extension saves estimated narration ranges and offline audio
+previews. **Prepare narration previews** in Scene Editor creates a separate
+`narration_ranges.json`, binding stable scene IDs and narration text to exact
+source audio/script hashes. Ascending scene-ID order and the original target
+weights estimate ranges across the decoded audio duration. Initial weights are
+saved for traceability. The UI explicitly says estimated, not speech-aligned.
+**Preview narration** serves a validated cut WAV without new speech, video,
+caption generation or final composition. No Voice timing audio is excluded;
+custom recorded audio takes precedence. Inputs stay task-local.
+
+Visual order/timing/prompt/version changes and Resume preserve the sidecar.
+Source changes require explicit preparation before previews can load. Corrupt
+previews recover from the existing saved ranges. The background queue preserves
+the prior completed/failed task state; extraction or publication failure keeps
+the old map and previews. Temporary decoded audio avoids MP3 padding errors,
+and only the active preview set is retained. The optional output-package/API
+`narration_ranges` reference makes the sidecar discoverable. See
+`docs/SCENE_EDITING.md` for bounds and validation. Actual narration edits,
+verified speech alignment and audio/caption retiming remain deferred.
+
+Verification: **115 affected CPU tests** passed, covering API/artifact
+serialization, task management, timing, UI and translations. Final acceptance
+passed **10 tests** for preview content, source binding, visual-edit persistence
+and full Resume. All 8 narration tests passed again after adding interrupted
+preview cleanup. Ruff, compilation and whitespace checks passed. Full Python
+3.11/3.13 and Windows results must be checked at the published development head;
+no speech-alignment, real GPU or publishing acceptance is claimed.
+
 The fourth editor extension adds visual screen-duration controls. Changing one
 scene's duration balances the following scene in playback order; narration,
 caption timestamps and the total planned visual duration remain fixed. Additive

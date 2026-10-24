@@ -18,7 +18,7 @@ from app.models import const
 from app.models.schema import VideoConcatMode, VideoParams
 from app.services import bgm as bgm_service
 from app.services import factual_content
-from app.services import generation_manifest, local_ai, scene_planner
+from app.services import generation_manifest, local_ai, narration_ranges, scene_planner
 from app.services import (
     elevenlabs_music,
     llm,
@@ -2151,6 +2151,24 @@ def reorder_local_ai_scenes(
         "combined_videos": combined, "materials": materials,
         "warnings": warnings, "reordered": True,
     }
+
+
+def local_ai_narration_context(task_id: str, *, _queued: bool = False):
+    params, plan, audio, _captions, _duration, prior = _load_scene_regeneration_context(task_id)
+    _assert_scene_edit_available(prior, queued=_queued, stage="narration_ranges")
+    if voice.is_no_voice(params.voice_name) and not params.custom_audio_file:
+        raise ValueError("No Voice has a silent timing track, not recorded narration")
+    return plan, audio
+
+
+def prepare_local_ai_narration_ranges(task_id: str, *, _queued: bool = False) -> dict:
+    plan, audio = local_ai_narration_context(task_id, _queued=_queued)
+    return narration_ranges.prepare(task_id, plan, audio)
+
+
+def local_ai_narration_preview(task_id: str, scene_id: int) -> dict:
+    plan, audio = local_ai_narration_context(task_id)
+    return narration_ranges.preview_payload(task_id, plan, audio, scene_id)
 
 
 def validate_local_ai_scene_timing(

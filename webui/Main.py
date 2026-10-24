@@ -1286,6 +1286,23 @@ def _render_scene_editor() -> None:
     except ValueError as exc:
         st.warning(str(exc))
         return
+    narration_map = None
+    try:
+        narration_map = tm.narration_ranges.read_ranges(task_id)
+    except (ValueError, OSError):
+        st.warning(tr("Narration Ranges Unavailable"))
+    st.caption(tr("Narration Ranges Help"))
+    if task_state.get("narration_ranges_error"):
+        st.warning(str(task_state["narration_ranges_error"]))
+    if st.button(tr("Prepare Narration Previews"), key=f"prepare_narration_{task_id}", disabled=is_busy):
+        try:
+            webui_task.submit_narration_ranges(task_id)
+        except Exception as exc:
+            st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
+        else:
+            st.toast(tr("Narration Previews Queued"))
+            st.rerun(scope="fragment")
+
     st.caption(tr("Scene Reorder Help"))
     st.caption(tr("Scene Timing Help"))
     if task_state.get("scene_timing_error"):
@@ -1375,6 +1392,25 @@ def _render_scene_editor() -> None:
 
             if scene.narration_segment:
                 st.caption(scene.narration_segment)
+            narration_range = next((item for item in (narration_map or {}).get("ranges", []) if item["scene_id"] == scene_id), None)
+            if narration_range is not None:
+                st.caption(tr("Estimated Narration Range").format(start=narration_range["start"], end=narration_range["end"]))
+                preview_key = f"narration_preview_{task_id}_{scene_id}"
+                if st.button(tr("Preview Narration"), key=f"play_narration_{task_id}_{scene_id}", disabled=is_busy):
+                    try:
+                        for cached_key in list(st.session_state):
+                            if str(cached_key).startswith("narration_preview_"):
+                                st.session_state.pop(cached_key, None)
+                        st.session_state[preview_key] = tm.local_ai_narration_preview(task_id, scene_id)
+                    except Exception as exc:
+                        st.session_state.pop(preview_key, None)
+                        st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
+                preview = st.session_state.get(preview_key)
+                if preview and not is_busy and tm.narration_ranges.preview_is_current(task_id, preview, audio_file=task_state.get("audio_file")):
+                    st.audio(preview["audio"], format="audio/wav")
+                else:
+                    st.session_state.pop(preview_key, None)
+
 
             selected_version = active_asset
             selected_version_metadata = None
