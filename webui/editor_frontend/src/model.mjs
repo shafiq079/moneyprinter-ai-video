@@ -18,3 +18,11 @@ export function frameTime(time, duration, fps = 30) {
   const last = Math.max(0, Math.ceil(duration * fps) - 1) / fps;
   return clampTime(Math.round(clampTime(time, duration) * fps) / fps, last);
 }
+
+export function rememberedTime(storage, key, duration) {
+  try {
+    const value = storage.getItem(`mpt-playhead:${key}`);
+    if (value === null || value.trim() === '' || !Number.isFinite(Number(value))) return null;
+    return clampTime(Number(value), duration);
+  } catch {return null;}
+}

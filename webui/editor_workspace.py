@@ -8,7 +8,7 @@ import streamlit as st
 from app.models.schema import VideoFitMode, VideoTransitionMode
 from app.services import caption_edits as ce, generation_manifest as gm, task as tm, webui_task
 from app.services import editor_workspace as project
-from app.services import audio_layer_tasks
+from app.services import audio_layer_tasks, editor_preview
 
 ASSETS = Path(__file__).parent / 'editor_frontend' / 'dist'
 
@@ -113,6 +113,43 @@ def _export_panel(view, tr):
                                    key=f'editor_download_{task_id}_{final.name}', on_click='ignore')
 
 
+def _restore_location(view):
+    task_id = view['task_id']
+    marker = f'editor_location_loaded_{task_id}'
+    if st.session_state.get(marker):
+        return
+    st.session_state[marker] = True
+    panel = st.query_params.get('editor_panel')
+    if panel in {'visual', 'narration', 'captions', 'audio', 'export'}:
+        _set_panel(panel)
+    try:
+        scene = int(st.query_params.get('editor_scene', ''))
+    except (TypeError, ValueError):
+        scene = None
+    if scene in view['order']:
+        st.session_state[f'editor_scene_{task_id}'] = scene
+    source = st.query_params.get('editor_source')
+    if source in {'program', 'clip', 'audio', 'captions'}:
+        st.session_state[f'editor_source_{task_id}'] = source
+        st.session_state[f'editor_explicit_source_{task_id}'] = True
+    selected = st.query_params.get('editor_item')
+    action = next((a for row in view['rows'] for a in row['actions'] if a['id'] == selected), None)
+    if action:
+        st.session_state[f'editor_selected_{task_id}'] = selected
+        if 'index' in action:
+            st.session_state[f'editor_caption_index_{task_id}'] = action['index']
+        if 'clip_id' in action:
+            st.session_state[f'audio_selected_{task_id}'] = action['clip_id']
+
+
+def _save_location(task_id, panel, scene, source):
+    values = {'editor_panel': panel, 'editor_scene': str(scene), 'editor_source': source,
+              'editor_item': st.session_state.get(f'editor_selected_{task_id}', f'scene-{scene}')}
+    for key, value in values.items():
+        if st.query_params.get(key) != value:
+            st.query_params[key] = value
+
+
 def _set_panel(panel):
     # Widget keys may be cleaned up by Streamlit when a queued-job rerun exits
     # before the inspector renders. Keep the selected panel in durable state.
@@ -157,6 +194,7 @@ def _render_content(task_id, tr, scene_inspector, caption_inspector):
         return
     if bool(st.session_state.get(f'editor_polling_{task_id}')) != view['busy']:
         st.rerun()
+    _restore_location(view)
     pending = st.session_state.pop(f'editor_pending_{task_id}', None)
     if pending:
         try:
@@ -205,7 +243,11 @@ def _render_content(task_id, tr, scene_inspector, caption_inspector):
         st.session_state[f'editor_seek_{task_id}'] = scene['start']
     st.caption(f"{view['subject']}  ·  {len(view['scenes'])} {tr('Scenes')}  ·  {view['duration']:.2f}s  ·  {task_id}")
     if view['busy']:
-        st.caption(tr('Editor Processing'))
+        action = view['state'].get('audio_layers_action')
+        labels = {'preview': tr('Audio Rendering Preview'), 'apply': tr('Audio Applying Arrangement'),
+                  'restore': tr('Audio Restoring Arrangement')}
+        message = labels.get(action, tr('Audio Saving Draft')) if view['state'].get('current_stage') == 'audio_layers_queued' else tr('Editor Processing')
+        st.caption(message)
     for error_key in ('audio_layers_error', 'caption_edit_error', 'scene_order_error', 'scene_timing_error', 'scene_regeneration_error', 'render_only_rerender_error'):
         if view['state'].get(error_key):
             st.error(str(view['state'][error_key]))
@@ -252,12 +294,14 @@ def _render_content(task_id, tr, scene_inspector, caption_inspector):
         if preview:
             sources['captions'] = tr('Editor Caption Preview')
             if st.session_state.get(f'editor_preview_seen_{task_id}') != preview['preview_sha256']:
-                st.session_state[f'editor_source_{task_id}'] = 'captions'
+                if not st.session_state.get(f'editor_explicit_source_{task_id}'):
+                    st.session_state[f'editor_source_{task_id}'] = 'captions'
                 st.session_state[f'editor_preview_seen_{task_id}'] = preview['preview_sha256']
         if audio_preview:
             sources['audio'] = tr('Audio Arrangement Preview')
             if st.session_state.get(f'editor_audio_preview_seen_{task_id}') != audio_preview['sha256']:
-                st.session_state[f'editor_source_{task_id}'] = 'audio'
+                if not st.session_state.get(f'editor_explicit_source_{task_id}'):
+                    st.session_state[f'editor_source_{task_id}'] = 'audio'
                 st.session_state[f'editor_audio_preview_seen_{task_id}'] = audio_preview['sha256']
         key = f'editor_source_{task_id}'
         if st.session_state.get(key) not in sources:
@@ -273,12 +317,13 @@ def _render_content(task_id, tr, scene_inspector, caption_inspector):
             elif source_kind == 'clip' and scene['asset']:
                 path = gm.resolve_asset(task_id, scene['asset'])
             else:
-                path = gm.resolve_asset(task_id, 'final-1.mp4')
-            if path.is_file():
+                path = editor_preview.program(task_id, view['busy'])
+            if path is not None and path.is_file():
                 start = st.session_state.get(f'editor_seek_{task_id}', 0) if source_kind != 'clip' else 0
                 st.video(str(path), start_time=max(0.0, float(start)))
             else:
-                st.info(tr('Editor Preview Missing'))
+                with st.container(height=355, border=False):
+                    st.info(tr('Editor Preview Missing'))
         st.caption(tr('Editor Source Status').format(version=scene['version'], scene=sid))
     with right, st.container(key='editor_inspector', height=435):
         panels = {'visual': tr('Editor Clips'), 'narration': tr('Editor Narration'),
@@ -304,8 +349,10 @@ def _render_content(task_id, tr, scene_inspector, caption_inspector):
             render_audio_layers(view, tr)
         else:
             _export_panel(view, tr)
+    _save_location(task_id, panel, sid, source_kind)
+    st.session_state.pop(f'editor_explicit_source_{task_id}', None)
     payload = {k: view[k] for k in ('task_id', 'rows', 'duration', 'extent', 'revision', 'busy')}
-    payload.update(captionIndex=st.session_state.get(f'editor_caption_index_{task_id}', 0), fps=30, seekTime=st.session_state.get(f'editor_seek_{task_id}', 0),
+    payload.update(playbackKey=f'{task_id}:{source_kind}:{sid if source_kind == "clip" else "program"}', captionIndex=st.session_state.get(f'editor_caption_index_{task_id}', 0), fps=30, seekTime=st.session_state.get(f'editor_seek_{task_id}', 0),
                    seekToken=f"{source_kind}:{st.session_state.get(f'editor_selected_{task_id}', '')}:{st.session_state.get(f'editor_seek_{task_id}', 0)}", selected=st.session_state.get(f'editor_selected_{task_id}', f'scene-{sid}'),
                    labels=_labels(tr), captionDraft=view['caption_draft'], playbackOffset=scene['start'] if source_kind == 'clip' else 0)
     event = timeline_component()(key=f'editor_timeline_{task_id}', data=payload, on_event_change=lambda: None).event

@@ -98,6 +98,50 @@ class TestEditorWorkspace(LocalAITestCase):
         self.assertNotIn('error', result)
         self.assertEqual(self.state.get_task(self.task_id)['state'], task.const.TASK_STATE_COMPLETE)
 
+    def test_reload_keeps_last_completed_preview_and_location_without_submitting(self):
+        from app.services import editor_preview
+        from webui.editor_workspace import timeline_component
+        original = editor.build_view(self.task_id)
+        final = self.root / 'final-1.mp4'
+        final.write_bytes((self.root / original['scenes'][0]['asset']).read_bytes())
+        task._backup_render_paths(str(self.root), suffix='audio-layers-backup')
+        snapshot = editor_preview.program(self.task_id, busy=True)
+        self.assertEqual(snapshot.name, editor_preview.SNAPSHOT)
+        completed = snapshot.read_bytes()
+        final.write_bytes(b'partial encode')
+        self.assertEqual(editor_preview.program(self.task_id, busy=True).read_bytes(), completed)
+        final.unlink()
+        self.assertEqual(editor_preview.program(self.task_id, busy=False).read_bytes(), completed)
+        snapshot.unlink()
+        self.assertTrue(editor_preview.program(self.task_id, busy=True).name.endswith('audio-layers-backup'))
+        combined = self.root / 'combined-1.mp4'
+        combined.write_bytes(completed)
+        sources = task.generation_manifest.active_scene_paths(self.task_id)
+        key = editor_preview.combined_key(self.task_id, self.params, sources, self.audio)
+        editor_preview.record_combined(combined, key)
+        self.assertTrue(editor_preview.reusable_combined(self.task_id, combined, key, sources, self.audio))
+        self.assertEqual(key, editor_preview.combined_key(self.task_id, self.params.model_copy(update={'font_size': 99}), sources, self.audio))
+        changed = editor_preview.combined_key(self.task_id, self.params.model_copy(update={'video_fit_mode': 'contain'}), sources, self.audio)
+        self.assertFalse(editor_preview.reusable_combined(self.task_id, combined, changed, sources, self.audio))
+        combined.write_bytes(b'partial render')
+        self.assertFalse(editor_preview.reusable_combined(self.task_id, combined, key, sources, self.audio))
+        self.state.update_task(self.task_id, state=task.const.TASK_STATE_PROCESSING, current_stage='audio_layers_queued')
+        timeline_component.clear()
+        with (patch.object(config, 'try_save_config', return_value=True),
+              patch.object(webui_task, 'submit_audio_layers', side_effect=AssertionError('reload queued an edit'))):
+            app = AppTest.from_file(str(Path(__file__).parents[2] / 'webui/Main.py'), default_timeout=60)
+            app.session_state['ui_language'] = 'en'
+            app.query_params.update({'editor': self.task_id, 'editor_scene': '2', 'editor_panel': 'audio',
+                                     'editor_source': 'program', 'editor_item': 'scene-2'})
+            app.run()
+            self.assertFalse(app.exception)
+            self.assertEqual(app.session_state['editor_scene_workspace'], 2)
+            self.assertEqual(app.session_state['editor_panel'], 'audio')
+            self.assertEqual(app.session_state['editor_source_workspace'], 'program')
+            self.assertFalse(any('No exported preview' in str(item.value) for item in app.info))
+            app.button(key='editor_refresh').click().run()
+            self.assertFalse(app.exception)
+
     def test_dedicated_page_routes_selection_and_back_to_tasks(self):
         self.prepare_captions()
         with (patch.object(config, 'app', dict(config.app, llm_provider='openai')),

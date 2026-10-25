@@ -108,3 +108,17 @@ artifacts, reopening and partial same-task Resume without new narration or
 captions. Browser checks use synthetic audio/video and exercise upload, editing,
 timeline dragging, overlapping lanes, preview, reopen and singleton controls.
 No real GPU, live TTS, paid music or publishing acceptance is claimed.
+
+## Audio-only rendering and diagnostics
+
+Preview/apply/restore reuse the saved combined visuals when their composition
+record, source/settings signature and video bytes match and media validation
+passes. Legacy files are reusable only if the saved inputs predate them. Missing,
+corrupt or stale combinations rebuild through the existing composer. Normal
+visual edits still recompose. Audio/caption mixing and final MP4 encoding remain
+CPU render work; this does not create new AI clips, speech or paid music.
+
+Audio-job start/finish logs include the action (`preview`, `apply`, `restore`,
+etc.). The UI names that action rather than showing every job as a generic edit.
+Reload reconnects to the current job and keeps the last completed video visible.
+It never starts a new job. See the editor guide for selection/playhead retention.

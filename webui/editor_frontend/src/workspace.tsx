@@ -1,7 +1,7 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {Timeline} from '@xzdarcy/react-timeline-editor';
-import {clampTime, changeEvent, timecode, frameTime} from './model.mjs';
+import {clampTime, changeEvent, timecode, frameTime, rememberedTime} from './model.mjs';
 import '@xzdarcy/react-timeline-editor/dist/react-timeline-editor.css';
 import './workspace.css';
 
@@ -19,6 +19,10 @@ function Workspace({component}: {component: any}) {
   const latest = useRef(data); latest.current = data;
   const seeking = useRef(false);
   const textSelection = useRef<any>(null);
+  const restoredKey = useRef('');
+  const previousBusy = useRef(data.busy);
+  const pendingSeek = useRef<number | null>(null);
+  const lastStored = useRef(0);
   useEffect(() => setRows(data.rows), [data]);
   // The native Streamlit player owns authenticated task-media serving. The
   // documented v2 DOM bridge connects only to our explicitly keyed container.
@@ -29,15 +33,31 @@ function Workspace({component}: {component: any}) {
       if (next === video.current) return;
       remove(); video.current = next; setConnected(!!next);
       if (!next) return;
-      const update = () => {const t = next.currentTime + latest.current.playbackOffset; if (seeking.current) return; setTime(t); setPlaying(!next.paused); timeline.current?.setTime(t);};
+      const update = () => {
+        if (restoredKey.current !== latest.current.playbackKey || seeking.current || pendingSeek.current !== null || next.readyState < 1) return;
+        const t = next.currentTime + latest.current.playbackOffset;
+        setTime(t); setPlaying(!next.paused); timeline.current?.setTime(t);
+        const resetToStart = next.paused && t === 0 && (rememberedTime(sessionStorage, latest.current.playbackKey, latest.current.duration) || 0) > 0;
+        if (!resetToStart && (next.paused || Date.now() - lastStored.current > 250)) {
+          try {sessionStorage.setItem(`mpt-playhead:${latest.current.playbackKey}`, String(t));} catch {}
+          lastStored.current = Date.now();
+        }
+      };
+      const restore = () => {
+        if (pendingSeek.current !== null && next.readyState >= 1) {
+          next.currentTime = clampTime(pendingSeek.current - latest.current.playbackOffset, next.duration);
+          pendingSeek.current = null;
+        }
+        update();
+      };
       const animate = () => {update(); if (!next.paused) clock.current = requestAnimationFrame(animate);};
       const play = () => {cancelAnimationFrame(clock.current); animate();};
       ['timeupdate', 'seeked', 'pause', 'ended', 'loadedmetadata'].forEach(e => next.addEventListener(e, update));
-      next.addEventListener('play', play); update();
+      next.addEventListener('play', play); next.addEventListener('loadedmetadata', restore); restore();
       remove = () => {
         cancelAnimationFrame(clock.current);
         ['timeupdate', 'seeked', 'pause', 'ended', 'loadedmetadata'].forEach(e => next.removeEventListener(e, update));
-        next.removeEventListener('play', play);
+        next.removeEventListener('play', play); next.removeEventListener('loadedmetadata', restore);
       };
     }
     connect();
@@ -47,14 +67,23 @@ function Workspace({component}: {component: any}) {
   }, []);
   function seek(value: number) {
     const target = frameTime(value, data.duration, data.fps);
-    if (video.current) {
+    try {sessionStorage.setItem(`mpt-playhead:${data.playbackKey}`, String(target));} catch {}
+    pendingSeek.current = target;
+    if (video.current && video.current.readyState >= 1) {
       const player = video.current;
       player.pause();
       player.currentTime = clampTime(target - data.playbackOffset, player.duration || data.duration);
+      pendingSeek.current = null;
     }
     setTime(target); timeline.current?.setTime(target);
   }
-  useEffect(() => { if (data.seekToken) seek(data.seekTime || 0); }, [data.seekToken]);
+  useEffect(() => {
+    const first = restoredKey.current !== data.playbackKey || previousBusy.current !== data.busy;
+    previousBusy.current = data.busy;
+    const saved = first ? rememberedTime(sessionStorage, data.playbackKey, data.duration) : null;
+    restoredKey.current = data.playbackKey;
+    seek(saved ?? data.seekTime ?? 0);
+  }, [data.seekToken, data.busy]);
   const step = (direction: number) => {
     const current = video.current ? video.current.currentTime + data.playbackOffset : time;
     seek((Math.round(current * data.fps) + direction) / data.fps);

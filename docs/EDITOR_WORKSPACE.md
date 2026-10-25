@@ -143,3 +143,14 @@ moves a clip; edge dragging trims its source. Overlapping placements get separat
 lanes. Save the draft, then Preview Audio Arrangement or Apply Audio And Export.
 See [the audio guide](AUDIO_EDITING.md) for legacy BGM import, original restore,
 retiming behavior, limits and persistence/rollback contracts.
+
+## Reload behavior
+
+Browser reload retains the task, selected scene, inspector, source and selected
+item in the editor URL. The playhead is retained in browser session storage for
+each task/source (and individual raw clip), clamped to valid output frames.
+Reload/Refresh never queue an edit. During a render, the program player keeps an
+atomic last-completed snapshot; the new output is used when the job finishes.
+Recognized backup files also support older interrupted render transactions. A
+brand-new task with no completed video keeps the player area at its normal size.
+The snapshot is a playback cache, not a replacement for the task's final output.

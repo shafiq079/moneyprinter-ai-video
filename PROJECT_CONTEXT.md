@@ -73,6 +73,41 @@ M3 exposed `wan22_local` through WebUI, CLI and API using the same provider/pref
 
 ## Current development boundary
 
+## Editor reload consistency and audio-only render reuse
+
+The owner observed an empty/collapsed program preview after browser reload
+while an audio job was running. Render transactions temporarily removed the
+exported MP4, and reload lost editor-only selection/playhead state. Shared render
+backups now atomically preserve a decodable last-completed editor preview before
+outputs are replaced. The program player uses that stable video while busy,
+with compatible recognized-backup fallback for older interrupted transactions.
+Missing first-time output retains the player height instead of collapsing.
+
+Editor URLs retain scene, inspector, preview source and validated selected item.
+Per-task/source/clip browser session storage retains the paused playhead, bounded
+to the current duration; restore waits for player metadata. Job completion also
+retains the chosen frame. Reload/Refresh are read-only and never submit edits.
+
+The supplied logs showed an existing `_run_audio_layers` job rebuilding seven
+saved scenes, not new AI inference. Audio preview/apply/restore now retain and
+reuse valid combined visuals. Composition records bind video bytes to visual
+settings, scene timing/order, source hashes and narration inputs; stale/corrupt
+combinations rebuild. Legacy reuse requires inputs older than the completed
+combined file plus media validation. Other render paths keep their existing
+recomposition semantics. Logs now identify each audio action and success; the
+UI distinguishes saving a draft, preview, applying/exporting and restoring.
+
+CPU checks verify reload state without queue submission, stable preview during
+missing/partial output, composition reuse/staleness and actual audio exports.
+Chromium verified the paused frame, scene, panel, source and one timeline through
+busy reload, job completion and completed reload, without page errors. No live
+GPU, TTS, paid music or publishing requests were used.
+
+Verification: **134 regression tests** passed, followed by **40 focused
+workspace/audio/narration tests**, **46 queue/translation tests**, and **6 frontend
+tests**. Chromium exercised busy reload, completion and completed reload at a
+paused frame. Ruff, compileall and whitespace checks passed.
+
 ## Completed milestone: independent music and SFX editing
 
 The owner approved the complete independent-audio milestone. The dedicated

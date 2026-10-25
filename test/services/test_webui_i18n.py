@@ -66,6 +66,10 @@ ENGLISH_FALLBACK_KEYS = frozenset(
         'Save Background Music Choice',
         'Upload Music Or SFX',
         'Edit Saved Background Music',
+        'Audio Rendering Preview',
+        'Audio Applying Arrangement',
+        'Audio Restoring Arrangement',
+        'Audio Saving Draft',
         # New factual-mode labels follow tr()'s English fallback contract;
         # only en/zh maintain the long operator explanation for this slice.
         'Add Caption Cue',

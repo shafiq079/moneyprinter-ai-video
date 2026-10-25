@@ -515,6 +515,7 @@ def submit_scene_reorder(
 
 def _run_audio_layers(task_id, request, previous):
     from app.services import audio_layer_tasks
+    logger.info(f"Audio editor job started: task_id={task_id}, action={request.get('action')}")
     error = None
     try:
         with config.runtime_config_lock():
@@ -526,7 +527,8 @@ def _run_audio_layers(task_id, request, previous):
         current = sm.state.get_task(task_id) or {}
         if current.get('current_stage') == 'audio_layers_queued':
             sm.state.update_task(task_id, **previous)
-        sm.state.patch_task(task_id, audio_layers_error=error)
+        sm.state.patch_task(task_id, audio_layers_error=error, audio_layers_action=None)
+        logger.info(f"Audio editor job finished: task_id={task_id}, action={request.get('action')}, success={error is None}")
 
 
 def submit_audio_layers(task_id, *, request):
@@ -548,11 +550,11 @@ def submit_audio_layers(task_id, *, request):
         previous = {key: prior.get(key, default) for key, default in
                     (('state', const.TASK_STATE_FAILED), ('progress', 0), ('current_stage', None))}
         sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING,
-                             current_stage='audio_layers_queued', audio_layers_error=None)
+                             current_stage='audio_layers_queued', audio_layers_error=None, audio_layers_action=request.get('action'))
         try:
             _task_manager.add_task(_run_audio_layers, task_id=task_id, request=request, previous=previous)
         except Exception:
-            sm.state.update_task(task_id, **previous, audio_layers_error='audio edit could not be scheduled')
+            sm.state.update_task(task_id, **previous, audio_layers_error='audio edit could not be scheduled', audio_layers_action=None)
             raise
 
 

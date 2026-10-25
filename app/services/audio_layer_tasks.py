@@ -131,9 +131,11 @@ def run(task_id, *, action, expected_revision, expected_binding, expected_snapsh
             active.unlink(missing_ok=True)
         else:
             layers.save(task_id, layers.ACTIVE, data)
-        task._clear_render_paths(root)
+        # Keep completed visuals available; this command does not change visual inputs.
+        for final in Path(root).glob('final-*.mp4'):
+            final.unlink()
         finals, combined, warnings = task.generate_final_videos(task_id, value['params'], gm.active_scene_paths(task_id),
-            value['audio'], value['captions'], value['duration'], reuse_existing_generated_bgm=True)
+            value['audio'], value['captions'], value['duration'], reuse_existing_generated_bgm=True, reuse_combined=True)
         check()
         if (gm.scene_timing_snapshot(gm.load_manifest(task_id)) != snapshot
                 or signature(task_id, context(task_id, read_only=True), snapshot) != expected_signature):

@@ -120,7 +120,8 @@ class TestAudioLayers(LocalAITestCase):
         manifest = gm.manifest_path(self.task_id).read_bytes()
         original = {p.name: p.read_bytes() for p in self.root.glob('*-1.mp4')}
         with patch.object(local_ai, 'prepare_provider', side_effect=AssertionError('GPU')):
-            preview = self.run_edit('preview')
+            with patch.object(task.video, 'combine_videos', side_effect=AssertionError('audio edit recombined visuals')):
+                preview = self.run_edit('preview')
             self.assertTrue(al.file(self.task_id, preview['asset']).is_file())
             self.assertFalse(al.file(self.task_id, al.ACTIVE).exists())
             for name, content in original.items():

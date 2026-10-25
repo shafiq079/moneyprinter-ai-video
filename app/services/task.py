@@ -1179,6 +1179,7 @@ def generate_final_videos(
     *,
     reuse_existing_generated_bgm: bool = False,
     generate_missing_bgm: bool = False,
+    reuse_combined: bool = False,
 ):
     final_video_paths = []
     combined_video_paths = []
@@ -1288,6 +1289,13 @@ def generate_final_videos(
         video_concat_mode = VideoConcatMode.random
     video_transition_mode = params.video_transition_mode
 
+    from app.services import editor_preview
+    composition_key = None
+    if local_ai.is_local_ai_source(params.video_source):
+        try:
+            composition_key = editor_preview.combined_key(task_id, params, downloaded_videos, audio_file)
+        except (OSError, ValueError, KeyError, TypeError):
+            pass  # Optional cache metadata must not replace ordinary render validation.
     _progress = 50
     for i in range(params.video_count):
         index = i + 1
@@ -1304,20 +1312,33 @@ def generate_final_videos(
             }
             if allocate_batch_materials else {}
         )
-        video.combine_videos(
-            combined_video_path=combined_video_path,
-            video_paths=downloaded_videos,
-            audio_file=audio_file,
-            video_aspect=params.video_aspect,
-            video_fit_mode=params.video_fit_mode,
-            video_concat_mode=video_concat_mode,
-            video_transition_mode=video_transition_mode,
-            max_clip_duration=params.video_clip_duration,
-            threads=params.n_threads,
-            clip_speed=params.video_clip_speed,
-            **batch_options,
-            **timing_options,
-        )
+        cached_combined = False
+        if reuse_combined and composition_key and editor_preview.reusable_combined(task_id, combined_video_path, composition_key, downloaded_videos, audio_file):
+            try:
+                with video._open_video_clip_quietly(combined_video_path) as cached:
+                    cached_combined = (tuple(cached.size) == tuple(video.VideoAspect(params.video_aspect).to_resolution())
+                                       and cached.duration >= local_ai_final_duration - 1 / video.fps)
+            except (OSError, ValueError):
+                cached_combined = False
+        if cached_combined:
+            logger.info(f'Audio-only render reuses saved combined video: task_id={task_id}, video_index={index}')
+        else:
+            video.combine_videos(
+                combined_video_path=combined_video_path,
+                video_paths=downloaded_videos,
+                audio_file=audio_file,
+                video_aspect=params.video_aspect,
+                video_fit_mode=params.video_fit_mode,
+                video_concat_mode=video_concat_mode,
+                video_transition_mode=video_transition_mode,
+                max_clip_duration=params.video_clip_duration,
+                threads=params.n_threads,
+                clip_speed=params.video_clip_speed,
+                **batch_options,
+                **timing_options,
+            )
+        if composition_key and path.isfile(combined_video_path):
+            editor_preview.record_combined(combined_video_path, composition_key)
         if allocate_batch_materials:
             selected_sources = list(dict.fromkeys(used_video_paths))
             reused_sources = [file for file in selected_sources if source_usage.get(file, 0)]
@@ -1669,6 +1690,8 @@ def _backup_render_paths(
     *,
     suffix: str,
 ) -> list[tuple[str, str]]:
+    from app.services.editor_preview import preserve
+    preserve(task_root)
     backups: list[tuple[str, str]] = []
     for source in _existing_render_paths(task_root):
         backup = f"{source}.{suffix}"

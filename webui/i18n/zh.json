@@ -829,6 +829,10 @@
     "Save Audio Clip": "保存音频片段",
     "Save Background Music Choice": "保存背景音乐选择",
     "Upload Music Or SFX": "上传音乐或音效",
-    "Edit Saved Background Music": "编辑已保存的背景音乐"
+    "Edit Saved Background Music": "编辑已保存的背景音乐",
+    "Audio Rendering Preview": "正在渲染音频预览，已导出的视频仍可播放。",
+    "Audio Applying Arrangement": "正在应用音频编排并导出…",
+    "Audio Restoring Arrangement": "正在恢复原音频编排…",
+    "Audio Saving Draft": "正在保存音频草稿…"
   }
 }

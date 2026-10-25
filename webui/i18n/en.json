@@ -829,6 +829,10 @@
     "Save Audio Clip": "Save Audio Clip",
     "Save Background Music Choice": "Save Background Music Choice",
     "Upload Music Or SFX": "Upload Music Or SFX",
-    "Edit Saved Background Music": "Edit saved background music"
+    "Edit Saved Background Music": "Edit saved background music",
+    "Audio Rendering Preview": "Rendering audio preview… Your exported video stays available.",
+    "Audio Applying Arrangement": "Applying the audio arrangement and exporting…",
+    "Audio Restoring Arrangement": "Restoring the original audio arrangement…",
+    "Audio Saving Draft": "Saving audio draft…"
   }
 }
