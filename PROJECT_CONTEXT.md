@@ -73,6 +73,50 @@ M3 exposed `wan22_local` through WebUI, CLI and API using the same provider/pref
 
 ## Current development boundary
 
+### Completed creative narration/caption milestone (fixed timeline)
+
+The owner explicitly requested finishing the milestone end to end rather than
+shipping another partial slice. Scene Editor now supports replacement text,
+explicit scene TTS through the existing saved-voice dispatch, transcript-labelled
+recording uploads, optional pitch-preserving 0.5x–2x tempo fitting, previews,
+reviewed-range caption rebuilding, captioned apply/export, original restore,
+artifact downloads and persistence across visual edits/rerender/Resume.
+Total video/audio duration stays fixed. No video inference is needed.
+
+New replacement metadata optionally records text, origin and tempo ratio.
+Captioned mixes use sidecar schema version 2 with separate hashed audio, SRT
+and edited script. Version 1 caption-free mixes remain compatible. Caption
+rebuilding requires every original range reviewed and every replacement given
+a transcript, plus explicit operator confirmation. Captions are scene-range
+cues using supplied text, not automatic transcription/word alignment. Original
+root audio/script/captions and scene assets remain unchanged. Edited script/SRT
+are exposed separately through output-package/API fields and Artifact downloads.
+
+TTS writes into an automatically cleaned temporary task directory. Queue and
+publication recheck source/range revisions; failed TTS/fitting/caption work or
+render restores prior drafts/outputs. Every future local-AI render validates
+active audio/script/caption hashes. Restore recovers original narration and
+caption settings. The existing documented multi-file process-kill limitation
+remains. See `docs/SCENE_EDITING.md` for the complete workflow/data contract.
+
+Verification: final focused acceptance passed **77 tests and 10246 subtests**,
+including a real captioned MP4, tempo/pitch checks, real original restore,
+Artifact downloads, failure rollback and TTS/transcript UI/queue actions.
+The full CPU sweep passed **1575 tests**, with **19 skipped**. Its only failures
+were 120 translation subtests after final download labels were added during
+that run (the test module had cached the older fallback-key set). A fresh
+translation run against the finished files passed **16 tests and 10225
+subtests**; no other test failures occurred. Do not describe the initial full
+sweep as entirely green; check GitHub CI on the published frozen commit.
+Ruff, compilation and whitespace checks passed. No live TTS or GPU acceptance
+is claimed from the offline test response.
+
+Creative AI tasks are the supported editing scope. Factual audio edits, stock
+scene editing, variable-duration retiming, independent caption timelines and
+automatic speech alignment are separate work. Scene TTS uses the configured
+speech provider only on an explicit Generate action; automated tests use an
+offline response. Manual/GPU acceptance remains deferred as the owner requested.
+
 The eighth editor extension applies saved replacement narration to creative
 AI-video exports. Apply explicitly requires caption omission because matching
 audio duration does not establish matching word timings. Restore rerenders

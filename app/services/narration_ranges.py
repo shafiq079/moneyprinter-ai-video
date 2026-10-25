@@ -74,10 +74,18 @@ def read_ranges(task_id: str) -> dict | None:
         if "replacement" in item:
             draft = item["replacement"]
             if (not isinstance(draft, dict)
-                    or set(draft) != {"preview_asset", "preview_sha256"}
+                    or not {"preview_asset", "preview_sha256"} <= set(draft)
+                    or set(draft) - {"preview_asset", "preview_sha256", "text", "origin", "fit_ratio"}
                     or not isinstance(draft["preview_asset"], str)
                     or not isinstance(draft["preview_sha256"], str)):
                 raise ValueError("invalid narration replacement metadata")
+            if "text" in draft and normalize_text(draft["text"]) != draft["text"]:
+                raise ValueError("invalid replacement transcript")
+            if "origin" in draft and draft["origin"] not in ("upload", "tts"):
+                raise ValueError("invalid replacement origin")
+            ratio = draft.get("fit_ratio", 1.0)
+            if isinstance(ratio, bool) or not isinstance(ratio, (int, float)) or not math.isfinite(ratio) or not 0.5 <= ratio <= 2:
+                raise ValueError("invalid replacement tempo")
             parts = Path(draft["preview_asset"]).parts
             if (len(parts) != 3 or parts[0] != "narration_replacements"
                     or len(parts[1]) != 32
@@ -122,6 +130,42 @@ def read_ranges(task_id: str) -> dict | None:
         )
     ):
         raise ValueError("invalid saved narration estimation weights")
+    return data
+
+
+def normalize_text(text: str) -> str:
+    if not isinstance(text, str) or not text.strip() or len(text) > 2000:
+        raise ValueError("scene narration text must contain 1–2000 characters")
+    if any(ord(c) < 32 and not c.isspace() for c in text):
+        raise ValueError("scene narration text contains control characters")
+    return " ".join(text.split())
+
+
+def _save(task_id: str, data: dict) -> None:
+    if len((json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")) > 1024 * 1024:
+        raise ValueError("narration metadata exceeds one MiB")
+    scene_planner._atomic_write_json(_file(task_id), data)
+
+
+def set_draft_text(task_id: str, plan, source: str, scene_id: int, *, expected_revision: str, text: str) -> dict:
+    text = normalize_text(text)
+    if type(scene_id) is not int:
+        raise ValueError("invalid narration scene ID")
+    if gm.resolve_asset(task_id, "narration_mix.json").exists():
+        raise ValueError("restore original narration before changing drafts")
+    if revision(task_id) != expected_revision:
+        raise ValueError("narration ranges changed; refresh the Scene Editor")
+    data = load_validated(task_id, plan, source)
+    item = next((i for i in data["ranges"] if i["scene_id"] == scene_id), None)
+    if item is None or not item.get("replacement"):
+        raise ValueError("save a replacement recording first")
+    _replacement_preview(task_id, item)
+    item["replacement"]["text"] = text
+    current = scene_planner.load_scene_plan(task_id)
+    if (current is None or _binding(task_id, current, source)[0] != data["binding"]
+            or revision(task_id) != expected_revision):
+        raise ValueError("narration inputs changed; refresh the Scene Editor")
+    _save(task_id, data)
     return data
 
 
@@ -240,6 +284,18 @@ def _extract(audio: Path, output: Path, start: float, duration: float, input_for
         raise ValueError("could not extract narration preview")
 
 
+def _fit_audio(source: Path, target: Path, frames: int, ratio: float) -> None:
+    command = [utils.get_ffmpeg_binary(), "-nostdin", "-y", "-v", "error", "-i", str(source),
+               "-af", f"atempo={ratio:.12f},apad=whole_len={frames},atrim=end_sample={frames}",
+               "-map_metadata", "-1", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(target)]
+    try:
+        result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError("could not fit narration duration") from exc
+    if result.returncode:
+        raise ValueError("could not fit narration duration")
+
+
 def prepare(
     task_id: str,
     plan,
@@ -352,7 +408,7 @@ def prepare(
             raise ValueError("narration sources changed during preview extraction")
         if _expected_revision is not None and revision(task_id) != _expected_revision:
             raise ValueError("narration ranges changed; refresh the Scene Editor")
-        scene_planner._atomic_write_json(_file(task_id), data)
+        _save(task_id, data)
     except Exception:
         shutil.rmtree(directory)
         raise
@@ -414,7 +470,7 @@ def edit(
             raise ValueError(
                 "narration sources or ranges changed; refresh the Scene Editor"
             )
-        scene_planner._atomic_write_json(_file(task_id), data)
+        _save(task_id, data)
         return data
     if index == len(data["ranges"]) - 1:
         raise ValueError("the final narration endpoint stays at the audio end")
@@ -484,10 +540,13 @@ def _remove_inactive_replacements(task_id: str, data: dict) -> None:
 
 
 def replace_draft(task_id: str, plan, audio_file: str, scene_id: int, *,
-                  expected_revision: str, content: bytes | None = None) -> dict:
+                  expected_revision: str, content: bytes | None = None,
+                  text: str | None = None, fit_duration: bool = False, origin: str = "upload") -> dict:
     """Save or remove an audition-only upload, never edit the master track."""
-    if type(scene_id) is not int:
-        raise ValueError("invalid narration scene ID")
+    if type(scene_id) is not int or type(fit_duration) is not bool or origin not in ("upload", "tts"):
+        raise ValueError("invalid narration draft request")
+    if text is not None:
+        text = normalize_text(text)
     if content is not None and (type(content) is not bytes or not 0 < len(content) <= MAX_REPLACEMENT_BYTES):
         raise ValueError("narration upload must contain at most 20 MiB")
     if gm.resolve_asset(task_id, "narration_mix.json").exists():
@@ -528,23 +587,35 @@ def replace_draft(task_id: str, plan, audio_file: str, scene_id: int, *,
             duration = item["end"] - item["start"]
             # Decode beyond the permitted duration so an overlong upload is
             # rejected rather than silently trimmed. No time stretching/padding.
-            _extract(upload, output, 0, duration + 0.2, input_format)
+            _extract(upload, output, 0, (duration * 2 if fit_duration else duration) + 0.2, input_format)
             with wave.open(str(output), "rb") as stream:
                 actual = stream.getnframes() / stream.getframerate()
-            if abs(actual - duration) > 0.002:
+            ratio = actual / duration
+            if fit_duration:
+                if not 0.5 <= ratio <= 2:
+                    raise ValueError("recording needs more than 0.5x–2x tempo fitting; shorten/extend the text or adjust its range")
+                fitted = directory / "fitted.wav"
+                _fit_audio(output, fitted, round(duration * 16000), ratio)
+                fitted.replace(output)
+            elif abs(actual - duration) > 0.002:
                 raise ValueError(f"replacement must match the range duration ({duration:.3f} seconds) within 2 ms")
             upload.unlink()
             item["replacement"] = {
                 "preview_asset": output.relative_to(Path(utils.task_dir(task_id)).resolve()).as_posix(),
                 "preview_sha256": gm.media_sha256(output),
             }
+            if text is not None:
+                item["replacement"]["text"] = text
+            item["replacement"]["origin"] = origin
+            if fit_duration:
+                item["replacement"]["fit_ratio"] = ratio
             _replacement_preview(task_id, item)
         current_plan = scene_planner.load_scene_plan(task_id)
         if (current_plan is None
                 or _binding(task_id, current_plan, audio_file)[0] != data["binding"]
                 or revision(task_id) != expected_revision):
             raise ValueError("narration sources or ranges changed; refresh the Scene Editor")
-        scene_planner._atomic_write_json(_file(task_id), data)
+        _save(task_id, data)
     except Exception:
         if directory is not None:
             shutil.rmtree(directory, ignore_errors=True)

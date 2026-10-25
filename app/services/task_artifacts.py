@@ -256,7 +256,11 @@ def build_output_package(
             if source is not None:
                 effective = narration_mix.resolve(task_id, str(source))
                 package["edited_audio"] = _task_relative_existing_file(task_id, effective)
-                package["captions_omitted"] = True
+                metadata = json.loads(narration_mix.file(task_id).read_text(encoding="utf-8"))
+                package["captions_omitted"] = metadata["captions_omitted"]
+                if not metadata["captions_omitted"]:
+                    package["edited_captions"] = _task_relative_existing_file(task_id, metadata["captions_asset"])
+                    package["edited_script"] = _task_relative_existing_file(task_id, metadata["script_asset"])
         except (OSError, ValueError, TypeError, KeyError):
             pass
     return package

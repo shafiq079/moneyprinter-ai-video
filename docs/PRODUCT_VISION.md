@@ -30,7 +30,7 @@ contracts, with no mandatory paid video-generation API.
 | --- | --- | --- |
 | AI scene generation | Original clips, scene prompts, continuity, selective retries, reusable assets. | Implemented through local Wan/LTX and remote HF LTX paths; one real seven-scene HF LTX task completed. Real **local** Wan/LTX checkpoint validation and comparative GPU tuning remain deferred. |
 | Editable project | Keep independently editable scene clips, narration/audio, captions, prompts and metadata alongside the final MP4. A bad scene or a render-only change must not invalidate unrelated generated assets. | Scene plan, scene versions, final output and portable artifact references exist. A full editable timeline/project with independent audio/text layers does not. |
-| In-product editor | Eventually provide a small, self-hosted, CapCut-like experience; do not copy or depend on CapCut. The initial release need not be a full multi-track NLE. | Existing Streamlit scene editor covers prompt/seed, preview, regenerate, variation, validated manual clip replacement, fixed-duration source trims, visual cut timing, visual playback reordering, version restore, render-only rerender, and saved narration ranges/audio previews with manual boundary adjustment, operator review, and saved replacement narration drafts for audition. Creative-task narration drafts can now be applied to caption-free exports with restore-original support. Caption rebuilding and independent timeline layers remain deferred. |
+| In-product editor | Eventually provide a small, self-hosted, CapCut-like experience; do not copy or depend on CapCut. The initial release need not be a full multi-track NLE. | Existing Streamlit scene editor covers prompt/seed, preview, regenerate, variation, validated manual clip replacement, fixed-duration source trims, visual cut timing, visual playback reordering, version restore, render-only rerender, and saved narration ranges/audio previews with manual boundary adjustment, operator review, and saved replacement narration drafts for audition. The creative fixed-duration narration workflow includes text/TTS edits, uploaded recordings, optional tempo fitting, reviewed-range caption rebuilding, apply/export and restore-original. Automatic word alignment and independent timeline layers remain deferred. |
 | Scene timing | Let scene count/length follow narration and content instead of forcing every scene to the same fixed length. | Current planner uses measured audio duration, beat weights and a maximum provider-supported scene duration. Visual cut timing rebalances adjacent scenes at fixed total duration. Semantic audio alignment and retiming after narration changes remain deferred. |
 | Publishing | Complete video generation without an upload dependency. Initially defer upload automation and channel-growth tooling. | Existing optional Upload-Post integration offers YouTube, TikTok and Instagram; operator end-to-end publishing was not established in this development effort. Direct platform OAuth is not an approved replacement. |
 | Factual content | Optional evidence/review mode must not burden creative generation. | User-supplied excerpts, safe one-page import, review-only workflow and structural claim checks exist. Automatic discovery/source authentication and real-model acceptance remain deferred. |
@@ -205,3 +205,22 @@ mix. Source/range/scene checks, metadata publication and render rollback protect
 prior assets. See `docs/SCENE_EDITING.md` for the transaction and crash limits.
 Factual-task audio edits, caption rebuilding, text/TTS edits and variable-duration
 retiming remain deferred. This extends Streamlit and the existing composer.
+
+## Completed milestone: creative narration and captions at fixed duration
+
+The complete fixed-timeline creative narration workflow now includes scene text
+editing, explicit TTS generation with the saved voice, transcript-labelled
+uploads, optional 0.5x–2x tempo fitting, previews, reviewed-range captions,
+captioned apply/export, original restore, artifact downloads and reopening/Resume.
+Existing narration/caption roots and visual generation assets remain unchanged.
+Edited script, SRT and audio are separately bound and hash-validated. Version 1
+caption-free mixes remain compatible; version 2 adds caption/script assets.
+Automated acceptance covers real captioned MP4 and restore output, failure
+rollback, fitting, immutable queue requests and restart/Resume persistence.
+
+This completes the creative fixed-duration milestone, not the entire long-term
+editable-project vision. Captions use operator-confirmed range timing and
+transcripts, not automatic speech recognition or word alignment. Factual edits,
+changes to total video length, independent timeline layers and portable project
+archives remain outside this milestone. Manual operator acceptance is deferred
+at the owner's request; automated CPU verification continues.

@@ -12,6 +12,7 @@ from pathlib import Path
 
 from app.services import generation_manifest as gm
 from app.services import narration_ranges as nr, scene_planner
+from app.utils import utils
 
 NAME = "narration_mix.json"
 
@@ -40,7 +41,8 @@ def resolve(task_id: str, source: str) -> str:
     if plan is None:
         raise ValueError("edited narration scene plan is unavailable")
     ranges = nr.load_validated(task_id, plan, source)
-    if (data.get("schema_version") != 1 or data.get("captions_omitted") is not True
+    if (data.get("schema_version") not in (1, 2) or type(data.get("captions_omitted")) is not bool
+            or (data["schema_version"] == 1 and data["captions_omitted"] is not True)
             or data.get("binding") != ranges["binding"]
             or data.get("ranges_sha256") != _signature(ranges)):
         raise ValueError("edited narration inputs changed; restore original narration")
@@ -59,10 +61,79 @@ def resolve(task_id: str, source: str) -> str:
                 or audio.getsampwidth() != 2
                 or abs(audio.getnframes() / 16000 - ranges["audio_duration"]) > 1 / 16000):
             raise ValueError("invalid edited narration audio")
+    if data["schema_version"] == 2:
+        if not {i["scene_id"] for i in ranges["ranges"]} <= set(ranges.get("operator_reviewed_scene_ids", [])):
+            raise ValueError("edited narration range reviews changed; restore original narration")
+        _validate_caption_assets(task_id, data)
     return str(output)
 
 
-def build(task_id: str, plan, source: str, expected_revision: str) -> tuple[dict, Path]:
+def caption_file(task_id: str, source: str) -> str:
+    if not file(task_id).exists():
+        return ""
+    resolve(task_id, source)
+    data = json.loads(file(task_id).read_text(encoding="utf-8"))
+    if data["captions_omitted"]:
+        return ""
+    return str(gm.resolve_asset(task_id, data["captions_asset"]))
+
+
+def _validate_caption_assets(task_id: str, data: dict) -> None:
+    if data.get("operator_confirmed_transcripts") is not True or data.get("timing_basis") != "operator_reviewed_ranges" or data.get("speech_aligned") is not False:
+        raise ValueError("invalid edited caption review metadata")
+    parent = Path(data["audio_asset"]).parent
+    for key, name in (("script", "script.json"), ("captions", "captions.srt")):
+        asset = data.get(f"{key}_asset")
+        if asset != (parent / name).as_posix():
+            raise ValueError("invalid edited caption/script reference")
+        candidate = gm.resolve_asset(task_id, asset)
+        if not 0 < candidate.stat().st_size <= 2 * 1024 * 1024 or gm.media_sha256(candidate) != data.get(f"{key}_sha256"):
+            raise ValueError("edited caption/script changed; restore original narration")
+
+
+def _timestamp(ms: int) -> str:
+    seconds, milli = divmod(ms, 1000)
+    minutes, second = divmod(seconds, 60)
+    hour, minute = divmod(minutes, 60)
+    return f"{hour:02d}:{minute:02d}:{second:02d},{milli:03d}"
+
+
+def _write_caption_assets(directory: Path, ranges: dict) -> dict:
+    ids = {item["scene_id"] for item in ranges["ranges"]}
+    if not ids <= set(ranges.get("operator_reviewed_scene_ids", [])):
+        raise ValueError("review every narration range before rebuilding scene captions")
+    originals = {item["scene_id"]: item["text"] for item in ranges["binding"]["scene_text"]}
+    segments, cues = [], []
+    for item in ranges["ranges"]:
+        if item.get("replacement"):
+            text = nr.normalize_text(item["replacement"].get("text"))
+        else:
+            text = " ".join(originals[item["scene_id"]].split())
+            if any(ord(c) < 32 for c in text):
+                raise ValueError("invalid original narration text")
+        segments.append({"scene_id": item["scene_id"], "text": text, "start": item["start"], "end": item["end"]})
+        caption_text = " ".join(utils.remove_pause_tags(text).split())
+        if not caption_text:
+            continue
+        start, end = round(item["start"] * 1000), round(item["end"] * 1000)
+        if start >= end:
+            raise ValueError("a narration range is too short for a caption; adjust its boundary")
+        cues.append(f"{len(cues) + 1}\n{_timestamp(start)} --> {_timestamp(end)}\n{caption_text}\n\n")
+    if not cues:
+        raise ValueError("edited narration has no caption text")
+    (directory / "captions.srt").write_text("".join(cues), encoding="utf-8")
+    script = {"script": " ".join(s["text"] for s in segments if s["text"]), "segments": segments,
+              "timing_basis": "operator_reviewed_ranges", "speech_aligned": False,
+              "operator_confirmed_transcripts": True}
+    (directory / "script.json").write_text(json.dumps(script, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"schema_version": 2, "captions_omitted": False,
+            "operator_confirmed_transcripts": True, "timing_basis": "operator_reviewed_ranges", "speech_aligned": False,
+            **{f"{key}_{field}": value for key, name in (("script", "script.json"), ("captions", "captions.srt"))
+               for field, value in (("asset", f"narration_mixes/{directory.name}/{name}"),
+                                    ("sha256", gm.media_sha256(directory / name)))}}
+
+
+def build(task_id: str, plan, source: str, expected_revision: str, *, rebuild_captions: bool = False) -> tuple[dict, Path]:
     data = nr.load_validated(task_id, plan, source)
     if nr.revision(task_id) != expected_revision:
         raise ValueError("narration ranges changed; refresh the Scene Editor")
@@ -71,6 +142,7 @@ def build(task_id: str, plan, source: str, expected_revision: str) -> tuple[dict
     directory = gm.resolve_asset(task_id, f"narration_mixes/{uuid.uuid4().hex}")
     directory.mkdir(parents=True)
     try:
+        caption_metadata = _write_caption_assets(directory, data) if rebuild_captions else {}
         decoded = directory / "original.wav"
         nr._extract(Path(source), decoded, 0, 3601)
         output = directory / "audio.wav"
@@ -109,6 +181,7 @@ def build(task_id: str, plan, source: str, expected_revision: str) -> tuple[dict
             "binding": data["binding"], "ranges_sha256": _signature(data),
             "audio_asset": f"narration_mixes/{directory.name}/audio.wav",
             "audio_sha256": gm.media_sha256(output),
+            **caption_metadata,
         }
         return metadata, directory
     except Exception:

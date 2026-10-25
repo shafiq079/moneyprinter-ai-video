@@ -1308,16 +1308,19 @@ def _render_scene_editor() -> None:
     if active_mix:
         st.warning(tr("Narration Mix Active"))
     st.caption(tr("Narration Mix Help"))
-    omit_captions = st.checkbox(tr("Narration Mix Confirm"), key=f"mix_confirm_{task_id}", disabled=is_busy)
+    confirm_transcripts = st.checkbox(tr("Narration Mix Confirm"), key=f"mix_confirm_{task_id}", disabled=is_busy)
+    rebuild_captions = st.checkbox(tr("Rebuild Scene Captions"), value=True, key=f"mix_captions_{task_id}", disabled=is_busy or active_mix)
+    st.caption(tr("Scene Captions Help"))
     apply_mix = st.button(tr("Apply Narration Drafts"), key=f"apply_narration_mix_{task_id}",
-                          disabled=is_busy or active_mix or not omit_captions or not any(i.get("replacement") for i in (narration_map or {}).get("ranges", [])))
+                          disabled=is_busy or active_mix or not confirm_transcripts or not any(i.get("replacement") for i in (narration_map or {}).get("ranges", [])))
     reset_mix = st.button(tr("Restore Original Narration"), key=f"reset_narration_mix_{task_id}", disabled=is_busy or not active_mix)
     if apply_mix or reset_mix:
         try:
             webui_task.submit_narration_ranges(task_id, edit_request={
                 "operation": "apply", "expected_revision": narration_revision,
                 "expected_snapshot": timing_snapshot, "reset": reset_mix,
-                "omit_captions": omit_captions})
+                "omit_captions": not rebuild_captions, "rebuild_captions": rebuild_captions,
+                "confirm_transcripts": confirm_transcripts})
         except Exception as exc:
             st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
         else:
@@ -1444,6 +1447,34 @@ def _render_scene_editor() -> None:
                     else:
                         st.toast(tr("Narration Previews Queued"))
                         st.rerun(scope="fragment")
+                edited_text = st.text_area(tr("Replacement Narration Text"),
+                    value=(narration_range.get("replacement") or {}).get("text", scene.narration_segment),
+                    max_chars=2000, key=f"draft_text_{task_id}_{scene_id}_{narration_revision}", disabled=is_busy or active_mix)
+                fit_duration = st.checkbox(tr("Fit Narration Duration"), value=True,
+                    key=f"draft_fit_{task_id}_{scene_id}", disabled=is_busy or active_mix)
+                st.caption(tr("Narration Text Help"))
+                if st.button(tr("Generate Scene Speech"), key=f"tts_draft_{task_id}_{scene_id}",
+                             disabled=is_busy or active_mix or not checked or not edited_text.strip()):
+                    try:
+                        webui_task.submit_narration_ranges(task_id, edit_request={
+                            "operation": "tts", "scene_id": scene_id, "expected_revision": narration_revision,
+                            "text": edited_text, "fit_duration": fit_duration})
+                    except Exception as exc:
+                        st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
+                    else:
+                        st.toast(tr("Narration Previews Queued"))
+                        st.rerun(scope="fragment")
+                if narration_range.get("replacement") and st.button(tr("Save Draft Transcript"),
+                    key=f"draft_transcript_{task_id}_{scene_id}", disabled=is_busy or active_mix or not edited_text.strip()):
+                    try:
+                        webui_task.submit_narration_ranges(task_id, edit_request={
+                            "operation": "transcript", "scene_id": scene_id,
+                            "expected_revision": narration_revision, "text": edited_text})
+                    except Exception as exc:
+                        st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
+                    else:
+                        st.toast(tr("Narration Previews Queued"))
+                        st.rerun(scope="fragment")
                 st.caption(tr("Narration Draft Help"))
                 draft_upload = st.file_uploader(
                     tr("Narration Draft Upload"), type=["wav", "mp3", "m4a"],
@@ -1457,7 +1488,8 @@ def _render_scene_editor() -> None:
                             raise ValueError("narration upload must contain at most 20 MiB")
                         webui_task.submit_narration_ranges(task_id, edit_request={
                             "operation": "replacement", "scene_id": scene_id,
-                            "expected_revision": narration_revision, "content": draft_upload.getvalue()})
+                            "expected_revision": narration_revision, "content": draft_upload.getvalue(),
+                            "text": edited_text, "fit_duration": fit_duration})
                     except Exception as exc:
                         st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
                     else:
@@ -1466,6 +1498,8 @@ def _render_scene_editor() -> None:
                 has_draft = bool(narration_range.get("replacement"))
                 if has_draft:
                     st.caption(tr("Narration Draft Saved"))
+                    if "fit_ratio" in narration_range["replacement"]:
+                        st.caption(tr("Narration Fit Result").format(ratio=narration_range["replacement"]["fit_ratio"]))
                     if st.button(tr("Remove Narration Draft"), key=f"remove_narration_draft_{task_id}_{scene_id}", disabled=is_busy or active_mix):
                         try:
                             webui_task.submit_narration_ranges(task_id, edit_request={
@@ -1739,6 +1773,29 @@ def _render_artifact_package_view() -> None:
 
     st.caption(tr("Artifact Package Help"))
     st.json(package)
+    for key, label, filename, limit in (
+        ("edited_audio", "Download Edited Narration", "edited-narration.wav", 3600 * 32000 + 4096),
+        ("edited_captions", "Download Edited Captions", "edited-captions.srt", 2 * 1024 * 1024),
+        ("edited_script", "Download Edited Script", "edited-script.json", 2 * 1024 * 1024),
+    ):
+        if not package.get(key):
+            continue
+        try:
+            candidate = generation_manifest.resolve_asset(task_id, package[key])
+            if candidate.stat().st_size > limit:
+                raise ValueError("edited artifact is too large")
+            content = candidate.read_bytes()
+            metadata_file = generation_manifest.resolve_asset(task_id, "narration_mix.json")
+            if metadata_file.stat().st_size > 1024 * 1024:
+                raise ValueError("edited artifact metadata is too large")
+            metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
+            hash_key = {"edited_audio": "audio_sha256", "edited_captions": "captions_sha256", "edited_script": "script_sha256"}[key]
+            if hashlib.sha256(content).hexdigest() != metadata.get(hash_key):
+                raise ValueError("edited artifact changed")
+        except (OSError, ValueError, KeyError, TypeError):
+            st.warning(tr("Artifact Package Unavailable"))
+        else:
+            st.download_button(tr(label), data=content, file_name=filename, key=f"download_{key}_{task_id}")
 
     if package["factual_review"]:
         try:
@@ -2741,6 +2798,8 @@ def _render_generation_task_snapshot(task_id, task):
                     index=warning.get("video_index", ""), count=warning.get("count", 0)
                 )
             )
+        elif isinstance(warning, Mapping) and warning.get("code") == "edited_narration_scene_captions":
+            st.warning(tr("Scene Captions Help"))
         elif isinstance(warning, Mapping) and warning.get("code") == "edited_narration_captions_omitted":
             st.warning(tr("Narration Mix Active"))
         elif isinstance(warning, Mapping) and warning.get("code") == "sonilo_bgm_failed":

@@ -335,3 +335,88 @@ edited audio from retained original `audio`/`captions` references. Invalid mix
 media is never silently replaced with another recording. No LLM, TTS, video
 inference, caption generation, paid BGM generation or publishing is triggered
 by apply/restore. Existing generated BGM is reused.
+
+## Complete creative narration/caption workflow (fixed timeline)
+
+This milestone completes the existing **fixed-duration creative AI-task**
+narration workflow in Scene Editor. It does not add a variable-length timeline
+or extend the scene editor to stock-material tasks.
+
+1. Prepare narration previews. Adjust the boundaries and mark each range
+   reviewed after listening. Original narration order stays independent of
+   visual playback order.
+2. Enter **Replacement narration text / recording transcript** for a scene.
+   Choose **Generate scene speech** to use the task's saved voice/rate and the
+   existing MoneyPrinter TTS dispatch. Or upload WAV/MP3/M4A with its transcript.
+   **Save recording transcript** updates text for an existing recording; it
+   does not synthesize different words. Use Generate again to change speech.
+3. Optional **Fit recording to this range** uses FFmpeg's pitch-preserving
+   tempo adjustment, restricted to 0.5x–2x. Audio is normalized to the exact
+   slot's sample count, including tail padding/trimming. Outside that range,
+   shorten/extend the text or explicitly adjust boundaries first. With fitting
+   off, the previous 2 ms duration-match rule remains. Preview the fitted draft
+   before applying. Later ranges and video length never shift.
+4. Check the recording transcripts and all range boundaries. Keep **Rebuild
+   scene captions** selected and confirm the review checkbox, then **Apply
+   narration drafts and rerender**. Rebuilding requires every range reviewed
+   and a non-empty transcript for every replacement. Captions use one SRT cue
+   per non-empty reviewed narration range; pause tags are excluded from visible
+   captions. Existing styling is retained with sentence-level display.
+   Disable rebuilding to retain the explicit caption-free export option.
+5. The result uses existing visuals/music and the edited audio/captions.
+   **Restore original narration and rerender** restores the master audio and
+   original caption settings. Restore before editing active draft inputs.
+
+Range review and transcript confirmation are operator assertions. This workflow
+neither transcribes uploaded speech nor verifies that supplied words were
+spoken. It does not promise automatic or word-level alignment. Generated TTS
+may use the operator's configured external/paid speech provider when explicitly
+requested; apply/restore do not call TTS, an LLM, Whisper, a video provider or
+publishing. Scene TTS requires a saved non-No-Voice speech voice. Custom-recording
+tasks with No Voice selected can edit by uploading recordings; pure No Voice
+silent-timing tasks remain excluded from narration ranges. Saved voice/rate
+are reused, but ephemeral voice-cloning reference inputs are not reconstructed
+from old tasks; upload a finished recording when those inputs are required.
+Factual-task apply remains blocked until edited-content review is separately
+implemented.
+
+### Persistence and transaction contract
+
+`narration_ranges.json` remains schema version 1. A replacement optionally adds
+`text`, `origin` (`upload`/`tts`) and `fit_ratio` to its existing WAV reference
+and hash. Text is normalized, limited to 2000 characters and rejects control
+characters. Metadata writes are limited to one MiB. Existing drafts without
+text remain readable and usable in caption-free mode; add a transcript before
+rebuilding their captions.
+
+Captioned active mixes use `narration_mix.json` version 2 and stage `audio.wav`,
+`captions.srt` and an edited `script.json` in the same owned UUID directory.
+The original root script/audio/captions are never rewritten. The metadata
+records hashes, source/range/draft bindings, operator transcript confirmation,
+`timing_basis=operator_reviewed_ranges`, `speech_aligned=false` and
+`captions_omitted=false`. The edited script records the full changed text and
+range segments, retaining pause tags as script controls. The output package/API
+adds `edited_captions` and `edited_script`; original references stay available.
+Version 1 caption-free mixes continue to work without migration.
+
+All actions use the existing serialized queue with immutable request snapshots.
+TTS output stays in a temporary task-local directory, is validated before draft
+publication and is removed on success, provider failure, fitting failure or a
+stale revision. New captions/script/audio are staged before active publication;
+rendering failures restore previous outputs and active metadata. Every later
+local-AI render—including visual changes, rerender and same-task Resume—checks
+all active audio/caption/script hashes and source bindings. Changed or missing
+assets fail explicitly. Restore recovers the original track/caption settings.
+
+The previous documented process-kill limitation still applies: active metadata
+and multiple MP4 files are not one filesystem-wide atomic transaction. Saved
+originals/drafts and validated active assets support rerender/restore recovery.
+Variable-duration narration, independent caption timeline editing, automatic
+speech alignment and factual edited-content review remain separate milestones.
+
+
+Edited WAV, SRT and script JSON downloads are available directly in **Task
+Manager → Artifacts**, with bounded file reads and checksum checks. Resetting
+removes these active edited references and returns to original artifacts.
+Regenerate still starts from the original generation recipe; use the downloaded
+edited script if you want its changed text in a new task.

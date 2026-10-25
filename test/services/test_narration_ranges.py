@@ -703,6 +703,224 @@ class TestNarrationRanges(LocalAITestCase):
         with self.assertRaisesRegex(ValueError, "creative"):
             self.apply_mix()
 
+    def transcript(self, text="New flowers."):
+        return task.edit_local_ai_draft_transcript(self.task_id, 1,
+            expected_revision=nr.revision(self.task_id), text=text)
+
+    def apply_captions(self):
+        return task.apply_local_ai_narration_drafts(self.task_id,
+            expected_revision=nr.revision(self.task_id),
+            expected_snapshot=gm.scene_timing_snapshot(gm.load_manifest(self.task_id)),
+            rebuild_captions=True, confirm_transcripts=True)
+
+    def test_complete_text_tts_captions_export_and_real_restore(self):
+        import av
+        self.setup_mix()
+        self.review(2)
+        self.params.font_name = "MicrosoftYaHeiBold.ttc"
+        self.params.font_size = 32
+        task.save_script_data(self.task_id, self.params.video_script, [], self.params)
+        protected = {name: (self.root / name).read_bytes() for name in (
+            "script.json", "scene_plan.json", "narration.wav", "subtitle.srt")}
+        manifest = gm.manifest_path(self.task_id).read_bytes()
+        def speech(**kwargs):
+            self.assertEqual(kwargs["text"], "New flowers.")
+            self.assertEqual(kwargs["voice_volume"], 1)
+            Path(kwargs["voice_file"]).write_bytes(self.draft_audio(1.5))
+            return object()
+        with patch.object(task.voice, "tts", side_effect=speech) as tts:
+            data = task.generate_local_ai_narration_draft(self.task_id, 1,
+                expected_revision=nr.revision(self.task_id), text="New flowers.", fit_duration=True)
+        self.assertEqual(tts.call_count, 1)
+        draft = data["ranges"][0]["replacement"]
+        self.assertEqual(draft["origin"], "tts")
+        self.assertAlmostEqual(draft["fit_ratio"], 1.5)
+        self.assertEqual(draft["text"], "New flowers.")
+        with wave.open(str(gm.resolve_asset(self.task_id, draft["preview_asset"])), "rb") as audio:
+            self.assertEqual(audio.getnframes(), 16000)
+            samples = np.frombuffer(audio.readframes(audio.getnframes()), dtype="<i2")
+            frequency = np.fft.rfftfreq(len(samples), 1 / 16000)[np.abs(np.fft.rfft(samples)).argmax()]
+            self.assertAlmostEqual(frequency, 220, delta=3)
+        self.assertFalse(list(self.root.glob(".narration-tts-*")))
+        with (patch.object(task.voice, "tts", side_effect=AssertionError("new TTS")),
+              patch.object(task, "generate_subtitle", side_effect=AssertionError("Whisper")),
+              patch.object(task.local_ai, "prepare_provider", side_effect=AssertionError("GPU")),
+              patch.object(task, "_schedule_cross_post", side_effect=AssertionError("publishing")),
+              patch.object(task.video, "generate_video", wraps=task.video.generate_video) as render):
+            result = self.apply_captions()
+        self.assertTrue(render.call_args.kwargs["params"].subtitle_enabled)
+        package = task_artifacts.build_output_package(self.task_id)
+        package_model = TaskArtifactPackageData.model_validate(package)
+        self.assertFalse(package_model.captions_omitted)
+        caption_file = self.root / package["edited_captions"]
+        self.assertIn("00:00:00,000 --> 00:00:01,000\nNew flowers.", caption_file.read_text())
+        self.assertIn("00:00:01,000 --> 00:00:03,000\nBees.", caption_file.read_text())
+        edited_script = json.loads((self.root / package["edited_script"]).read_text())
+        self.assertEqual(edited_script["script"], "New flowers. Bees.")
+        self.assertFalse(edited_script["speech_aligned"])
+        # Real output contains visible captions over synthetic colored footage.
+        with av.open(result["videos"][0]) as video:
+            frame = next(f for f in video.decode(video=0) if f.time >= 0.5)
+            pixels = frame.to_ndarray(format="rgb24")
+            self.assertGreater(np.all(pixels > 220, axis=2).sum(), 50)
+        for name, content in protected.items():
+            self.assertEqual((self.root / name).read_bytes(), content)
+        self.assertEqual(gm.manifest_path(self.task_id).read_bytes(), manifest)
+        # Artifact UI offers the actual edited assets as validated downloads.
+        ui_source = (Path(__file__).parents[2] / "webui/Main.py").read_text()
+        function = next(n for n in ast.parse(ui_source).body if isinstance(n, ast.FunctionDef) and n.name == "_render_artifact_package_view")
+        harness = """
+import json, hashlib
+import streamlit as st
+from app.services import generation_manifest, task_artifacts
+from app.services import state as sm
+from app.utils import utils
+def tr(value): return value
+st.session_state['artifact_package_task_id'] = 'narration'
+"""
+        downloads = {}
+        def capture(label, data, **kwargs):
+            downloads[kwargs["file_name"]] = data
+        with patch("streamlit.download_button", side_effect=capture):
+            app = AppTest.from_string(harness + ast.get_source_segment(ui_source, function) + "\n_render_artifact_package_view()\n").run()
+        self.assertFalse(app.exception)
+        self.assertEqual(set(downloads), {"edited-script.json", "edited-captions.srt", "edited-narration.wav"})
+        self.assertIn(b"New flowers.", downloads["edited-captions.srt"])
+        # Real restore exports original captions/settings and source audio again.
+        with patch.object(task.voice, "tts", side_effect=AssertionError("TTS")):
+            restored = self.apply_mix(reset=True)
+        self.assertFalse(task.narration_mix.file(self.task_id).exists())
+        extracted = self.root / "restored.wav"
+        nr._extract(Path(restored["videos"][0]), extracted, 0, 1)
+        with wave.open(str(extracted), "rb") as audio:
+            samples = np.frombuffer(audio.readframes(audio.getnframes()), dtype="<i2")
+        frequency = np.fft.rfftfreq(len(samples), 1 / 16000)[np.abs(np.fft.rfft(samples)).argmax()]
+        self.assertAlmostEqual(frequency, 440, delta=3)
+        self.assertNotIn("edited_captions", task_artifacts.build_output_package(self.task_id))
+        for name, content in protected.items():
+            self.assertEqual((self.root / name).read_bytes(), content)
+
+    def test_complete_caption_review_text_guards_and_publication_rollback(self):
+        snapshot = self.setup_mix()
+        old_map = (self.root / "narration_ranges.json").read_bytes()
+        with self.assertRaisesRegex(ValueError, "confirm"):
+            task.apply_local_ai_narration_drafts(self.task_id, expected_revision=nr.revision(self.task_id),
+                expected_snapshot=snapshot, rebuild_captions=True)
+        with self.assertRaisesRegex(ValueError, "every narration range"):
+            self.apply_captions()
+        self.review(2)
+        with self.assertRaisesRegex(ValueError, "scene narration text"):
+            self.apply_captions()
+        self.transcript("New flowers.")
+        for text in ("", "x" * 2001, "bad\x00text", 1):
+            with self.subTest(text=str(text)[:15]), self.assertRaises(ValueError):
+                self.transcript(text)
+        before = (self.root / "narration_ranges.json").read_bytes()
+        with patch.object(task.scene_planner, "_atomic_write_json", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.transcript("Another phrase.")
+        self.assertEqual((self.root / "narration_ranges.json").read_bytes(), before)
+        self.assertNotEqual(old_map, before)
+        final = self.root / "final-1.mp4"
+        final.write_bytes(b"previous output")
+        with patch.object(task, "generate_final_videos", side_effect=RuntimeError("render failed")):
+            with self.assertRaises(RuntimeError):
+                self.apply_captions()
+        self.assertEqual(final.read_bytes(), b"previous output")
+        self.assertFalse(task.narration_mix.file(self.task_id).exists())
+        self.assertEqual(list((self.root / "narration_mixes").iterdir()), [])
+        self.assertEqual((self.root / "narration_ranges.json").read_bytes(), before)
+
+    def test_complete_fitting_and_transcripts_preserve_prior_drafts_on_failure(self):
+        self.setup_mix()
+        before = (self.root / "narration_ranges.json").read_bytes()
+        for seconds in (0.4, 2.2):
+            with self.subTest(seconds=seconds), self.assertRaisesRegex(ValueError, "tempo fitting"):
+                task.replace_local_ai_narration_draft(self.task_id, 1,
+                    expected_revision=nr.revision(self.task_id), content=self.draft_audio(seconds),
+                    text="New flowers.", fit_duration=True)
+            self.assertEqual((self.root / "narration_ranges.json").read_bytes(), before)
+        with patch.object(nr, "_fit_audio", side_effect=ValueError("filter failed")):
+            with self.assertRaises(ValueError):
+                task.replace_local_ai_narration_draft(self.task_id, 1,
+                    expected_revision=nr.revision(self.task_id), content=self.draft_audio(1.5),
+                    text="New flowers.", fit_duration=True)
+        self.assertEqual((self.root / "narration_ranges.json").read_bytes(), before)
+        self.assertEqual(len(list((self.root / "narration_replacements").iterdir())), 1)
+        data = self.transcript("  New\nflowers.  ")
+        self.assertEqual(data["ranges"][0]["replacement"]["text"], "New flowers.")
+        original = nr.read_ranges(self.task_id)["ranges"][0]["replacement"]["preview_sha256"]
+        self.transcript("Fresh [pause: 1s] flowers.")
+        self.review(2)
+        metadata, directory = task.narration_mix.build(self.task_id, self.plan, str(self.audio), nr.revision(self.task_id), rebuild_captions=True)
+        self.assertNotIn("[pause:", (directory / "captions.srt").read_text())
+        self.assertIn("[pause:", (directory / "script.json").read_text())
+        self.assertEqual(metadata["schema_version"], 2)
+        self.assertEqual(nr.read_ranges(self.task_id)["ranges"][0]["replacement"]["preview_sha256"], original)
+
+    def test_complete_tts_queue_stale_requests_failure_and_cleanup(self):
+        self.setup_mix()
+        request = {"operation": "tts", "scene_id": 1, "expected_revision": nr.revision(self.task_id),
+                   "text": "Queued phrase.", "fit_duration": True}
+        with patch.object(webui_task._task_manager, "add_task") as queue:
+            webui_task.submit_narration_ranges(self.task_id, edit_request=request)
+        request["text"] = "Mutated phrase."
+        def speech(**kwargs):
+            self.assertEqual(kwargs["text"], "Queued phrase.")
+            Path(kwargs["voice_file"]).write_bytes(self.draft_audio(1.2))
+            return object()
+        with patch.object(task.voice, "tts", side_effect=speech):
+            call = queue.call_args
+            self.assertTrue(call.args[0](**call.kwargs)["prepared"])
+        self.assertEqual(nr.read_ranges(self.task_id)["ranges"][0]["replacement"]["text"], "Queued phrase.")
+        self.assertEqual(self.state.get_task(self.task_id)["state"], const.TASK_STATE_COMPLETE)
+        before = (self.root / "narration_ranges.json").read_bytes()
+        for failure in (None, ValueError("private-token")):
+            kwargs = {"return_value": None} if failure is None else {"side_effect": failure}
+            with patch.object(task.voice, "tts", **kwargs):
+                with self.assertRaises(ValueError) as error:
+                    task.generate_local_ai_narration_draft(self.task_id, 1,
+                        expected_revision=nr.revision(self.task_id), text="New words.")
+            self.assertNotIn("private-token", str(error.exception))
+            self.assertEqual((self.root / "narration_ranges.json").read_bytes(), before)
+            self.assertFalse(list(self.root.glob(".narration-tts-*")))
+        def changed(**kwargs):
+            Path(kwargs["voice_file"]).write_bytes(self.draft_audio())
+            (self.root / "narration_ranges.json").write_bytes(before + b" ")
+            return object()
+        with patch.object(task.voice, "tts", side_effect=changed):
+            with self.assertRaisesRegex(ValueError, "changed"):
+                task.generate_local_ai_narration_draft(self.task_id, 1,
+                    expected_revision=nr.revision(self.task_id), text="New words.")
+        self.assertEqual((self.root / "narration_ranges.json").read_bytes(), before + b" ")
+        self.assertFalse(list(self.root.glob(".narration-tts-*")))
+
+    def test_complete_caption_integrity_and_text_snapshot_are_enforced(self):
+        self.setup_mix()
+        self.review(2)
+        self.transcript()
+        with patch.object(task, "generate_final_videos", return_value=([], [], [])):
+            self.apply_captions()
+        sidecar = task.narration_mix.file(self.task_id)
+        before = sidecar.read_bytes()
+        data = json.loads(before)
+        candidate = gm.resolve_asset(self.task_id, data["captions_asset"])
+        original_caption = candidate.read_bytes()
+        candidate.write_bytes(b"tampered")
+        with self.assertRaisesRegex(ValueError, "caption/script changed"):
+            task.narration_mix.resolve(self.task_id, str(self.audio))
+        candidate.write_bytes(original_caption)
+        data["script_asset"] = "../outside.json"
+        sidecar.write_text(json.dumps(data))
+        with self.assertRaisesRegex(ValueError, "invalid edited caption/script"):
+            task.narration_mix.resolve(self.task_id, str(self.audio))
+        sidecar.write_bytes(before)
+        ranges = nr.read_ranges(self.task_id)
+        ranges["ranges"][0]["replacement"]["text"] = "Changed words."
+        (self.root / "narration_ranges.json").write_text(json.dumps(ranges))
+        with self.assertRaisesRegex(ValueError, "inputs changed"):
+            task.narration_mix.resolve(self.task_id, str(self.audio))
+
     def test_scene_editor_labels_estimates_and_plays_validated_clip(self):
         self.prepare()
         source = (Path(__file__).parents[2] / "webui/Main.py").read_text(
@@ -769,9 +987,20 @@ st.session_state['scene_editor_task_id'] = 'narration'
             app.button(key="save_narration_draft_narration_1").click().run()
             submit.assert_called_once_with(self.task_id, edit_request={
                 "operation": "replacement", "scene_id": 1, "expected_revision": nr.revision(self.task_id),
-                "content": upload.getvalue()})
+                "content": upload.getvalue(), "text": "Flowers.", "fit_duration": True})
+        with patch.object(webui_task, "submit_narration_ranges") as submit, patch("streamlit.rerun"):
+            app.button(key="tts_draft_narration_1").click().run()
+            submit.assert_called_once_with(self.task_id, edit_request={
+                "operation": "tts", "scene_id": 1, "expected_revision": nr.revision(self.task_id),
+                "text": "Flowers.", "fit_duration": True})
         self.save_draft(self.draft_audio())
         app.run()
+        with patch.object(webui_task, "submit_narration_ranges") as submit, patch("streamlit.rerun"):
+            key = f"draft_text_narration_1_{nr.revision(self.task_id)}"
+            app.text_area(key=key).input("New flowers.").run()
+            app.button(key="draft_transcript_narration_1").click().run()
+            submit.assert_called_once_with(self.task_id, edit_request={
+                "operation": "transcript", "scene_id": 1, "expected_revision": nr.revision(self.task_id), "text": "New flowers."})
         app.button(key="play_narration_draft_narration_1").click().run()
         self.assertEqual(len(app.get("audio")), 1)
         self.assertTrue(any("Narration Draft Saved" in c.value for c in app.caption))
@@ -785,7 +1014,8 @@ st.session_state['scene_editor_task_id'] = 'narration'
             submit.assert_called_once_with(self.task_id, edit_request={
                 "operation": "apply", "expected_revision": nr.revision(self.task_id),
                 "expected_snapshot": gm.scene_timing_snapshot(gm.load_manifest(self.task_id)),
-                "reset": False, "omit_captions": True})
+                "reset": False, "omit_captions": False, "rebuild_captions": True,
+                "confirm_transcripts": True})
         task.narration_mix.file(self.task_id).write_text("{}")
         app.run()
         self.assertTrue(app.button(key="save_narration_draft_narration_1").disabled)

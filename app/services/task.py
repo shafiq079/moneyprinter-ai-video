@@ -5,6 +5,7 @@ import re
 import shutil
 import socket
 import threading
+import tempfile
 import time
 from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 from functools import partial
@@ -1183,10 +1184,11 @@ def generate_final_videos(
         if effective_audio != audio_file:
             if params.content_mode != "creative":
                 raise ValueError("edited narration exports currently support creative tasks only")
+            edited_captions = narration_mix.caption_file(task_id, audio_file)
             audio_file = effective_audio
-            params = params.model_copy(update={"subtitle_enabled": False})
-            subtitle_path = ""
-            warnings.append({"code": "edited_narration_captions_omitted"})
+            params = params.model_copy(update={"subtitle_enabled": bool(edited_captions), "subtitle_display_mode": "sentence"})
+            subtitle_path = edited_captions or ""
+            warnings.append({"code": "edited_narration_scene_captions" if edited_captions else "edited_narration_captions_omitted"})
     local_ai_final_duration = float(audio_duration or 0)
     if local_ai.is_local_ai_source(params.video_source):
         try:
@@ -2183,21 +2185,68 @@ def edit_local_ai_narration_range(task_id: str, scene_id: int, *, expected_revis
 
 
 def replace_local_ai_narration_draft(task_id: str, scene_id: int, *, expected_revision: str,
-                                     content: bytes | None = None, _queued: bool = False) -> dict:
+                                     content: bytes | None = None, text: str | None = None,
+                                     fit_duration: bool = False, _queued: bool = False) -> dict:
     plan, audio = local_ai_narration_context(task_id, _queued=_queued)
     return narration_ranges.replace_draft(task_id, plan, audio, scene_id,
-                                         expected_revision=expected_revision, content=content)
+        expected_revision=expected_revision, content=content, text=text, fit_duration=fit_duration)
+
+
+def edit_local_ai_draft_transcript(task_id: str, scene_id: int, *, expected_revision: str,
+                                   text: str, _queued: bool = False) -> dict:
+    plan, audio = local_ai_narration_context(task_id, _queued=_queued)
+    return narration_ranges.set_draft_text(task_id, plan, audio, scene_id,
+                                           expected_revision=expected_revision, text=text)
+
+
+def generate_local_ai_narration_draft(task_id: str, scene_id: int, *, expected_revision: str,
+                                     text: str, fit_duration: bool = True, _queued: bool = False) -> dict:
+    params, plan, audio, _captions, _duration, prior = _load_scene_regeneration_context(task_id)
+    _assert_scene_edit_available(prior, queued=_queued, stage="narration_ranges")
+    text = narration_ranges.normalize_text(text)
+    if type(scene_id) is not int or type(fit_duration) is not bool:
+        raise ValueError("invalid narration synthesis request")
+    if params.content_mode != "creative" or voice.is_no_voice(params.voice_name):
+        raise ValueError("scene speech requires a creative task with a saved speech voice; otherwise upload a recording")
+    if narration_mix.file(task_id).exists():
+        raise ValueError("restore original narration before generating a draft")
+    if narration_ranges.revision(task_id) != expected_revision:
+        raise ValueError("narration ranges changed; refresh the Scene Editor")
+    ranges = narration_ranges.load_validated(task_id, plan, audio)
+    if scene_id not in ranges.get("operator_reviewed_scene_ids", []):
+        raise ValueError("listen to and review the original narration range first")
+    binding = ranges["binding"]
+    with tempfile.TemporaryDirectory(prefix=".narration-tts-", dir=_scene_regeneration_task_root(task_id)) as temp:
+        output = os.path.join(temp, "speech.mp3")
+        try:
+            maker = voice.tts(text=text, voice_name=voice.parse_voice_name(params.voice_name),
+                              voice_rate=params.voice_rate, voice_volume=1.0, voice_file=output)
+        except Exception as exc:
+            raise ValueError(f"scene speech synthesis failed ({type(exc).__name__}); check the configured TTS provider") from None
+        if maker is None or not os.path.isfile(output) or not 0 < os.path.getsize(output) <= narration_ranges.MAX_REPLACEMENT_BYTES:
+            raise ValueError("scene speech synthesis produced no usable recording")
+        current = scene_planner.load_scene_plan(task_id)
+        if current is None or narration_ranges._binding(task_id, current, audio)[0] != binding:
+            raise ValueError("narration sources changed during speech synthesis")
+        with open(output, "rb") as stream:
+            content = stream.read()
+        return narration_ranges.replace_draft(task_id, plan, audio, scene_id,
+            expected_revision=expected_revision, content=content, text=text,
+            fit_duration=fit_duration, origin="tts")
 
 
 def apply_local_ai_narration_drafts(task_id: str, *, expected_revision: str,
                                     expected_snapshot: dict, reset: bool = False,
-                                    omit_captions: bool = False, _queued: bool = False) -> dict:
+                                    omit_captions: bool = False, rebuild_captions: bool = False,
+                                    confirm_transcripts: bool = False, _queued: bool = False) -> dict:
     params, plan, audio, captions, duration, prior = _load_scene_regeneration_context(task_id)
     _assert_scene_edit_available(prior, queued=_queued, stage="narration_ranges")
-    if type(reset) is not bool or type(omit_captions) is not bool:
+    if any(type(v) is not bool for v in (reset, omit_captions, rebuild_captions, confirm_transcripts)):
         raise ValueError("invalid narration apply request")
-    if not reset and (params.content_mode != "creative" or not omit_captions):
-        raise ValueError("edited narration requires a creative task and explicit caption omission")
+    if not reset and (params.content_mode != "creative" or omit_captions == rebuild_captions):
+        raise ValueError("edited narration requires a creative task and either caption omission or rebuilding")
+    if not reset and rebuild_captions and not confirm_transcripts:
+        raise ValueError("confirm recording transcripts and range boundaries before rebuilding captions")
     if not reset and narration_ranges.revision(task_id) != expected_revision:
         raise ValueError("narration ranges changed; refresh the Scene Editor")
     manifest = generation_manifest.load_manifest(task_id)
@@ -2213,7 +2262,7 @@ def apply_local_ai_narration_drafts(task_id: str, *, expected_revision: str,
     if not reset:
         if voice.is_no_voice(params.voice_name) and not params.custom_audio_file:
             raise ValueError("No Voice has no recorded narration to edit")
-        metadata, directory = narration_mix.build(task_id, plan, audio, expected_revision)
+        metadata, directory = narration_mix.build(task_id, plan, audio, expected_revision, rebuild_captions=rebuild_captions)
     root = _scene_regeneration_task_root(task_id)
     try:
         backups = _backup_render_paths(root, suffix="narration-edit-backup")

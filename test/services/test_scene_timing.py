@@ -142,11 +142,16 @@ class TestSceneTiming(LocalAITestCase):
         original_audio = task.local_ai_narration_preview(self.task_id, 1)["audio"]
         task.replace_local_ai_narration_draft(self.task_id, 1,
             expected_revision=task.narration_ranges.revision(self.task_id), content=original_audio)
+        task.edit_local_ai_draft_transcript(self.task_id, 1,
+            expected_revision=task.narration_ranges.revision(self.task_id), text="Fresh flowers.")
+        for scene in self.plan.scenes:
+            task.edit_local_ai_narration_range(self.task_id, scene.scene_id,
+                expected_revision=task.narration_ranges.revision(self.task_id), reviewed=True)
         draft_audio = task.local_ai_narration_preview(self.task_id, 1, replacement=True)["audio"]
         with patch.object(task, 'generate_final_videos', side_effect=self.stub_render):
             task.apply_local_ai_narration_drafts(self.task_id,
                 expected_revision=task.narration_ranges.revision(self.task_id),
-                expected_snapshot=gm.scene_timing_snapshot(self.manifest()), omit_captions=True)
+                expected_snapshot=gm.scene_timing_snapshot(self.manifest()), rebuild_captions=True, confirm_transcripts=True)
         active_mix = task.narration_mix.resolve(self.task_id, str(self.root / "audio.mp3"))
         narration_map = (self.root / 'narration_ranges.json').read_bytes()
         with patch.object(task, 'generate_final_videos', side_effect=self.stub_render):
@@ -172,6 +177,8 @@ class TestSceneTiming(LocalAITestCase):
         self.assertEqual((self.root / 'narration_ranges.json').read_bytes(), narration_map)
         self.assertEqual(task.narration_ranges.preview_payload(self.task_id, self.plan, str(self.root / "audio.mp3"), 1, replacement=True)["audio"], draft_audio)
         self.assertEqual(task.narration_mix.resolve(self.task_id, str(self.root / "audio.mp3")), active_mix)
+        edited_caption = task.narration_mix.caption_file(self.task_id, str(self.root / "audio.mp3"))
+        self.assertIn("Fresh flowers.", Path(edited_caption).read_text())
 
     def test_task_resume_after_restart_uses_saved_timing_and_only_missing_scene(self):
         task.prepare_local_ai_narration_ranges(self.task_id)
@@ -182,11 +189,16 @@ class TestSceneTiming(LocalAITestCase):
         original_audio = task.local_ai_narration_preview(self.task_id, 1)["audio"]
         task.replace_local_ai_narration_draft(self.task_id, 1,
             expected_revision=task.narration_ranges.revision(self.task_id), content=original_audio)
+        task.edit_local_ai_draft_transcript(self.task_id, 1,
+            expected_revision=task.narration_ranges.revision(self.task_id), text="Fresh flowers.")
+        for scene in self.plan.scenes:
+            task.edit_local_ai_narration_range(self.task_id, scene.scene_id,
+                expected_revision=task.narration_ranges.revision(self.task_id), reviewed=True)
         draft_audio = task.local_ai_narration_preview(self.task_id, 1, replacement=True)["audio"]
         with patch.object(task, 'generate_final_videos', side_effect=self.stub_render):
             task.apply_local_ai_narration_drafts(self.task_id,
                 expected_revision=task.narration_ranges.revision(self.task_id),
-                expected_snapshot=gm.scene_timing_snapshot(self.manifest()), omit_captions=True)
+                expected_snapshot=gm.scene_timing_snapshot(self.manifest()), rebuild_captions=True, confirm_transcripts=True)
         active_mix = task.narration_mix.resolve(self.task_id, str(self.root / "audio.mp3"))
         narration_map = (self.root / 'narration_ranges.json').read_bytes()
         with patch.object(task, 'generate_final_videos', side_effect=self.stub_render):
@@ -213,6 +225,8 @@ class TestSceneTiming(LocalAITestCase):
         self.assertEqual((self.root / 'narration_ranges.json').read_bytes(), narration_map)
         self.assertEqual(task.narration_ranges.preview_payload(self.task_id, self.plan, str(self.root / "audio.mp3"), 1, replacement=True)["audio"], draft_audio)
         self.assertEqual(task.narration_mix.resolve(self.task_id, str(self.root / "audio.mp3")), active_mix)
+        edited_caption = task.narration_mix.caption_file(self.task_id, str(self.root / "audio.mp3"))
+        self.assertIn("Fresh flowers.", Path(edited_caption).read_text())
 
     def test_fractional_cut_rounding_does_not_accumulate_duration_drift(self):
         values = video._quantize_scene_durations([1.01] * 10)
