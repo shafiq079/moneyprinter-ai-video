@@ -1224,6 +1224,95 @@ def _select_scene_editor_task(task_id: str) -> None:
     st.session_state["scene_editor_task_id"] = str(task_id)
 
 
+def _render_caption_editor() -> None:
+    task_id = str(st.session_state.get("scene_editor_task_id") or "")
+    if not task_id:
+        return
+    st.subheader(tr("Independent Caption Editor"))
+    st.caption(tr("Independent Caption Help"))
+    try:
+        context = tm.caption_editor_context(task_id, read_only=True)
+        snapshot = generation_manifest.scene_timing_snapshot(generation_manifest.load_manifest(task_id))
+    except (OSError, ValueError, KeyError) as exc:
+        st.info(f"{tr('Caption Editor Unavailable')}: {exc}")
+        return
+    task_state = sm.state.get_task(task_id) or {}
+    busy = tm.is_task_busy(task_state)
+    if task_state.get("caption_edit_error"):
+        st.error(f"{tr('Caption Editor Unavailable')}: {task_state['caption_edit_error']}")
+    ce = tm.caption_edits
+    try:
+        revision = ce.revision(task_id)
+        draft = ce.load_validated(task_id, context["binding"], context["duration_ms"])
+    except (OSError, ValueError, KeyError, TypeError):
+        draft = None
+        revision = (ce.revision(task_id) if ce.file(task_id).stat().st_size <= ce.MAX_BYTES else "invalid") if ce.file(task_id).exists() else "missing"
+    def queue(action, **changes):
+        request = {"action": action, "expected_revision": revision, "expected_binding": context["binding"], **changes}
+        if action in {"preview", "apply", "restore"}:
+            request["expected_snapshot"] = snapshot
+        try:
+            webui_task.submit_caption_edit(task_id, request=request)
+        except Exception as exc:
+            st.error(f"{tr('Caption Editor Unavailable')}: {exc}")
+        else:
+            st.toast(tr("Caption Edit Queued"))
+            st.rerun(scope="fragment")
+    if st.button(tr("Prepare Caption Draft"), key=f"caption_prepare_{task_id}", disabled=busy):
+        queue("prepare")
+    if st.button(tr("Restore Base Captions"), key=f"caption_restore_{task_id}",
+                 disabled=busy or not ce.file(task_id, ce.ACTIVE).exists()):
+        queue("restore")
+    if draft is None:
+        st.info(tr("Caption Draft Required"))
+        return
+    cues = draft["cues"]
+    st.dataframe([{"cue": i + 1, "start": c["start_ms"] / 1000, "end": c["end_ms"] / 1000,
+                   "text": c["text"]} for i, c in enumerate(cues)], hide_index=True)
+    st.download_button(tr("Download Caption Draft"), ce.srt(cues), file_name="caption-draft.srt",
+                       key=f"caption_download_{task_id}")
+    if st.button(tr("Preview Caption Draft"), key=f"caption_preview_{task_id}", disabled=busy):
+        queue("preview")
+    if st.button(tr("Apply Captions And Export"), key=f"caption_apply_{task_id}", disabled=busy):
+        queue("apply")
+    if not cues:
+        st.info(tr("Empty Caption Track"))
+    else:
+        index = st.selectbox(tr("Caption Cue"), options=list(range(len(cues))),
+                             format_func=lambda i: str(i + 1), key=f"caption_selected_{task_id}_{revision}")
+        cue = cues[index]
+        suffix = f"{task_id}_{revision}_{index}"
+        start = st.number_input(tr("Caption Start"), value=cue["start_ms"] / 1000, step=0.001,
+                                format="%.3f", key=f"caption_start_{suffix}", disabled=busy)
+        end = st.number_input(tr("Caption End"), value=cue["end_ms"] / 1000, step=0.001,
+                              format="%.3f", key=f"caption_end_{suffix}", disabled=busy)
+        text = st.text_area(tr("Caption Text"), value=cue["text"], max_chars=2000,
+                            key=f"caption_text_{suffix}", disabled=busy)
+        if st.button(tr("Save Caption Cue"), key=f"caption_save_{task_id}", disabled=busy):
+            queue("update", index=index, start=start, end=end, text=text)
+        if st.button(tr("Remove Caption Cue"), key=f"caption_remove_{task_id}", disabled=busy):
+            queue("remove", index=index)
+        split_at = st.number_input(tr("Caption Split Time"), value=(cue["start_ms"] + cue["end_ms"]) / 2000,
+                                   step=0.001, format="%.3f", key=f"caption_split_time_{suffix}", disabled=busy)
+        second_text = st.text_area(tr("Caption Second Text"), value=cue["text"], max_chars=2000,
+                                   key=f"caption_second_{suffix}", disabled=busy)
+        if st.button(tr("Split Caption Cue"), key=f"caption_split_{task_id}", disabled=busy):
+            queue("split", index=index, split_at=split_at, text=text, second_text=second_text)
+        if st.button(tr("Merge Next Caption"), key=f"caption_merge_{task_id}", disabled=busy or index + 1 == len(cues)):
+            queue("merge", index=index)
+    with st.expander(tr("Add Caption Cue")):
+        start = st.number_input(tr("Caption Start"), value=0.0, step=0.001, format="%.3f", key=f"caption_add_start_{task_id}", disabled=busy)
+        end = st.number_input(tr("Caption End"), value=min(1.0, context["duration_ms"] / 1000), step=0.001,
+                              format="%.3f", key=f"caption_add_end_{task_id}", disabled=busy)
+        text = st.text_area(tr("Caption Text"), max_chars=2000, key=f"caption_add_text_{task_id}", disabled=busy)
+        if st.button(tr("Add Caption Cue"), key=f"caption_add_{task_id}", disabled=busy):
+            queue("add", start=start, end=end, text=text)
+    preview = ce.load_preview(task_id, context["binding"], context["duration_ms"], snapshot, ce.render_signature(context["params"]))
+    if preview:
+        st.caption(tr("Caption Preview Help"))
+        st.video(str(ce.file(task_id, preview["preview_asset"])))
+
+
 def _render_scene_editor() -> None:
     task_id = str(st.session_state.get("scene_editor_task_id") or "")
     if not task_id:
@@ -1816,7 +1905,8 @@ def _render_artifact_package_view() -> None:
             if candidate.stat().st_size > limit:
                 raise ValueError("edited artifact is too large")
             content = candidate.read_bytes()
-            metadata_file = generation_manifest.resolve_asset(task_id, "narration_mix.json")
+            metadata_file = generation_manifest.resolve_asset(task_id,
+                "caption_track.json" if key == "edited_captions" and package.get("caption_track") else "narration_mix.json")
             if metadata_file.stat().st_size > 1024 * 1024:
                 raise ValueError("edited artifact metadata is too large")
             metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
@@ -2080,6 +2170,7 @@ def _render_task_manager_panel(tasks=None):
             _render_task_table(filtered_tasks, status_key)
 
     _render_scene_editor()
+    _render_caption_editor()
 
     _render_artifact_package_view()
 

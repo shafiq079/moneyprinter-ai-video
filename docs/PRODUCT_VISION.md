@@ -323,3 +323,32 @@ serialization, the WebUI default/manual switch and legacy task restore, real
 variable-scene MP4 export, process-state restart/partial Resume and render-only
 reuse without new speech or model work. Manual operator and real-GPU acceptance
 remain deferred.
+
+## Completed milestone: independent caption editing
+
+Creative AI tasks now support independently editable caption drafts: text and
+start/end changes, split/merge/add/remove, an ordered cue table, SRT download,
+real video preview, apply/export and restore-base captions. Empty tracks can
+explicitly export without captions. The editor lives below Scene Editor and
+extends the existing Streamlit/task/composer architecture. It also supports
+No Voice timing tracks; factual and stock-task editing remain outside scope.
+
+Drafts and active captions are separate, source-bound snapshots. Applied
+captions survive later draft edits, reopening, visual edits, render-only changes
+and same-task Resume. Original script/audio/captions and generation assets remain
+intact. Preview uses saved combined video and narration with caption styling;
+it omits background music. Final exports retain saved music. Preview and export
+make no video-generation, TTS, Whisper, publishing or new paid-music request.
+
+The version-1 `caption_edits.json` and `caption_track.json` sidecars, UUID-owned
+SRT/preview assets and optional artifact/API references preserve legacy tasks.
+Cues use milliseconds, within the current audio duration, with no overlaps and
+bounded cue/text/file counts. Source/revision/scene checks and output backups
+protect queued edits and failed renders. Restore Original Narration removes
+captions bound to its edited mix and rolls both layers back on failure. See
+`docs/SCENE_EDITING.md` for the workflow, bounds, persistence and process-kill
+limitation. No new project format or frontend stack is selected.
+
+This completes independent caption editing; independently positioned music/SFX,
+portable project archives and automatic word alignment remain later work.
+Manual operator acceptance remains deferred; automated verification is CPU-only.

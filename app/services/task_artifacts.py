@@ -265,6 +265,23 @@ def build_output_package(
                     package["edited_script"] = _task_relative_existing_file(task_id, metadata["script_asset"])
         except (OSError, ValueError, TypeError, KeyError):
             pass
+    # Independent captions override narration-generated captions, while their
+    # original sources remain discoverable through the existing fields.
+    from app.services import caption_edits
+    draft = _task_relative_existing_file(task_id, root / caption_edits.DRAFT)
+    if draft:
+        package["caption_edits"] = draft
+    active = _task_relative_existing_file(task_id, root / caption_edits.ACTIVE)
+    if active:
+        package["caption_track"] = active
+        try:
+            from app.services import task
+            context = task.caption_editor_context(task_id, read_only=True)
+            data = caption_edits.resolve(task_id, context["binding"], context["duration_ms"])
+            package["captions_omitted"] = not bool(data["cues"])
+            package["edited_captions"] = _task_relative_existing_file(task_id, data["captions_asset"]) if data["cues"] else None
+        except (OSError, ValueError, TypeError, KeyError):
+            package["edited_captions"] = None
     return package
 
 

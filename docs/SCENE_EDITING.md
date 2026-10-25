@@ -420,3 +420,86 @@ Manager → Artifacts**, with bounded file reads and checksum checks. Resetting
 removes these active edited references and returns to original artifacts.
 Regenerate still starts from the original generation recipe; use the downloaded
 edited script if you want its changed text in a new task.
+
+## Independent caption editing
+
+Creative AI tasks now have an **Independent Caption Editor** below the existing
+Scene Editor. It supports caption text and start/end edits, splitting a cue with
+two supplied texts, merging with the following cue, adding a cue in a gap and
+removing cues. These actions affect a saved draft only. Narration text/audio,
+scene prompts, clips, generation recipes and original captions stay intact.
+
+1. Open the task's Scene Editor and choose **Prepare / refresh caption draft**.
+   It copies the current original or active narration-generated SRT into an
+   independent draft. A task without captions starts empty. Valid existing
+   drafts are retained; changed sources require explicit preparation to rebase.
+2. Select a cue and edit its text or times in seconds. Save before making a
+   different timing operation. Split uses the selected cue's saved boundaries
+   and the two text fields. Merge concatenates the following cue with a line
+   break and spans both cues, including any gap. Add sorts the new cue into
+   time order. Invalid overlaps, out-of-range times or empty cues are rejected.
+3. **Preview Caption Draft** queues a real MP4 from the saved first combined
+   video, current narration and saved caption style. It leaves published final
+   and combined videos unchanged. Background music is omitted from this preview;
+   the label explains this. Existing combined video is required. The cue table
+   and draft SRT download are also available without rendering a preview.
+4. **Apply Captions And Export** rerenders with existing visuals, audio and
+   saved music. The active caption track takes precedence over original and
+   narration-generated captions. Cues are rendered at their manual times with
+   sentence-level display and existing global caption styling. Editing a draft
+   after applying does not change exports until Apply is chosen again.
+5. **Restore Base Captions** removes only the independent active track and
+   rerenders the current original/narration-generated captions with their saved
+   enabled setting. Drafts remain available. Removing every cue and applying
+   deliberately exports without captions. Task Manager Artifacts downloads the
+   active SRT separately from the preserved original captions.
+
+Cues use integer milliseconds, positive lengths, chronological order and no
+overlap. Gaps are allowed. Bounds are the current recorded/silent timing audio
+(up to one hour); at most 2000 cues, 2000 characters per non-empty plain-text
+cue and one MiB per JSON/SRT file are accepted. Blank text lines, control codes
+and markup delimiters are rejected. This does not perform speech recognition,
+word alignment, factual review, scene-specific caption styling or a frontend
+replacement. Factual and stock-task caption editing remain outside this slice.
+Explicit No Voice timing tasks can use captions without generating speech.
+
+### Caption persistence and change impact
+
+`caption_edits.json` stores schema-version-1 draft cues and their binding to the
+original/effective audio and base captions. `caption_track.json` stores an
+independent active snapshot plus the task-relative SRT reference/hash under
+`caption_tracks/<UUID>/captions.srt`. Active use validates source identity,
+duration, cue bounds, canonical SRT bytes and hashes. Draft changes do not
+invalidate an already applied active snapshot. Reordering visuals, scene edits,
+render-only styling changes and same-task Resume retain the active captions.
+No TTS, Whisper, video model, publishing or new paid-music request is made by
+caption preview/apply/restore; export reuses existing generated music.
+
+`caption_preview.json` binds a preview under `caption_previews/<UUID>/` to the
+exact draft revision, source binding, combined-video hash, scene snapshot and
+render settings. A changed draft, narration, footage or style invalidates it.
+Success cleans inactive owned preview/track directories; failed preview work
+keeps the last good preview. Artifact/API fields `caption_edits` and
+`caption_track` index the optional sidecars. `edited_captions` points to the
+validated independent SRT while that layer is active.
+
+New narration mixes require restoring independent captions first so they cannot
+silently reuse old timing. **Restore Original Narration** also removes an active
+independent caption layer bound to the mix, returning to original audio and
+captions together. Both layers and prior rendered videos roll back if that
+restore fails. This recovery also works for damaged narration-mix metadata.
+Drafts survive and can be explicitly rebased afterward.
+
+Actions use the existing serialized task queue with copied requests, source and
+revision checks, busy-task exclusion, scene snapshots for preview/apply/restore,
+and late validation. Caption-only draft/preview actions retain prior task status.
+Apply/restore stage assets before atomic metadata publication and preserve prior
+metadata and final/combined videos on in-process rendering failure. As with the
+existing narration workflow, publication across multiple MP4s and sidecars is
+not one filesystem-wide transaction across process termination. Saved sources
+and validated active assets support rerender/restore recovery after restarting.
+
+CPU acceptance uses real MP4 composition and fake video fixtures, offline audio,
+Streamlit controls, queue/status checks, invalid/stale-input and rollback cases,
+No Voice/factual boundaries, and partial Resume with active natural narration.
+Manual operator acceptance and real-GPU testing remain deferred.

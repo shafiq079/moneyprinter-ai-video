@@ -5,6 +5,7 @@ import re
 import shutil
 import socket
 import threading
+import uuid
 import tempfile
 import time
 from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
@@ -18,6 +19,7 @@ from app.config import config
 from app.models import const
 from app.models.schema import VideoConcatMode, VideoParams
 from app.services import bgm as bgm_service
+from app.services import caption_edits
 from app.services import factual_content
 from app.services import generation_manifest, local_ai, narration_ranges, narration_mix, narration_timeline, scene_planner
 from app.services import (
@@ -1181,6 +1183,7 @@ def generate_final_videos(
     combined_video_paths = []
     warnings = []
     variable_timing = None
+    original_audio_file = audio_file
     if local_ai.is_local_ai_source(params.video_source):
         effective_audio = narration_mix.resolve(task_id, audio_file)
         if effective_audio != audio_file:
@@ -1194,6 +1197,13 @@ def generate_final_videos(
             params = params.model_copy(update={"subtitle_enabled": bool(edited_captions), "subtitle_display_mode": "sentence"})
             subtitle_path = edited_captions or ""
             warnings.append({"code": "edited_narration_scene_captions" if edited_captions else "edited_narration_captions_omitted"})
+    if local_ai.is_local_ai_source(params.video_source) and caption_edits.file(task_id, caption_edits.ACTIVE).exists():
+        if params.content_mode != "creative":
+            raise ValueError("independent captions support creative tasks only")
+        binding, duration_ms, _base = _caption_sources(task_id, original_audio_file)
+        track = caption_edits.resolve(task_id, binding, duration_ms)
+        subtitle_path = str(caption_edits.file(task_id, track["captions_asset"])) if track["cues"] else ""
+        params = params.model_copy(update={"subtitle_enabled": bool(track["cues"]), "subtitle_display_mode": "sentence"})
     local_ai_final_duration = float(audio_duration or 0)
     if local_ai.is_local_ai_source(params.video_source):
         try:
@@ -2269,6 +2279,8 @@ def apply_local_ai_narration_drafts(task_id: str, *, expected_revision: str,
                                     confirm_transcripts: bool = False, expected_timeline: str | None = None, _queued: bool = False) -> dict:
     params, plan, audio, captions, duration, prior = _load_scene_regeneration_context(task_id)
     _assert_scene_edit_available(prior, queued=_queued, stage="narration_ranges")
+    if not reset and caption_edits.file(task_id, caption_edits.ACTIVE).exists():
+        raise ValueError("restore independent captions before changing active narration")
     if any(type(v) is not bool for v in (reset, omit_captions, rebuild_captions, confirm_transcripts)):
         raise ValueError("invalid narration apply request")
     if not reset and (params.content_mode != "creative" or omit_captions == rebuild_captions):
@@ -2309,13 +2321,22 @@ def apply_local_ai_narration_drafts(task_id: str, *, expected_revision: str,
         if directory is not None:
             shutil.rmtree(directory, ignore_errors=True)
         raise
+    caption_file = caption_edits.file(task_id, caption_edits.ACTIVE)
+    old_captions = None
+    if reset and caption_file.exists():
+        if caption_file.stat().st_size > caption_edits.MAX_BYTES:
+            _discard_render_backups(backups)
+            raise ValueError("caption metadata is too large")
+        old_captions = caption_file.read_bytes()
     published = False
     try:
+        published = True
         if reset:
             mix_file.unlink()
+            if old_captions is not None:
+                caption_file.unlink()
         else:
             scene_planner._atomic_write_json(mix_file, metadata)
-        published = True
         sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING,
                              current_stage="narration_ranges_queued")
         _clear_render_paths(root)
@@ -2330,6 +2351,8 @@ def apply_local_ai_narration_drafts(task_id: str, *, expected_revision: str,
     except Exception:
         if published:
             narration_mix.restore(task_id, old)
+        if old_captions is not None:
+            caption_edits.restore(task_id, old_captions)
         _restore_render_backups(root, backups)
         if directory is not None:
             shutil.rmtree(directory, ignore_errors=True)
@@ -2346,6 +2369,149 @@ def apply_local_ai_narration_drafts(task_id: str, *, expected_revision: str,
     except (OSError, ValueError, KeyError):
         logger.warning("Could not clean inactive narration mixes")
     return {"task_id": task_id, "applied": not reset, "videos": finals}
+
+
+def _caption_sources(task_id: str, source: str) -> tuple[dict, int, str]:
+    effective = narration_mix.resolve(task_id, source)
+    original_captions = caption_edits.file(task_id, "subtitle.srt")
+    base = (narration_mix.caption_file(task_id, source) if narration_mix.file(task_id).exists()
+            else str(original_captions) if original_captions.exists() else "")
+    duration_ms = round(voice.get_audio_duration(effective) * 1000)
+    binding = caption_edits.source_binding(task_id, source, effective, base)
+    caption_edits.validate_cues([], duration_ms)
+    return binding, duration_ms, base
+
+
+def caption_editor_context(task_id: str, *, _queued: bool = False, read_only: bool = False) -> dict:
+    params, _plan, audio, captions, duration, prior = _load_scene_regeneration_context(task_id)
+    if not read_only:
+        _assert_scene_edit_available(prior, queued=_queued, stage="caption_edit")
+    if params.content_mode != "creative":
+        raise ValueError("independent caption editing supports creative AI tasks only")
+    binding, duration_ms, base = _caption_sources(task_id, audio)
+    return {"params": params, "audio": audio, "captions": captions, "duration": duration,
+            "prior": prior, "binding": binding, "duration_ms": duration_ms, "base": base}
+
+
+def _preview_local_ai_captions(task_id: str, context: dict, expected_revision: str, expected_snapshot: dict) -> dict:
+    if generation_manifest.scene_timing_snapshot(generation_manifest.load_manifest(task_id)) != expected_snapshot:
+        raise ValueError("scene inputs changed; refresh the editor")
+    data = caption_edits.load_validated(task_id, context["binding"], context["duration_ms"])
+    combined = caption_edits.file(task_id, "combined-1.mp4")
+    if not combined.is_file():
+        raise ValueError("export the video first to create a caption preview")
+    combined_hash = generation_manifest.media_sha256(combined)
+    directory = caption_edits.file(task_id, f"caption_previews/{uuid.uuid4().hex}")
+    directory.mkdir(parents=True)
+    try:
+        captions = directory / "captions.srt"
+        captions.write_bytes(caption_edits.srt(data["cues"]).encode("utf-8"))
+        output = directory / "preview.mp4"
+        params = context["params"].model_copy(update={"subtitle_enabled": bool(data["cues"]),
+            "subtitle_display_mode": "sentence", "bgm_type": "", "bgm_volume": 0})
+        audio = narration_mix.resolve(task_id, context["audio"])
+        video.generate_video(str(combined), audio, str(captions) if data["cues"] else "", str(output), params,
+                             bgm_file_override="")
+        video.validate_final_video_output(str(output),
+            expected_aspect=str(getattr(params.video_aspect, "value", params.video_aspect)),
+            expected_duration=context["duration_ms"] / 1000, require_audio=True)
+        if (caption_edits.revision(task_id) != expected_revision
+                or _caption_sources(task_id, context["audio"])[0] != context["binding"]
+                or generation_manifest.scene_timing_snapshot(generation_manifest.load_manifest(task_id)) != expected_snapshot
+                or generation_manifest.media_sha256(combined) != combined_hash):
+            raise ValueError("caption preview inputs changed; refresh the editor")
+        result = {**data, "draft_revision": expected_revision, "scene_snapshot": expected_snapshot,
+                  "render_settings": caption_edits.render_signature(context["params"]),
+                  "combined_sha256": combined_hash, "preview_asset": output.relative_to(caption_edits.file(task_id).parent).as_posix(),
+                  "preview_sha256": generation_manifest.media_sha256(output)}
+        caption_edits.save(task_id, "caption_preview.json", result)
+    except Exception:
+        shutil.rmtree(directory, ignore_errors=True)
+        raise
+    for old in directory.parent.iterdir():
+        if old != directory and re.fullmatch(r"[a-f0-9]{32}", old.name) and not old.is_symlink():
+            shutil.rmtree(old, ignore_errors=True)
+    return result
+
+
+def edit_local_ai_captions(task_id: str, *, action: str, expected_revision: str,
+                           expected_binding: dict, expected_snapshot: dict | None = None,
+                           _queued: bool = False, **changes) -> dict:
+    context = caption_editor_context(task_id, _queued=_queued)
+    if context["binding"] != expected_binding:
+        raise ValueError("caption sources changed; refresh the editor")
+    if action != "restore" and caption_edits.revision(task_id) != expected_revision:
+        raise ValueError("caption draft changed; refresh the editor")
+    def check_sources():
+        if _caption_sources(task_id, context["audio"])[0] != expected_binding:
+            raise ValueError("caption sources changed while editing")
+    if action == "prepare":
+        return caption_edits.prepare(task_id, expected_binding, context["duration_ms"], context["base"],
+                                     expected_revision, before_publish=check_sources)
+    if action == "preview":
+        return _preview_local_ai_captions(task_id, context, expected_revision, expected_snapshot)
+    if action not in {"apply", "restore"}:
+        draft = caption_edits.load_validated(task_id, expected_binding, context["duration_ms"])
+        edited = caption_edits.edit(draft, action, **changes)
+        check_sources()
+        if caption_edits.revision(task_id) != expected_revision:
+            raise ValueError("caption draft changed; refresh the editor")
+        caption_edits.save(task_id, caption_edits.DRAFT, edited)
+        return edited
+    manifest = generation_manifest.load_manifest(task_id)
+    if generation_manifest.scene_timing_snapshot(manifest) != expected_snapshot:
+        raise ValueError("scene inputs changed; refresh the editor")
+    active = caption_edits.file(task_id, caption_edits.ACTIVE)
+    if active.exists() and active.stat().st_size > caption_edits.MAX_BYTES:
+        raise ValueError("caption metadata is too large")
+    old = active.read_bytes() if active.exists() else None
+    if action == "restore" and old is None:
+        return {"task_id": task_id, "applied": False}
+    directory = None
+    if action == "apply":
+        draft = caption_edits.load_validated(task_id, expected_binding, context["duration_ms"])
+        metadata, directory = caption_edits.stage(task_id, draft)
+    root = _scene_regeneration_task_root(task_id)
+    try:
+        backups = _backup_render_paths(root, suffix="caption-edit-backup")
+    except Exception:
+        if directory:
+            shutil.rmtree(directory, ignore_errors=True)
+        raise
+    try:
+        check_sources()
+        if action == "restore":
+            active.unlink()
+        else:
+            caption_edits.save(task_id, caption_edits.ACTIVE, metadata)
+        sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, current_stage="caption_edit_queued")
+        _clear_render_paths(root)
+        finals, combined, warnings = generate_final_videos(
+            task_id, context["params"], generation_manifest.active_scene_paths(task_id),
+            context["audio"], context["captions"], context["duration"], reuse_existing_generated_bgm=True)
+        check_sources()
+        if ((action == "apply" and caption_edits.revision(task_id) != expected_revision)
+                or generation_manifest.scene_timing_snapshot(generation_manifest.load_manifest(task_id)) != expected_snapshot):
+            raise ValueError("caption or scene inputs changed during rendering")
+        if action == "apply":
+            caption_edits.resolve(task_id, expected_binding, context["duration_ms"])
+    except Exception:
+        caption_edits.restore(task_id, old)
+        _restore_render_backups(root, backups)
+        if directory:
+            shutil.rmtree(directory, ignore_errors=True)
+        prior = context["prior"]
+        sm.state.update_task(task_id, state=prior.get("state", const.TASK_STATE_FAILED),
+                             progress=prior.get("progress", 0), current_stage=prior.get("current_stage"))
+        raise
+    _discard_render_backups(backups)
+    sm.state.update_task(task_id, state=const.TASK_STATE_COMPLETE, progress=100, current_stage=None,
+                         videos=finals, combined_videos=combined, warnings=warnings or None)
+    try:
+        caption_edits.cleanup(task_id)
+    except (OSError, ValueError, KeyError):
+        logger.warning("Could not clean inactive caption tracks")
+    return {"task_id": task_id, "applied": action == "apply", "videos": finals}
 
 
 def local_ai_narration_preview(task_id: str, scene_id: int, *, replacement: bool = False) -> dict:

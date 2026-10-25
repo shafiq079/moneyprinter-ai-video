@@ -357,6 +357,8 @@ class TaskArtifactPackageData(BaseModel):
     generation_manifest: Optional[str] = None
     narration_ranges: Optional[str] = None
     narration_mix: Optional[str] = None
+    caption_edits: Optional[str] = None
+    caption_track: Optional[str] = None
     edited_audio: Optional[str] = None
     edited_audio_duration: Optional[float] = None
     edited_captions: Optional[str] = None

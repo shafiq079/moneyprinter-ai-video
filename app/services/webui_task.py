@@ -513,6 +513,44 @@ def submit_scene_reorder(
     return True
 
 
+def _run_caption_edit(task_id: str, request: dict, previous: dict) -> dict:
+    error = None
+    try:
+        with config.runtime_config_lock():
+            return tm.edit_local_ai_captions(task_id, _queued=True, **request)
+    except Exception as exc:
+        error = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+        return {"task_id": task_id, "error": error}
+    finally:
+        current = sm.state.get_task(task_id) or {}
+        if current.get("current_stage") == "caption_edit_queued":
+            sm.state.update_task(task_id, **previous)
+        sm.state.patch_task(task_id, caption_edit_error=error)
+
+
+def submit_caption_edit(task_id: str, *, request: dict) -> None:
+    with _resume_submission_lock:
+        context = tm.caption_editor_context(task_id)
+        request = deepcopy(request)
+        if request.get("expected_binding") != context["binding"]:
+            raise ValueError("caption sources changed; refresh the editor")
+        if request.get("action") != "restore" and tm.caption_edits.revision(task_id) != request.get("expected_revision"):
+            raise ValueError("caption draft changed; refresh the editor")
+        if request.get("action") in {"apply", "restore", "preview"}:
+            snapshot = tm.generation_manifest.scene_timing_snapshot(tm.generation_manifest.load_manifest(task_id))
+            if request.get("expected_snapshot") != snapshot:
+                raise ValueError("scene inputs changed; refresh the editor")
+        previous = {k: context["prior"].get(k, default) for k, default in
+                    (("state", const.TASK_STATE_FAILED), ("progress", 0), ("current_stage", None))}
+        sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING,
+                             current_stage="caption_edit_queued", caption_edit_error=None)
+        try:
+            _task_manager.add_task(_run_caption_edit, task_id=task_id, request=request, previous=previous)
+        except Exception:
+            sm.state.update_task(task_id, **previous, caption_edit_error="caption edit could not be scheduled")
+            raise
+
+
 def _run_narration_ranges(task_id: str, previous: dict, edit_request: dict | None = None) -> dict:
     error = None
     try:
