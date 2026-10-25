@@ -709,6 +709,14 @@
     "Download Edited Narration": "Download edited narration",
     "Download Edited Captions": "Download edited captions (SRT)",
     "Download Edited Script": "Download edited script (JSON)",
-    "Narration Fit Result": "Saved recording tempo: {ratio:.2f}x"
+    "Narration Fit Result": "Saved recording tempo: {ratio:.2f}x",
+    "Keep Natural Narration Duration": "Keep natural recording length and retime the timeline",
+    "Preview Revised Timeline": "Preview revised timeline",
+    "Natural Timeline Help": "Natural recordings move later narration and captions. Visual cuts follow the same time changes using saved visual timing, or original planned durations. Review coverage before applying. No video generation starts automatically.",
+    "Timeline Duration Change": "Narration duration: {before:.3f}s → {after:.3f}s",
+    "Revised Narration Ranges": "Original and revised narration timing (seconds)",
+    "Revised Visual Coverage": "Revised visual timing and saved footage coverage (seconds)",
+    "Longer Footage Required": "Some scenes need longer or valid footage. Upload a suitable clip or restore a suitable saved version, then preview again. Apply is blocked until coverage is sufficient; footage is never stretched or looped.",
+    "Timeline Preview Required": "Preview the revised timeline before applying. Draft, source or scene changes require a fresh preview."
   }
 }

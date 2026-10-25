@@ -19,7 +19,7 @@ from app.models import const
 from app.models.schema import VideoConcatMode, VideoParams
 from app.services import bgm as bgm_service
 from app.services import factual_content
-from app.services import generation_manifest, local_ai, narration_ranges, narration_mix, scene_planner
+from app.services import generation_manifest, local_ai, narration_ranges, narration_mix, narration_timeline, scene_planner
 from app.services import (
     elevenlabs_music,
     llm,
@@ -1179,12 +1179,16 @@ def generate_final_videos(
     final_video_paths = []
     combined_video_paths = []
     warnings = []
+    variable_timing = None
     if local_ai.is_local_ai_source(params.video_source):
         effective_audio = narration_mix.resolve(task_id, audio_file)
         if effective_audio != audio_file:
             if params.content_mode != "creative":
                 raise ValueError("edited narration exports currently support creative tasks only")
             edited_captions = narration_mix.caption_file(task_id, audio_file)
+            variable_timing = narration_mix.visual_timing(task_id, scene_planner.load_scene_plan(task_id), audio_file, params.video_clip_speed)
+            if variable_timing:
+                audio_duration = variable_timing["timeline"]["audio_duration"]
             audio_file = effective_audio
             params = params.model_copy(update={"subtitle_enabled": bool(edited_captions), "subtitle_display_mode": "sentence"})
             subtitle_path = edited_captions or ""
@@ -1206,7 +1210,11 @@ def generate_final_videos(
     timing_options = {}
     if local_ai.is_local_ai_source(params.video_source):
         manifest = generation_manifest.load_manifest(task_id)
-        if manifest is not None and "playback_durations" in manifest:
+        if variable_timing:
+            if list(downloaded_videos) != generation_manifest.active_scene_paths(task_id):
+                raise ValueError("retimed materials do not match saved playback order")
+            timing_options["scene_durations"] = [variable_timing["visual_durations"][str(i)] for i in generation_manifest.scene_playback_order(manifest)]
+        elif manifest is not None and "playback_durations" in manifest:
             durations = generation_manifest.scene_playback_durations(manifest)
             expected_paths = generation_manifest.active_scene_paths(task_id)
             if list(downloaded_videos) != expected_paths:
@@ -2186,10 +2194,10 @@ def edit_local_ai_narration_range(task_id: str, scene_id: int, *, expected_revis
 
 def replace_local_ai_narration_draft(task_id: str, scene_id: int, *, expected_revision: str,
                                      content: bytes | None = None, text: str | None = None,
-                                     fit_duration: bool = False, _queued: bool = False) -> dict:
+                                     fit_duration: bool = False, natural_duration: bool = False, _queued: bool = False) -> dict:
     plan, audio = local_ai_narration_context(task_id, _queued=_queued)
     return narration_ranges.replace_draft(task_id, plan, audio, scene_id,
-        expected_revision=expected_revision, content=content, text=text, fit_duration=fit_duration)
+        expected_revision=expected_revision, content=content, text=text, fit_duration=fit_duration, natural_duration=natural_duration)
 
 
 def edit_local_ai_draft_transcript(task_id: str, scene_id: int, *, expected_revision: str,
@@ -2200,11 +2208,11 @@ def edit_local_ai_draft_transcript(task_id: str, scene_id: int, *, expected_revi
 
 
 def generate_local_ai_narration_draft(task_id: str, scene_id: int, *, expected_revision: str,
-                                     text: str, fit_duration: bool = True, _queued: bool = False) -> dict:
+                                     text: str, fit_duration: bool = True, natural_duration: bool = False, _queued: bool = False) -> dict:
     params, plan, audio, _captions, _duration, prior = _load_scene_regeneration_context(task_id)
     _assert_scene_edit_available(prior, queued=_queued, stage="narration_ranges")
     text = narration_ranges.normalize_text(text)
-    if type(scene_id) is not int or type(fit_duration) is not bool:
+    if type(scene_id) is not int or type(fit_duration) is not bool or type(natural_duration) is not bool or (natural_duration and fit_duration):
         raise ValueError("invalid narration synthesis request")
     if params.content_mode != "creative" or voice.is_no_voice(params.voice_name):
         raise ValueError("scene speech requires a creative task with a saved speech voice; otherwise upload a recording")
@@ -2232,13 +2240,23 @@ def generate_local_ai_narration_draft(task_id: str, scene_id: int, *, expected_r
             content = stream.read()
         return narration_ranges.replace_draft(task_id, plan, audio, scene_id,
             expected_revision=expected_revision, content=content, text=text,
-            fit_duration=fit_duration, origin="tts")
+            fit_duration=fit_duration, origin="tts", natural_duration=natural_duration)
+
+
+def preview_local_ai_narration_timeline(task_id: str, *, expected_revision: str, _queued: bool = False) -> dict:
+    params, plan, audio, _captions, _duration, prior = _load_scene_regeneration_context(task_id)
+    _assert_scene_edit_available(prior, queued=_queued, stage="narration_ranges")
+    if params.content_mode != "creative":
+        raise ValueError("natural narration retiming supports creative tasks only")
+    if narration_ranges.revision(task_id) != expected_revision:
+        raise ValueError("narration ranges changed; refresh the Scene Editor")
+    return narration_timeline.save_preview(task_id, plan, audio, params.video_clip_speed)
 
 
 def apply_local_ai_narration_drafts(task_id: str, *, expected_revision: str,
                                     expected_snapshot: dict, reset: bool = False,
                                     omit_captions: bool = False, rebuild_captions: bool = False,
-                                    confirm_transcripts: bool = False, _queued: bool = False) -> dict:
+                                    confirm_transcripts: bool = False, expected_timeline: str | None = None, _queued: bool = False) -> dict:
     params, plan, audio, captions, duration, prior = _load_scene_regeneration_context(task_id)
     _assert_scene_edit_available(prior, queued=_queued, stage="narration_ranges")
     if any(type(v) is not bool for v in (reset, omit_captions, rebuild_captions, confirm_transcripts)):
@@ -2262,6 +2280,17 @@ def apply_local_ai_narration_drafts(task_id: str, *, expected_revision: str,
     if not reset:
         if voice.is_no_voice(params.voice_name) and not params.custom_audio_file:
             raise ValueError("No Voice has no recorded narration to edit")
+        ranges = narration_ranges.load_validated(task_id, plan, audio)
+        if narration_timeline.has_natural(ranges):
+            saved_preview = narration_timeline.load_preview(task_id)
+            if saved_preview is None or saved_preview.get("signature") != expected_timeline:
+                raise ValueError("preview the revised timeline before applying natural-duration narration")
+            current_preview = narration_timeline.preview(task_id, plan, audio, params.video_clip_speed)
+            if current_preview["signature"] != expected_timeline:
+                raise ValueError("timeline or footage changed; preview the revised timeline again")
+            if not current_preview["covered"]:
+                missing = [str(row["scene_id"]) for row in current_preview["rows"] if row["needs_footage"]]
+                raise ValueError("longer valid footage is required for scenes: " + ", ".join(missing))
         metadata, directory = narration_mix.build(task_id, plan, audio, expected_revision, rebuild_captions=rebuild_captions)
     root = _scene_regeneration_task_root(task_id)
     try:
@@ -2481,9 +2510,15 @@ def replace_local_ai_scene_clip(
         scene_regeneration_scene_id=int(scene_id),
     )
     try:
+        import_options = {}
+        ranges = narration_ranges.read_ranges(task_id)
+        if ranges is not None and narration_timeline.has_natural(ranges):
+            ranges = narration_ranges.load_validated(task_id, plan, audio_file)
+            _timeline, required = narration_timeline.visual_durations(ranges, original_manifest)
+            import_options["minimum_duration"] = required[str(scene_id)]
         manifest, imported_path = clip_import.stage_clip_import(
             task_id, scene, content, start_seconds=start_seconds,
-            source_metadata=_source_metadata,
+            source_metadata=_source_metadata, **import_options,
         )
         generation_manifest.save_manifest(task_id, manifest)
         materials = generation_manifest.active_scene_paths(task_id)

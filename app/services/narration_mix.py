@@ -11,7 +11,7 @@ import wave
 from pathlib import Path
 
 from app.services import generation_manifest as gm
-from app.services import narration_ranges as nr, scene_planner
+from app.services import narration_ranges as nr, narration_timeline as nt, scene_planner
 from app.utils import utils
 
 NAME = "narration_mix.json"
@@ -41,7 +41,7 @@ def resolve(task_id: str, source: str) -> str:
     if plan is None:
         raise ValueError("edited narration scene plan is unavailable")
     ranges = nr.load_validated(task_id, plan, source)
-    if (data.get("schema_version") not in (1, 2) or type(data.get("captions_omitted")) is not bool
+    if (data.get("schema_version") not in (1, 2, 3) or type(data.get("captions_omitted")) is not bool
             or (data["schema_version"] == 1 and data["captions_omitted"] is not True)
             or data.get("binding") != ranges["binding"]
             or data.get("ranges_sha256") != _signature(ranges)):
@@ -56,12 +56,16 @@ def resolve(task_id: str, source: str) -> str:
     output = gm.resolve_asset(task_id, asset)
     if output.stat().st_size > 3600 * 32000 + 4096 or gm.media_sha256(output) != data.get("audio_sha256"):
         raise ValueError("edited narration audio changed; restore original narration")
+    timeline = nt.audio_timeline(ranges) if data["schema_version"] == 3 else None
+    if timeline is not None and data.get("timeline") != timeline:
+        raise ValueError("retimed narration timeline changed; restore original narration")
+    expected_duration = timeline["audio_duration"] if timeline else ranges["audio_duration"]
     with wave.open(str(output), "rb") as audio:
         if (audio.getframerate() != 16000 or audio.getnchannels() != 1
                 or audio.getsampwidth() != 2
-                or abs(audio.getnframes() / 16000 - ranges["audio_duration"]) > 1 / 16000):
+                or abs(audio.getnframes() / 16000 - expected_duration) > 1 / 16000):
             raise ValueError("invalid edited narration audio")
-    if data["schema_version"] == 2:
+    if data["schema_version"] in (2, 3) and not data["captions_omitted"]:
         if not {i["scene_id"] for i in ranges["ranges"]} <= set(ranges.get("operator_reviewed_scene_ids", [])):
             raise ValueError("edited narration range reviews changed; restore original narration")
         _validate_caption_assets(task_id, data)
@@ -142,7 +146,9 @@ def build(task_id: str, plan, source: str, expected_revision: str, *, rebuild_ca
     directory = gm.resolve_asset(task_id, f"narration_mixes/{uuid.uuid4().hex}")
     directory.mkdir(parents=True)
     try:
-        caption_metadata = _write_caption_assets(directory, data) if rebuild_captions else {}
+        timeline = nt.audio_timeline(data) if nt.has_natural(data) else None
+        caption_data = nt.retimed_ranges(data, timeline) if timeline else data
+        caption_metadata = _write_caption_assets(directory, caption_data) if rebuild_captions else {}
         decoded = directory / "original.wav"
         nr._extract(Path(source), decoded, 0, 3601)
         output = directory / "audio.wav"
@@ -150,17 +156,18 @@ def build(task_id: str, plan, source: str, expected_revision: str, *, rebuild_ca
             if abs(original.getnframes() / 16000 - data["audio_duration"]) > 1 / 16000:
                 raise ValueError("decoded narration duration changed")
             target.setparams(original.getparams())
-            for item in data["ranges"]:
+            for index, item in enumerate(data["ranges"]):
                 start, end = round(item["start"] * 16000), round(item["end"] * 16000)
                 if item.get("replacement"):
                     if item["scene_id"] not in data.get("operator_reviewed_scene_ids", []):
                         raise ValueError("review each replaced narration range first")
                     candidate = nr._replacement_preview(task_id, item)
                     with wave.open(str(candidate), "rb") as replacement:
-                        frames = replacement.readframes(end - start)
+                        count = round((timeline["segments"][index]["end"] - timeline["segments"][index]["start"]) * 16000) if timeline else end - start
+                        frames = replacement.readframes(count)
                     # The draft contract permits 2 ms of decoded-length tolerance.
                     # Normalize only this tiny tail to keep every later sample fixed.
-                    frames += bytes(max(0, (end - start) * 2 - len(frames)))
+                    frames += bytes(max(0, count * 2 - len(frames)))
                     target.writeframesraw(frames)
                 else:
                     original.setpos(start)
@@ -182,11 +189,26 @@ def build(task_id: str, plan, source: str, expected_revision: str, *, rebuild_ca
             "audio_asset": f"narration_mixes/{directory.name}/audio.wav",
             "audio_sha256": gm.media_sha256(output),
             **caption_metadata,
+            **({"schema_version": 3, "timeline": timeline} if timeline else {}),
         }
         return metadata, directory
     except Exception:
         shutil.rmtree(directory, ignore_errors=True)
         raise
+
+
+def visual_timing(task_id: str, plan, source: str, speed: float) -> dict | None:
+    if not file(task_id).exists():
+        return None
+    metadata = json.loads(file(task_id).read_text(encoding="utf-8"))
+    if metadata.get("schema_version") != 3:
+        return None
+    resolve(task_id, source)
+    result = nt.preview(task_id, plan, source, speed)
+    if not result["covered"]:
+        missing = [str(row["scene_id"]) for row in result["rows"] if row["needs_footage"]]
+        raise ValueError("longer valid footage is required for scenes: " + ", ".join(missing))
+    return result
 
 
 def cleanup(task_id: str) -> None:

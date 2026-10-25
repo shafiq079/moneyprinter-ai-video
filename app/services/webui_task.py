@@ -519,6 +519,9 @@ def _run_narration_ranges(task_id: str, previous: dict, edit_request: dict | Non
         with config.runtime_config_lock():
             if edit_request is None:
                 tm.prepare_local_ai_narration_ranges(task_id, _queued=True)
+            elif edit_request.get("operation") == "timeline":
+                request = {k: v for k, v in edit_request.items() if k != "operation"}
+                tm.preview_local_ai_narration_timeline(task_id, _queued=True, **request)
             elif edit_request.get("operation") in ("tts", "transcript"):
                 request = {k: v for k, v in edit_request.items() if k != "operation"}
                 action = tm.generate_local_ai_narration_draft if edit_request["operation"] == "tts" else tm.edit_local_ai_draft_transcript

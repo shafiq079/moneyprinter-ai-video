@@ -258,6 +258,8 @@ def build_output_package(
                 package["edited_audio"] = _task_relative_existing_file(task_id, effective)
                 metadata = json.loads(narration_mix.file(task_id).read_text(encoding="utf-8"))
                 package["captions_omitted"] = metadata["captions_omitted"]
+                if metadata.get("schema_version") == 3:
+                    package["edited_audio_duration"] = metadata["timeline"]["audio_duration"]
                 if not metadata["captions_omitted"]:
                     package["edited_captions"] = _task_relative_existing_file(task_id, metadata["captions_asset"])
                     package["edited_script"] = _task_relative_existing_file(task_id, metadata["script_asset"])

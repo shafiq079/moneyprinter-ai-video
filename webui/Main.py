@@ -1311,8 +1311,33 @@ def _render_scene_editor() -> None:
     confirm_transcripts = st.checkbox(tr("Narration Mix Confirm"), key=f"mix_confirm_{task_id}", disabled=is_busy)
     rebuild_captions = st.checkbox(tr("Rebuild Scene Captions"), value=True, key=f"mix_captions_{task_id}", disabled=is_busy or active_mix)
     st.caption(tr("Scene Captions Help"))
+    natural_pending = any(i.get("replacement", {}).get("timing_mode") == "natural" for i in (narration_map or {}).get("ranges", []))
+    revised_timeline = tm.narration_timeline.load_preview(task_id) if natural_pending else None
+    if natural_pending:
+        st.caption(tr("Natural Timeline Help"))
+        if st.button(tr("Preview Revised Timeline"), key=f"preview_narration_timeline_{task_id}", disabled=is_busy):
+            try:
+                webui_task.submit_narration_ranges(task_id, edit_request={
+                    "operation": "timeline", "expected_revision": narration_revision})
+            except Exception as exc:
+                st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
+            else:
+                st.toast(tr("Narration Previews Queued"))
+                st.rerun(scope="fragment")
+        if revised_timeline:
+            st.caption(tr("Timeline Duration Change").format(
+                before=revised_timeline["timeline"]["source_duration"], after=revised_timeline["timeline"]["audio_duration"]))
+            st.caption(tr("Revised Narration Ranges"))
+            st.dataframe(revised_timeline["timeline"]["segments"], hide_index=True)
+            st.caption(tr("Revised Visual Coverage"))
+            st.dataframe([{k: row.get(k) for k in ("scene_id", "start", "end", "duration", "available_duration", "needs_footage")}
+                          for row in revised_timeline["rows"]], hide_index=True)
+            if not revised_timeline["covered"]:
+                st.warning(tr("Longer Footage Required"))
+        else:
+            st.info(tr("Timeline Preview Required"))
     apply_mix = st.button(tr("Apply Narration Drafts"), key=f"apply_narration_mix_{task_id}",
-                          disabled=is_busy or active_mix or not confirm_transcripts or not any(i.get("replacement") for i in (narration_map or {}).get("ranges", [])))
+                          disabled=is_busy or active_mix or not confirm_transcripts or (natural_pending and (not revised_timeline or not revised_timeline["covered"])) or not any(i.get("replacement") for i in (narration_map or {}).get("ranges", [])))
     reset_mix = st.button(tr("Restore Original Narration"), key=f"reset_narration_mix_{task_id}", disabled=is_busy or not active_mix)
     if apply_mix or reset_mix:
         try:
@@ -1320,7 +1345,8 @@ def _render_scene_editor() -> None:
                 "operation": "apply", "expected_revision": narration_revision,
                 "expected_snapshot": timing_snapshot, "reset": reset_mix,
                 "omit_captions": not rebuild_captions, "rebuild_captions": rebuild_captions,
-                "confirm_transcripts": confirm_transcripts})
+                "confirm_transcripts": confirm_transcripts,
+                **({"expected_timeline": revised_timeline["signature"]} if natural_pending and revised_timeline else {})})
         except Exception as exc:
             st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
         else:
@@ -1450,15 +1476,19 @@ def _render_scene_editor() -> None:
                 edited_text = st.text_area(tr("Replacement Narration Text"),
                     value=(narration_range.get("replacement") or {}).get("text", scene.narration_segment),
                     max_chars=2000, key=f"draft_text_{task_id}_{scene_id}_{narration_revision}", disabled=is_busy or active_mix)
+                natural_duration = st.checkbox(tr("Keep Natural Narration Duration"),
+                    value=(narration_range.get("replacement") or {}).get("timing_mode") == "natural",
+                    key=f"draft_natural_{task_id}_{scene_id}", disabled=is_busy or active_mix)
                 fit_duration = st.checkbox(tr("Fit Narration Duration"), value=True,
-                    key=f"draft_fit_{task_id}_{scene_id}", disabled=is_busy or active_mix)
+                    key=f"draft_fit_{task_id}_{scene_id}", disabled=is_busy or active_mix or natural_duration)
                 st.caption(tr("Narration Text Help"))
                 if st.button(tr("Generate Scene Speech"), key=f"tts_draft_{task_id}_{scene_id}",
                              disabled=is_busy or active_mix or not checked or not edited_text.strip()):
                     try:
                         webui_task.submit_narration_ranges(task_id, edit_request={
                             "operation": "tts", "scene_id": scene_id, "expected_revision": narration_revision,
-                            "text": edited_text, "fit_duration": fit_duration})
+                            "text": edited_text, "fit_duration": fit_duration and not natural_duration,
+                            **({"natural_duration": True} if natural_duration else {})})
                     except Exception as exc:
                         st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
                     else:
@@ -1489,7 +1519,8 @@ def _render_scene_editor() -> None:
                         webui_task.submit_narration_ranges(task_id, edit_request={
                             "operation": "replacement", "scene_id": scene_id,
                             "expected_revision": narration_revision, "content": draft_upload.getvalue(),
-                            "text": edited_text, "fit_duration": fit_duration})
+                            "text": edited_text, "fit_duration": fit_duration and not natural_duration,
+                            **({"natural_duration": True} if natural_duration else {})})
                     except Exception as exc:
                         st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
                     else:

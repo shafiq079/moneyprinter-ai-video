@@ -921,6 +921,249 @@ st.session_state['artifact_package_task_id'] = 'narration'
         with self.assertRaisesRegex(ValueError, "inputs changed"):
             task.narration_mix.resolve(self.task_id, str(self.audio))
 
+    def natural_draft(self, seconds=0.5, scene_id=1, frequency=220):
+        return task.replace_local_ai_narration_draft(self.task_id, scene_id,
+            expected_revision=nr.revision(self.task_id), content=self.draft_audio(seconds, frequency),
+            text="Natural recording.", natural_duration=True)
+
+    def timeline_preview(self):
+        return task.preview_local_ai_narration_timeline(self.task_id, expected_revision=nr.revision(self.task_id))
+
+    def apply_natural(self, preview):
+        return task.apply_local_ai_narration_drafts(self.task_id,
+            expected_revision=nr.revision(self.task_id),
+            expected_snapshot=gm.scene_timing_snapshot(gm.load_manifest(self.task_id)),
+            expected_timeline=preview["signature"], rebuild_captions=True, confirm_transcripts=True)
+
+    def test_variable_full_preview_coverage_upload_export_and_restore(self):
+        self.setup_mix()
+        self.review(2)
+        self.natural_draft(1.5)
+        def speech(**kwargs):
+            Path(kwargs["voice_file"]).write_bytes(self.draft_audio(0.5, 660))
+            return object()
+        with patch.object(task.voice, "tts", side_effect=speech):
+            task.generate_local_ai_narration_draft(self.task_id, 2, expected_revision=nr.revision(self.task_id),
+                text="Short bees.", natural_duration=True, fit_duration=False)
+        with wave.open(BytesIO(task.local_ai_narration_preview(self.task_id, 1, replacement=True)["audio"])) as clip:
+            self.assertEqual(clip.getnframes(), 24000)
+        with self.assertRaisesRegex(ValueError, "preview"):
+            self.apply_captions()
+        preview = self.timeline_preview()
+        self.assertEqual(preview["timeline"]["audio_duration"], 2)
+        self.assertEqual([(i["start"], i["end"]) for i in preview["timeline"]["segments"]], [(0, 1.5), (1.5, 2)])
+        self.assertFalse(preview["covered"])
+        self.assertTrue(preview["rows"][0]["needs_footage"])
+        with self.assertRaisesRegex(ValueError, "longer valid footage"):
+            self.apply_natural(preview)
+        self.assertFalse(task.narration_mix.file(self.task_id).exists())
+        longer = self.root / "longer.mp4"
+        subprocess.run([utils.get_ffmpeg_binary(), "-y", "-f", "lavfi", "-i", "color=c=blue:s=90x160:r=30:d=2",
+            "-c:v", "libx264", "-threads", "1", "-pix_fmt", "yuv420p", str(longer)], capture_output=True, check=True)
+        self.params.font_name = "MicrosoftYaHeiBold.ttc"
+        self.params.font_size = 32
+        task.save_script_data(self.task_id, self.params.video_script, [], self.params)
+        with patch.object(task.local_ai, "prepare_provider", side_effect=AssertionError("GPU")):
+            task.replace_local_ai_scene_clip(self.task_id, 1, longer.read_bytes())
+        record = gm.scene_record(gm.load_manifest(self.task_id), 1)
+        self.assertGreaterEqual(record["actual_duration"], 1.5)
+        self.assertIsNone(task.narration_timeline.load_preview(self.task_id))
+        preview = self.timeline_preview()
+        self.assertTrue(preview["covered"])
+        protected = {name: (self.root / name).read_bytes() for name in ("script.json", "narration.wav", "subtitle.srt", "scene_plan.json")}
+        manifest = gm.manifest_path(self.task_id).read_bytes()
+        with (patch.object(task.voice, "tts", side_effect=AssertionError("TTS")),
+              patch.object(task, "generate_subtitle", side_effect=AssertionError("Whisper")),
+              patch.object(task.local_ai, "prepare_provider", side_effect=AssertionError("GPU")),
+              patch.object(task, "_schedule_cross_post", side_effect=AssertionError("publishing"))):
+            result = self.apply_natural(preview)
+        self.assertAlmostEqual(task.voice.get_audio_duration(result["videos"][0]), 2, delta=0.05)
+        metadata = json.loads(task.narration_mix.file(self.task_id).read_text())
+        self.assertEqual(metadata["schema_version"], 3)
+        self.assertEqual(metadata["timeline"], preview["timeline"])
+        package = task_artifacts.build_output_package(self.task_id)
+        self.assertEqual(TaskArtifactPackageData.model_validate(package).edited_audio_duration, 2)
+        self.assertIn("00:00:01,500 --> 00:00:02,000\nShort bees.", (self.root / package["edited_captions"]).read_text())
+        decoded = self.root / "retimed.wav"
+        nr._extract(Path(result["videos"][0]), decoded, 0, 3)
+        with wave.open(str(decoded), "rb") as stream:
+            samples = np.frombuffer(stream.readframes(stream.getnframes()), dtype="<i2")
+        for start, end, expected in ((0.2, 1, 220), (1.6, 1.9, 660)):
+            chunk = samples[round(start * 16000):round(end * 16000)]
+            frequency = np.fft.rfftfreq(len(chunk), 1 / 16000)[np.abs(np.fft.rfft(chunk)).argmax()]
+            self.assertAlmostEqual(frequency, expected, delta=5)
+        with patch.object(task.voice, "tts", side_effect=AssertionError("TTS")):
+            restored = self.apply_mix(reset=True)
+        self.assertAlmostEqual(task.voice.get_audio_duration(restored["videos"][0]), 3, delta=0.05)
+        self.assertFalse(task.narration_mix.file(self.task_id).exists())
+        self.assertEqual(gm.manifest_path(self.task_id).read_bytes(), manifest)
+        for name, content in protected.items():
+            self.assertEqual((self.root / name).read_bytes(), content)
+
+    def test_variable_longer_total_real_export(self):
+        self.setup_mix()
+        self.review(2)
+        self.transcript()
+        self.natural_draft(3, scene_id=2)
+        preview = self.timeline_preview()
+        self.assertEqual(preview["timeline"]["audio_duration"], 4)
+        self.assertFalse(preview["covered"])
+        longer = self.root / "longer.mp4"
+        subprocess.run([utils.get_ffmpeg_binary(), "-y", "-f", "lavfi", "-i",
+                        "color=c=blue:s=90x160:r=30:d=3.5", "-c:v", "libx264",
+                        "-threads", "1", "-pix_fmt", "yuv420p", str(longer)],
+                       capture_output=True, check=True)
+        self.params.font_name = "MicrosoftYaHeiBold.ttc"
+        self.params.font_size = 32
+        task.save_script_data(self.task_id, self.params.video_script, [], self.params)
+        with patch.object(task.local_ai, "prepare_provider", side_effect=AssertionError("GPU")):
+            task.replace_local_ai_scene_clip(self.task_id, 2, longer.read_bytes())
+            preview = self.timeline_preview()
+            self.assertTrue(preview["covered"])
+            result = self.apply_natural(preview)
+        self.assertAlmostEqual(task.voice.get_audio_duration(result["videos"][0]), 4, delta=0.05)
+        self.assertEqual(task_artifacts.build_output_package(self.task_id)["edited_audio_duration"], 4)
+        # Cached previews are advisory and cannot be edited into a valid lease.
+        path = self.root / task.narration_timeline.NAME
+        cached = json.loads(path.read_text())
+        cached["timeline"]["audio_duration"] = 99
+        path.write_text(json.dumps(cached))
+        self.assertIsNone(task.narration_timeline.load_preview(self.task_id))
+
+    def test_variable_timewarp_reordered_visuals_and_balanced_timings(self):
+        self.prepare()
+        self.review()
+        self.natural_draft(0.5)
+        data = nr.read_ranges(self.task_id)
+        manifest = gm.load_manifest(self.task_id)
+        manifest.update(playback_order=[2, 1], playback_durations={"1": 1.5, "2": 1.5})
+        timeline, durations = task.narration_timeline.visual_durations(data, manifest)
+        self.assertEqual(timeline["audio_duration"], 2.5)
+        # The original cut at 1.5s is halfway into the second narration segment.
+        # After shortening segment one by 0.5s, that cut moves to 1.0s.
+        self.assertEqual(durations, {"2": 1, "1": 1.5})
+        self.assertEqual(gm.scene_playback_order(manifest), [2, 1])
+        self.assertTrue(task.video._scene_duration_covered(31 / 30, 1.03))
+        self.assertFalse(task.video._scene_duration_covered(31 / 30, 1.0))
+        self.assertFalse(task.video._scene_duration_covered(1.5, 1.4))
+        bad = json.loads((self.root / "narration_ranges.json").read_text())
+        bad["ranges"][0]["replacement"]["audio_duration"] = float("nan")
+        (self.root / "narration_ranges.json").write_text(json.dumps(bad))
+        with self.assertRaises(ValueError):
+            nr.read_ranges(self.task_id)
+
+    def test_variable_stale_media_queue_and_transaction_rollback(self):
+        self.setup_mix()
+        self.review(2)
+        self.natural_draft(0.5)
+        request = {"operation": "timeline", "expected_revision": nr.revision(self.task_id)}
+        with patch.object(webui_task._task_manager, "add_task") as queue:
+            webui_task.submit_narration_ranges(self.task_id, edit_request=request)
+        request["expected_revision"] = "mutated"
+        call = queue.call_args
+        self.assertTrue(call.args[0](**call.kwargs)["prepared"])
+        self.assertEqual(self.state.get_task(self.task_id)["state"], const.TASK_STATE_COMPLETE)
+        preview = task.narration_timeline.load_preview(self.task_id)
+        asset = gm.resolve_asset(self.task_id, gm.scene_record(gm.load_manifest(self.task_id), 1)["active_asset"])
+        content = asset.read_bytes()
+        asset.write_bytes(content + b"changed media")
+        with self.assertRaisesRegex(ValueError, "footage changed"):
+            self.apply_natural(preview)
+        self.assertFalse(task.narration_mix.file(self.task_id).exists())
+        asset.write_bytes(content)
+        final = self.root / "final-1.mp4"
+        final.write_bytes(b"previous final")
+        with patch.object(task, "generate_final_videos", side_effect=RuntimeError("render failed")):
+            with self.assertRaises(RuntimeError):
+                self.apply_natural(preview)
+        self.assertEqual(final.read_bytes(), b"previous final")
+        self.assertFalse(task.narration_mix.file(self.task_id).exists())
+        before = nr.revision(self.task_id)
+        with self.assertRaises(ValueError):
+            task.replace_local_ai_narration_draft(self.task_id, 1, expected_revision=before,
+                content=self.draft_audio(), natural_duration=True, fit_duration=True)
+        self.assertEqual(nr.revision(self.task_id), before)
+        self.params.video_clip_speed = 1.5
+        task.save_script_data(self.task_id, self.params.video_script, [], self.params)
+        with self.assertRaisesRegex(ValueError, "normal visual"):
+            self.timeline_preview()
+
+    def test_variable_restart_resume_reuses_audio_caps_and_only_missing_footage(self):
+        from app.services.local_ai.fake import FakeLocalVideoProvider
+        self.setup_mix()
+        self.review(2)
+        self.natural_draft(0.5)
+        self.params.font_name = "MicrosoftYaHeiBold.ttc"
+        self.params.font_size = 32
+        task.save_script_data(self.task_id, self.params.video_script, [], self.params)
+        preview = self.timeline_preview()
+        with patch.object(task, "generate_final_videos", return_value=([], [], [])):
+            self.apply_natural(preview)
+        old_mix = task.narration_mix.file(self.task_id).read_bytes()
+        gm.resolve_asset(self.task_id, gm.scene_record(gm.load_manifest(self.task_id), 2)["active_asset"]).unlink()
+        restarted = MemoryState()
+        restarted.update_task(self.task_id, state=const.TASK_STATE_FAILED)
+        provider = FakeLocalVideoProvider()
+        self.public_patch.stop()
+        with (patch.object(task.sm, "state", restarted),
+              patch.object(task.local_ai, "prepare_provider", return_value=provider),
+              patch.object(task, "generate_script", side_effect=AssertionError("script")),
+              patch.object(task, "generate_audio", side_effect=AssertionError("TTS")),
+              patch.object(task, "generate_subtitle", side_effect=AssertionError("captions")),
+              patch.dict("os.environ", {"MPT_ENABLE_LOCAL_AI_FAKE_PROVIDER": "1"})):
+            context = task.load_local_ai_resume_context(self.task_id)
+            result = task.start(self.task_id, context["params"], resume_context=context)
+        self.assertEqual(provider.generated_scene_ids, [2])
+        self.assertAlmostEqual(task.voice.get_audio_duration(result["videos"][0]), 2.5, delta=0.05)
+        self.assertEqual(task.narration_mix.file(self.task_id).read_bytes(), old_mix)
+
+    def test_variable_scene_editor_preview_and_apply_controls(self):
+        self.setup_mix()
+        self.review(2)
+        self.natural_draft()
+        preview = self.timeline_preview()
+        source = (Path(__file__).parents[2] / "webui/Main.py").read_text(encoding="utf-8")
+        node = next(n for n in ast.parse(source).body
+                    if isinstance(n, ast.FunctionDef) and n.name == "_render_scene_editor")
+        harness = """
+import os
+import streamlit as st
+from app.services import generation_manifest, scene_planner, webui_task
+from app.services import state as sm
+from app.services import task as tm
+from app.utils import utils
+from app.services.local_ai.clip_import import MAX_CLIP_UPLOAD_BYTES
+def tr(value): return value
+st.session_state['scene_editor_task_id'] = 'narration'
+"""
+        app = AppTest.from_string(harness + ast.get_source_segment(source, node)
+                                  + "\n_render_scene_editor()\n", default_timeout=30).run()
+        self.assertFalse(app.exception)
+        self.assertEqual(len(app.dataframe), 2)
+        self.assertTrue(app.checkbox(key="draft_natural_narration_1").value)
+        self.assertTrue(app.checkbox(key="draft_fit_narration_1").disabled)
+        with patch.object(webui_task, "submit_narration_ranges") as submit, patch("streamlit.rerun"):
+            app.button(key="preview_narration_timeline_narration").click().run()
+            submit.assert_called_once_with(self.task_id, edit_request={
+                "operation": "timeline", "expected_revision": nr.revision(self.task_id)})
+        with patch.object(webui_task, "submit_narration_ranges") as submit, patch("streamlit.rerun"):
+            app.button(key="tts_draft_narration_1").click().run()
+            request = submit.call_args.kwargs["edit_request"]
+            self.assertTrue(request["natural_duration"])
+            self.assertFalse(request["fit_duration"])
+        app.checkbox(key="mix_confirm_narration").check().run()
+        self.assertFalse(app.button(key="apply_narration_mix_narration").disabled)
+        with patch.object(webui_task, "submit_narration_ranges") as submit, patch("streamlit.rerun"):
+            app.button(key="apply_narration_mix_narration").click().run()
+            request = submit.call_args.kwargs["edit_request"]
+            self.assertEqual(request["expected_timeline"], preview["signature"])
+            self.assertTrue(request["rebuild_captions"])
+        self.natural_draft(seconds=0.6)
+        app.run()
+        self.assertTrue(app.button(key="apply_narration_mix_narration").disabled)
+        self.assertTrue(any("Timeline Preview Required" in i.value for i in app.info))
+        self.assertFalse(app.exception)
+
     def test_scene_editor_labels_estimates_and_plays_validated_clip(self):
         self.prepare()
         source = (Path(__file__).parents[2] / "webui/Main.py").read_text(

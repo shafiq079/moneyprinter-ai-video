@@ -531,3 +531,59 @@ Keep TLS verification enabled. A 403 or other rejection still requires checking
 service access/network conditions; an upgraded package is not proof of live
 availability. Our development environment's short live check failed TLS
 verification, so operator-environment speech acceptance remains outstanding.
+
+## Completed milestone: variable-duration creative narration
+
+Creative local-AI tasks now support natural-length uploaded or explicitly
+synthesized narration. In the Scene Editor, enable **Keep Natural Narration
+Duration**, save a recording, then use **Preview Revised Timeline**. The preview
+shows original and revised narration ranges, the revised total duration, and
+required versus available footage for every visual scene. Applying requires a
+current preview, sufficient footage and confirmed transcripts. Fixed-duration
+fitting remains available as a separate choice; natural duration and fitting
+cannot be combined.
+
+Later narration and reviewed-range captions shift automatically. Visual cuts
+are mapped monotonically through the changed narration clock and quantized to
+output frames, preserving the saved visual playback order. The starting visual
+timeline uses saved playback durations, or the original planned scene durations
+when no overrides exist; it does not infer a new timeline from clip lengths.
+Any original visual tail beyond narration shifts by the total audio delta.
+Narration remains sample-accurate at 16 kHz. Coverage permits rounded container
+durations only when the final output frame timestamp remains inside the clip.
+No visual looping, stretching, automatic model requests or GPU inference are
+performed by retiming. Normal visual playback speed is required, and edited
+audio is limited to one hour.
+
+When footage is too short, supply a longer clip with the existing scene upload
+or version restore controls, then refresh the preview. Uploads retain enough
+footage for the pending revised slot instead of trimming to the original slot.
+Explicit Regenerate still uses the original provider recipe and can therefore
+remain too short. Narration uploads retain their existing 20 MiB limit and
+video uploads their existing 100 MiB limit.
+
+Original narration, root script/captions, source duration and generation recipe
+remain unchanged. Optional natural recording metadata lives in the compatible
+version-1 narration-ranges sidecar; active version-3 mixes bind the revised
+audio timeline, edited audio, script and optional captions. The artifact package
+exposes edited_audio_duration separately from original audio_duration. Legacy
+version-1/2 mixes remain supported. Active natural mixes are honored by later
+renders, visual edits and same-task Resume; Restore Original Narration returns
+to the original timing and captions.
+
+Preview requests run through the existing task queue and persist in
+narration_timeline_preview.json. Revision, source, playback settings and scene
+snapshot checks reject stale previews; Apply also recomputes coverage and hashes
+the saved footage before accepting the preview signature. In-process render
+failures roll back published output. The existing limitation remains: sidecar
+publication and multiple render files are not one filesystem-wide atomic
+transaction across process termination.
+
+CPU acceptance covers longer/shorter recordings, shifted captions and audio,
+footage-gap blocking, longer clip import, real MP4 apply/restore, reordered
+visuals, stale footage, queued preview, failed-render rollback, Scene Editor
+controls and restart/Resume. Provider calls are mocked or use the test-only CPU
+provider. Real GPU generation and manual operator acceptance remain deferred.
+This completes variable-duration creative narration; factual narration edits,
+independent timeline layers, automatic word alignment and portable project
+archives remain future work.

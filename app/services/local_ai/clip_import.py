@@ -38,6 +38,7 @@ def validate_start_seconds(start_seconds: float) -> None:
 def stage_clip_import(
     task_id: str, scene: SceneSpec, content: bytes, *, start_seconds: float = 0.0,
     source_metadata: dict | None = None,
+    minimum_duration: float | None = None,
 ) -> tuple[dict, Path]:
     """Publish a validated new file and return an uncommitted manifest snapshot.
 
@@ -61,7 +62,9 @@ def stage_clip_import(
         task_id, scene.scene_id, occupied
     )
     generation_manifest.resolve_asset(task_id, relative)
-    output_duration = max(scene.target_duration, generation_manifest.scene_playback_durations(manifest)[str(scene.scene_id)])
+    if minimum_duration is not None and (isinstance(minimum_duration, bool) or not isinstance(minimum_duration, (int, float)) or not math.isfinite(minimum_duration) or not 0 < minimum_duration <= 3600):
+        raise ValueError("invalid required footage duration")
+    output_duration = max(scene.target_duration, generation_manifest.scene_playback_durations(manifest)[str(scene.scene_id)], minimum_duration or 0)
     raw_path = None
     try:
         with tempfile.NamedTemporaryFile(

@@ -75,7 +75,7 @@ def read_ranges(task_id: str) -> dict | None:
             draft = item["replacement"]
             if (not isinstance(draft, dict)
                     or not {"preview_asset", "preview_sha256"} <= set(draft)
-                    or set(draft) - {"preview_asset", "preview_sha256", "text", "origin", "fit_ratio"}
+                    or set(draft) - {"preview_asset", "preview_sha256", "text", "origin", "fit_ratio", "timing_mode", "audio_duration"}
                     or not isinstance(draft["preview_asset"], str)
                     or not isinstance(draft["preview_sha256"], str)):
                 raise ValueError("invalid narration replacement metadata")
@@ -86,6 +86,14 @@ def read_ranges(task_id: str) -> dict | None:
             ratio = draft.get("fit_ratio", 1.0)
             if isinstance(ratio, bool) or not isinstance(ratio, (int, float)) or not math.isfinite(ratio) or not 0.5 <= ratio <= 2:
                 raise ValueError("invalid replacement tempo")
+            if "timing_mode" in draft:
+                draft_duration = draft.get("audio_duration")
+                if (draft["timing_mode"] != "natural" or isinstance(draft_duration, bool)
+                        or not isinstance(draft_duration, (int, float)) or not math.isfinite(draft_duration)
+                        or not 0 < draft_duration <= _MAX_SECONDS or "fit_ratio" in draft):
+                    raise ValueError("invalid natural narration duration")
+            elif "audio_duration" in draft:
+                raise ValueError("natural narration duration requires its timing mode")
             parts = Path(draft["preview_asset"]).parts
             if (len(parts) != 3 or parts[0] != "narration_replacements"
                     or len(parts[1]) != 32
@@ -233,7 +241,7 @@ def _preview(task_id: str, item: dict, *, replacement: bool = False) -> Path:
             or stream.getframerate() != 16000
             or stream.getnchannels() != 1
             or stream.getsampwidth() != 2
-            or abs(stream.getnframes() / 16000 - (item["end"] - item["start"])) > 0.002
+            or abs(stream.getnframes() / 16000 - (item["audio_duration"] if replacement and item.get("timing_mode") == "natural" else item["end"] - item["start"])) > 0.002
         ):
             raise ValueError("invalid narration preview audio")
     return candidate
@@ -541,9 +549,9 @@ def _remove_inactive_replacements(task_id: str, data: dict) -> None:
 
 def replace_draft(task_id: str, plan, audio_file: str, scene_id: int, *,
                   expected_revision: str, content: bytes | None = None,
-                  text: str | None = None, fit_duration: bool = False, origin: str = "upload") -> dict:
+                  text: str | None = None, fit_duration: bool = False, origin: str = "upload", natural_duration: bool = False) -> dict:
     """Save or remove an audition-only upload, never edit the master track."""
-    if type(scene_id) is not int or type(fit_duration) is not bool or origin not in ("upload", "tts"):
+    if type(scene_id) is not int or type(fit_duration) is not bool or type(natural_duration) is not bool or (fit_duration and natural_duration) or origin not in ("upload", "tts"):
         raise ValueError("invalid narration draft request")
     if text is not None:
         text = normalize_text(text)
@@ -587,9 +595,11 @@ def replace_draft(task_id: str, plan, audio_file: str, scene_id: int, *,
             duration = item["end"] - item["start"]
             # Decode beyond the permitted duration so an overlong upload is
             # rejected rather than silently trimmed. No time stretching/padding.
-            _extract(upload, output, 0, (duration * 2 if fit_duration else duration) + 0.2, input_format)
+            _extract(upload, output, 0, _MAX_SECONDS + 1 if natural_duration else (duration * 2 if fit_duration else duration) + 0.2, input_format)
             with wave.open(str(output), "rb") as stream:
                 actual = stream.getnframes() / stream.getframerate()
+            if not 0 < actual <= _MAX_SECONDS:
+                raise ValueError("recording must contain at most one hour of audio")
             ratio = actual / duration
             if fit_duration:
                 if not 0.5 <= ratio <= 2:
@@ -597,7 +607,7 @@ def replace_draft(task_id: str, plan, audio_file: str, scene_id: int, *,
                 fitted = directory / "fitted.wav"
                 _fit_audio(output, fitted, round(duration * 16000), ratio)
                 fitted.replace(output)
-            elif abs(actual - duration) > 0.002:
+            elif not natural_duration and abs(actual - duration) > 0.002:
                 raise ValueError(f"replacement must match the range duration ({duration:.3f} seconds) within 2 ms")
             upload.unlink()
             item["replacement"] = {
@@ -607,6 +617,8 @@ def replace_draft(task_id: str, plan, audio_file: str, scene_id: int, *,
             if text is not None:
                 item["replacement"]["text"] = text
             item["replacement"]["origin"] = origin
+            if natural_duration:
+                item["replacement"].update(timing_mode="natural", audio_duration=actual)
             if fit_duration:
                 item["replacement"]["fit_ratio"] = ratio
             _replacement_preview(task_id, item)

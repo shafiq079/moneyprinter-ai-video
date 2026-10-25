@@ -833,6 +833,13 @@ def _quantize_scene_durations(durations: List[float]) -> List[float]:
     return resolved
 
 
+def _scene_duration_covered(requested: float, available: float, fps: float = 30) -> bool:
+    # Container durations reported by FFmpeg/MoviePy may be rounded to 10 ms.
+    # The last output frame's timestamp must still lie inside saved footage;
+    # an exact end-duration comparison can reject an existing final frame.
+    return available > 0 and requested > 0 and requested - 1 / fps < available - 1e-9
+
+
 def combine_videos(
     combined_video_path: str,
     video_paths: List[str],
@@ -907,7 +914,7 @@ def combine_videos(
         
         if scene_durations is not None:
             requested = scene_durations[source_index]
-            if requested > clip_duration + 0.001:
+            if not _scene_duration_covered(requested, clip_duration, fps):
                 raise ValueError("saved clip is too short for its playback duration; restore a longer version or reset scene timing")
             subclipped_items.append(SubClippedVideoClip(
                 file_path=video_path, start_time=0, end_time=min(requested, clip_duration),

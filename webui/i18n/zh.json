@@ -709,6 +709,14 @@
     "Download Edited Narration": "下载编辑后的旁白",
     "Download Edited Captions": "下载编辑后的字幕（SRT）",
     "Download Edited Script": "下载编辑后的脚本（JSON）",
-    "Narration Fit Result": "已保存录音的节奏：{ratio:.2f}x"
+    "Narration Fit Result": "已保存录音的节奏：{ratio:.2f}x",
+    "Keep Natural Narration Duration": "保留录音自然时长并重新计算时间线",
+    "Preview Revised Timeline": "预览调整后的时间线",
+    "Natural Timeline Help": "自然录音将移动后续旁白和字幕。画面切点按已保存的视觉时长（或原始计划时长）同步调整。应用前请检查素材覆盖情况。不会自动启动视频生成。",
+    "Timeline Duration Change": "旁白时长：{before:.3f}秒 → {after:.3f}秒",
+    "Revised Narration Ranges": "原始及调整后的旁白时间（秒）",
+    "Revised Visual Coverage": "调整后的画面时间及已保存素材覆盖情况（秒）",
+    "Longer Footage Required": "部分场景需要更长或有效的素材。请上传合适片段或恢复合适的已保存版本，然后重新预览。覆盖不足时无法应用；不会拉伸或循环画面素材。",
+    "Timeline Preview Required": "应用前请预览调整后的时间线。草稿、源文件或场景更改后需要重新预览。"
   }
 }
