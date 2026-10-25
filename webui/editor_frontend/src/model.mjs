@@ -11,3 +11,9 @@ export function timecode(time) {
   const minutes = Math.floor(value / 60), seconds = Math.floor(value % 60);
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(Math.floor((value % 1) * 100)).padStart(2, '0')}`;
 }
+// The timestamp at duration is past the final decoded frame. Keep paused seeks
+// on the delivery video's 30 fps frame grid, including at the end of the video.
+export function frameTime(time, duration, fps = 30) {
+  const last = Math.max(0, Math.ceil(duration * fps) - 1) / fps;
+  return clampTime(Math.round(clampTime(time, duration) * fps) / fps, last);
+}

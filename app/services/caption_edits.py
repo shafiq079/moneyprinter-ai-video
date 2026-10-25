@@ -42,6 +42,7 @@ def read(task_id: str, name: str = DRAFT) -> dict | None:
     if not isinstance(value, dict) or value.get("schema_version") != 1:
         raise ValueError("invalid caption metadata")
     validate_cues(value.get("cues"), value.get("duration_ms"))
+    validate_style(value.get("style", {}))
     return value
 
 
@@ -71,6 +72,52 @@ def source_binding(task_id: str, original: str, audio: str, captions: str) -> di
             "narration_mix_sha256": gm.media_sha256(mix) if mix.exists() else None}
 
 
+STYLE_KEYS = {"font_name", "font_size", "text_fore_color", "text_background_color",
+              "rounded_subtitle_background", "stroke_color", "stroke_width",
+              "subtitle_position", "custom_position", "subtitle_animation"}
+
+
+def validate_style(style):
+    from app.utils import file_security, utils
+    if not isinstance(style, dict) or set(style) - STYLE_KEYS:
+        raise ValueError("invalid caption style")
+    for key, value in style.items():
+        if key == "font_name":
+            if not isinstance(value, str) or "/" in value or "\\" in value or Path(value).name != value:
+                raise ValueError("invalid caption font")
+            file_security.resolve_path_within_directory(utils.font_dir(), value)
+        elif key in {"text_fore_color", "stroke_color", "text_background_color"}:
+            if key == "text_background_color" and value is False:
+                continue
+            if not isinstance(value, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", value):
+                raise ValueError("caption colors must be six-digit hex colors")
+        elif key == "rounded_subtitle_background":
+            if type(value) is not bool:
+                raise ValueError("invalid caption background")
+        elif key in {"font_size", "stroke_width", "custom_position"}:
+            limit = {"font_size": (1, 200), "stroke_width": (0, 10), "custom_position": (0, 100)}[key]
+            if type(value) not in (float, int) or not math.isfinite(value) or not limit[0] <= value <= limit[1]:
+                raise ValueError("caption style value outside limits")
+        elif key == "subtitle_position" and value not in {"top", "center", "bottom", "two_thirds_bottom", "custom"}:
+            raise ValueError("invalid caption position")
+        elif key == "subtitle_animation" and value not in {"none", "pop_spring"}:
+            raise ValueError("invalid caption animation")
+
+
+def validate_spans(cue):
+    spans = cue.get("spans", [])
+    if not isinstance(spans, list) or len(spans) > 100:
+        raise ValueError("too many caption color ranges")
+    previous = 0
+    for span in spans:
+        if (not isinstance(span, dict) or set(span) != {"start", "end", "color"}
+                or type(span['start']) is not int or type(span['end']) is not int
+                or not previous <= span['start'] < span['end'] <= len(cue['text'])):
+            raise ValueError("invalid caption text selection")
+        validate_style({"text_fore_color": span['color']})
+        previous = span['end']
+
+
 def validate_cues(cues, duration_ms):
     if type(duration_ms) is not int or not 0 < duration_ms <= 3600000:
         raise ValueError("caption timeline must be at most one hour")
@@ -78,7 +125,7 @@ def validate_cues(cues, duration_ms):
         raise ValueError("caption track must contain at most 2000 cues")
     previous = 0
     for cue in cues:
-        if (not isinstance(cue, dict) or set(cue) != {"start_ms", "end_ms", "text"}
+        if (not isinstance(cue, dict) or not {"start_ms", "end_ms", "text"} <= set(cue) or set(cue) - {"start_ms", "end_ms", "text", "style", "spans"}
                 or type(cue["start_ms"]) is not int or type(cue["end_ms"]) is not int
                 or not previous <= cue["start_ms"] < cue["end_ms"] <= duration_ms):
             raise ValueError("caption cues must be ordered, non-overlapping and within the audio duration")
@@ -88,6 +135,8 @@ def validate_cues(cues, duration_ms):
                 or any(c in text for c in ("<", ">", "\x7f"))
                 or "\n\n" in text or any(not line.strip() for line in text.splitlines())):
             raise ValueError("caption text must be plain text with 1–2000 characters and no empty lines")
+        validate_style(cue.get("style", {}))
+        validate_spans(cue)
         previous = cue["end_ms"]
     if len(json.dumps(cues, ensure_ascii=False).encode()) > MAX_BYTES - 4096:
         raise ValueError("caption track is too large")
@@ -151,17 +200,33 @@ def milliseconds(value) -> int:
 
 
 def edit(data: dict, action: str, *, index: int | None = None, start=None, end=None,
-         text: str | None = None, split_at=None, second_text: str | None = None) -> dict:
+         text: str | None = None, split_at=None, second_text: str | None = None,
+         style: dict | None = None, spans: list | None = None, scope: str = "cue") -> dict:
     result = json.loads(json.dumps(data))
     cues = result["cues"]
-    if action != "add" and (type(index) is not int or not 0 <= index < len(cues)):
+    if action not in {"add", "style"} and (type(index) is not int or not 0 <= index < len(cues)):
         raise ValueError("select an existing caption cue")
-    if action in {"add", "update"}:
+    if action == "style":
+        validate_style(style)
+        if scope == "all":
+            result['style'] = style
+        elif scope == "cue" and type(index) is int and 0 <= index < len(cues):
+            cues[index]['style'] = style
+        else:
+            raise ValueError("select a caption style scope")
+    elif action == "spans":
+        cues[index]['spans'] = spans
+    elif action in {"add", "update"}:
         cue = {"start_ms": milliseconds(start), "end_ms": milliseconds(end), "text": text}
         if action == "add":
             cues.append(cue)
             cues.sort(key=lambda c: c["start_ms"])
         else:
+            old = cues[index]
+            if old.get('style'):
+                cue['style'] = old['style']
+            if old['text'] == text and old.get('spans'):
+                cue['spans'] = old['spans']
             cues[index] = cue
     elif action == "remove":
         cues.pop(index)
@@ -170,6 +235,7 @@ def edit(data: dict, action: str, *, index: int | None = None, start=None, end=N
         point = milliseconds(split_at)
         if not cue["start_ms"] < point < cue["end_ms"]:
             raise ValueError("split point must be inside the selected cue")
+        cue = {k: v for k, v in cue.items() if k != "spans"}
         cues[index:index + 1] = [{**cue, "end_ms": point, "text": text},
                                 {**cue, "start_ms": point, "text": second_text}]
     elif action == "merge":
@@ -177,7 +243,7 @@ def edit(data: dict, action: str, *, index: int | None = None, start=None, end=N
             raise ValueError("select a cue with a following cue to merge")
         first, second = cues[index:index + 2]
         cues[index:index + 2] = [{"start_ms": first["start_ms"], "end_ms": second["end_ms"],
-                                "text": first["text"] + "\n" + second["text"]}]
+                                "text": first["text"] + "\n" + second["text"], **({"style": first["style"]} if first.get("style") else {})}]
     else:
         raise ValueError("unknown caption edit action")
     validate_cues(cues, data["duration_ms"])

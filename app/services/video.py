@@ -1347,6 +1347,7 @@ def generate_video(
     output_file: str,
     params: VideoParams,
     bgm_file_override: str | None = None,
+    caption_data: dict | None = None,
 ) -> bool:
     """
     合成最终视频，并返回本次背景音乐处理是否成功。
@@ -1384,7 +1385,7 @@ def generate_video(
 
         logger.info(f"  ⑤ font: {font_path}")
 
-    def resolve_subtitle_background_color():
+    def resolve_subtitle_background_color(params):
         # 兼容历史参数：API 里 `text_background_color` 既可能是布尔值，
         # 也可能是实际颜色字符串。统一在这里归一化，避免把 True/False
         # 直接传给 TextClip 后出现不可预期的渲染结果。
@@ -1392,12 +1393,17 @@ def generate_video(
             return "#000000" if params.text_background_color else None
         return params.text_background_color
 
-    def create_text_clip(subtitle_item):
+    base_params = params
+
+    def create_text_clip(subtitle_item, cue=None):
+        style = {**(caption_data or {}).get('style', {}), **(cue or {}).get('style', {})}
+        params = base_params.model_copy(update=style)
+        font_path = file_security.resolve_path_within_directory(utils.font_dir(), params.font_name or 'STHeitiMedium.ttc')
         params.font_size = int(params.font_size)
         params.stroke_width = int(params.stroke_width)
         phrase = subtitle_item[1]
         max_width = video_width * 0.9
-        bg_color = resolve_subtitle_background_color()
+        bg_color = resolve_subtitle_background_color(params)
         rounded_bg_enabled = bool(
             getattr(params, "rounded_subtitle_background", False) and bg_color
         )
@@ -1530,6 +1536,10 @@ def generate_video(
                 size=size,
                 text_align="center",
             )
+        if cue and cue.get('spans'):
+            from app.services.caption_render import colored_text_clip
+            _clip.close()
+            _clip = colored_text_clip(phrase, cue['spans'], params, font_path, max_width)
         duration = subtitle_item[0][1] - subtitle_item[0][0]
         _clip = _clip.with_start(subtitle_item[0][0])
         _clip = _clip.with_end(subtitle_item[0][1])
@@ -1591,8 +1601,9 @@ def generate_video(
                 )
             )
             text_clips = []
-            for item in sub.subtitles:
-                clip = create_text_clip(subtitle_item=item)
+            for index, item in enumerate(sub.subtitles):
+                cue = caption_data['cues'][index] if caption_data else None
+                clip = create_text_clip(subtitle_item=item, cue=cue)
                 text_clips.append(clip)
             video_clip = CompositeVideoClip([video_clip, *text_clips])
             clip_stack.callback(video_clip.close)

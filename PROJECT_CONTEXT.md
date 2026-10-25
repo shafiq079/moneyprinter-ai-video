@@ -73,6 +73,42 @@ M3 exposed `wan22_local` through WebUI, CLI and API using the same provider/pref
 
 ## Current development boundary
 
+## Editor corrections: singleton timeline, frame seeking and caption styles
+
+The owner reported accumulating timelines during Streamlit updates, a stale
+preview while scrubbing/stepping, and missing caption appearance controls.
+Streamlit invokes the v2 JavaScript renderer on data updates without unmounting
+it. The component now reuses one React root per host and removes that root on
+unmount; obsolete cleanup callbacks cannot remove a newer render. Playback
+handlers read current source offsets and reconnect to replaced video elements.
+Idle editing has no timer. Background-job inspector choices survive Streamlit
+widget cleanup instead of reverting to Clips.
+
+Paused ruler clicks, playhead dragging and frame buttons seek the native video
+on the 30 fps delivery frame grid. Zoom reaches 30x, exposing frame subdivisions;
+end seeks stop on the last decoded frame. The full exported-video preview is
+the timeline reference; the selected-clip tab remains bounded by that clip.
+
+Captions → Caption Appearance now includes font, size, foreground/background,
+rounded background, outline, position/custom position and spring animation.
+Styles can apply to the whole draft or only the selected cue. Highlight saved
+caption text and use **Selected Text Color** on the timeline toolbar to open
+its range/color controls. Color ranges use Unicode code-point offsets. Draft
+styles and ranges survive preview, apply/export, reopening and render-only
+rerender; they do not modify original captions or invoke speech/model services.
+SRT downloads intentionally contain plain text/timing, with styles retained in
+the existing version-1 caption sidecars. Timing edits preserve ranges; changing
+text clears obsolete ranges. Split clears ranges; merge retains the first cue's
+style. Word timing remains the saved editable cue timeline, not a new alignment.
+
+Verification: **160 Python tests and 10302 subtests passed**, plus final focused
+workspace/style checks and **4 frontend tests**, including repeated v2 data
+updates and obsolete cleanup. Chromium verified one timeline across repeated
+selections, refresh, queued style/color edits and idle time; paused seeking,
+a decoded next frame, 30x zoom and highlighted-text color persistence. Real CPU
+caption preview/export/reopen/rerender tests cover style persistence and rendered
+colors. No live GPU, TTS, paid music or publishing calls were made.
+
 ## Completed milestone: dedicated video editor workspace
 
 The owner rejected editing inside Task Manager and approved an editor-style

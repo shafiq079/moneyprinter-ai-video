@@ -1259,7 +1259,7 @@ def _render_caption_editor(*, workspace=False) -> None:
             st.error(f"{tr('Caption Editor Unavailable')}: {exc}")
         else:
             st.toast(tr("Caption Edit Queued"))
-            st.rerun(scope="fragment")
+            st.rerun(scope="app" if workspace else "fragment")
     with st.expander(tr("Editor Caption Actions"), expanded=draft is None) if workspace else st.container():
         if st.button(tr("Prepare Caption Draft"), key=f"caption_prepare_{task_id}", disabled=busy):
             queue("prepare")
@@ -1306,6 +1306,10 @@ def _render_caption_editor(*, workspace=False) -> None:
             queue("split", index=index, split_at=split_at, text=text, second_text=second_text)
         if st.button(tr("Merge Next Caption"), key=f"caption_merge_{task_id}", disabled=busy or index + 1 == len(cues)):
             queue("merge", index=index)
+    if workspace:
+        from webui.caption_style_editor import render as render_caption_style
+        render_caption_style(draft, context['params'], revision, task_id, busy, queue, tr,
+                             index=index if cues else None)
     with st.expander(tr("Add Caption Cue")):
         start = st.number_input(tr("Caption Start"), value=0.0, step=0.001, format="%.3f", key=f"caption_add_start_{task_id}", disabled=busy)
         end = st.number_input(tr("Caption End"), value=min(1.0, context["duration_ms"] / 1000), step=0.001,

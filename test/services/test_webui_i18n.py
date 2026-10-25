@@ -22,6 +22,18 @@ PROVIDER_TIPS_PREFIXES = (
 # 避免把完全相同的品牌名复制十份，也避免长说明后续只更新部分语言。
 ENGLISH_FALLBACK_KEYS = frozenset(
     {
+        'All Captions',
+        'Apply Selected Text Color',
+        'Caption Appearance',
+        'Caption Style Preview Help',
+        'Caption Style Scope',
+        'Clear Text Colors',
+        'Reset Caption Style',
+        'Save Caption Style',
+        'Selected Caption',
+        'Selected Text Color',
+        'Text Selection End',
+        'Text Selection Start',
         # New factual-mode labels follow tr()'s English fallback contract;
         # only en/zh maintain the long operator explanation for this slice.
         'Add Caption Cue',

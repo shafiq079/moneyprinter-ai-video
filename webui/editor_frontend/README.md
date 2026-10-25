@@ -39,3 +39,12 @@ The music track and narration timing bars are selection targets, not generic
 movable audio layers. Music gain lives in Export; narration edits remain in the
 Narration inspector. Independent music/SFX placement, arbitrary video layers,
 undo/redo and browser-side effects rendering remain future work.
+
+The Streamlit v2 renderer is invoked again for each data update. A host-keyed
+WeakMap reuses its React root, and cleanup removes the root/container only if
+it belongs to that render. Do not append a root on every invocation. The
+lifecycle regression test compiles the production renderer against a minimal
+DOM/root harness and checks repeated updates and obsolete cleanup callbacks.
+Frame seeks use the 30 fps delivery grid, including the final valid frame.
+The browser bridge captures Unicode text selections only on explicit color
+actions; playback/scrubbing remain browser-local.

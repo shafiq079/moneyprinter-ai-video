@@ -60,6 +60,56 @@ class TestCaptionEditor(LocalAITestCase):
         self.state.update_task(self.task_id, state=task.const.TASK_STATE_COMPLETE, progress=100)
         return result
 
+    def test_styled_captions_preview_export_and_text_ranges(self):
+        import numpy as np
+        from app.services.caption_render import colored_text_clip
+        self.initial_render()
+        original = self.captions.read_bytes()
+        self.edit('prepare')
+        self.edit('style', scope='all', style={'font_size': 18, 'text_fore_color': '#00FF00',
+                  'text_background_color': '#000033', 'rounded_subtitle_background': True,
+                  'subtitle_position': 'center', 'subtitle_animation': 'none'})
+        self.edit('style', index=0, scope='cue', style={'text_fore_color': '#FF0000'})
+        self.edit('spans', index=0, spans=[{'start': 0, 'end': 3, 'color': '#FFFF00'}])
+        data = ce.read(self.task_id)
+        self.assertEqual(data['cues'][0]['style']['text_fore_color'], '#FF0000')
+        self.assertNotIn('style', data['cues'][1])
+        params = self.params.model_copy(update={**data['style'], **data['cues'][0]['style'], 'stroke_width': 0})
+        with colored_text_clip('Flowers.', data['cues'][0]['spans'], params,
+                str(Path(task.utils.font_dir()) / params.font_name), 200) as clip:
+            frame = clip.get_frame(0)
+            self.assertTrue(np.any((frame[:, :, 0] > 200) & (frame[:, :, 1] > 200) & (frame[:, :, 2] < 40)))
+            self.assertTrue(np.any((frame[:, :, 0] > 200) & (frame[:, :, 1] < 40) & (frame[:, :, 2] < 40)))
+        with patch.object(local_ai, 'prepare_provider', side_effect=AssertionError('GPU')):
+            preview = self.edit('preview')
+            self.assertTrue(ce.file(self.task_id, preview['preview_asset']).is_file())
+            # The unhighlighted second cue must use the global background too.
+            from moviepy import VideoFileClip
+            with VideoFileClip(str(ce.file(self.task_id, preview['preview_asset']))) as rendered:
+                frame = rendered.get_frame(2)
+                self.assertTrue(np.any((frame[:, :, 2] > 30) & (frame[:, :, 0] < 15) & (frame[:, :, 1] < 15)))
+            self.edit('apply')
+            active = ce.resolve(self.task_id, self.context()['binding'], self.context()['duration_ms'])
+            self.assertEqual(active['style'], data['style'])
+            self.assertEqual(active['cues'], data['cues'])
+            task.rerender_local_ai_task(self.task_id)
+        self.assertEqual(self.captions.read_bytes(), original)
+        # Timing-only edits preserve ranges; changed text clears obsolete offsets.
+        self.edit('update', index=0, start=0.1, end=0.9, text='Flowers.')
+        self.assertEqual(ce.read(self.task_id)['cues'][0]['spans'], data['cues'][0]['spans'])
+        self.edit('update', index=0, start=0.1, end=0.9, text='Different.')
+        self.assertNotIn('spans', ce.read(self.task_id)['cues'][0])
+        self.assertEqual(ce.read(self.task_id)['cues'][0]['style'], data['cues'][0]['style'])
+        for style in ({'font_name': '../outside.ttf'}, {'text_fore_color': 'red'},
+                      {'font_size': float('nan')}, {'stroke_width': -1}, {'subtitle_animation': 'bad'},
+                      {'unknown': True}, {'rounded_subtitle_background': 1}):
+            with self.assertRaises((ValueError, FileNotFoundError)):
+                self.edit('style', scope='all', style=style)
+        before = ce.file(self.task_id).read_bytes()
+        with self.assertRaises(ValueError):
+            self.edit('spans', index=0, spans=[{'start': 0, 'end': 100, 'color': '#FFFFFF'}])
+        self.assertEqual(ce.file(self.task_id).read_bytes(), before)
+
     def test_draft_operations_validation_and_source_binding(self):
         protected = {p: (self.root / p).read_bytes() for p in ('script.json', 'scene_plan.json', 'subtitle.srt', 'audio.mp3')}
         self.edit('prepare')

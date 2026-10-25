@@ -71,6 +71,12 @@ class TestEditorWorkspace(LocalAITestCase):
             request = captions.call_args.kwargs['request']
             self.assertEqual(request['text'], 'Flowers.')
             self.assertEqual(request['expected_revision'], view['caption_revision'])
+        selection = editor.dispatch(self.task_id, {'kind': 'text_selection', 'index': 0, 'start': 1,
+            'end': 4, 'text': 'Flowers.', 'revision': view['revision']}, view)
+        self.assertEqual(selection['selection'], {'index': 0, 'start': 1, 'end': 4})
+        with self.assertRaises(ValueError):
+            editor.dispatch(self.task_id, {'kind': 'text_selection', 'index': 0, 'start': 0,
+                'end': 50, 'text': 'unsaved', 'revision': view['revision']}, view)
         result = editor.dispatch(self.task_id, {'kind': 'select', 'target': 'caption-1', 'revision': view['revision']}, view)
         self.assertEqual(result['panel'], 'captions')
         self.assertEqual(result['action']['index'], 1)
@@ -93,6 +99,7 @@ class TestEditorWorkspace(LocalAITestCase):
         self.assertEqual(self.state.get_task(self.task_id)['state'], task.const.TASK_STATE_COMPLETE)
 
     def test_dedicated_page_routes_selection_and_back_to_tasks(self):
+        self.prepare_captions()
         with (patch.object(config, 'app', dict(config.app, llm_provider='openai')),
               patch.object(config, 'ui', {}), patch.object(config, 'try_save_config', return_value=True),
               patch.object(local_ai, 'prepare_provider', side_effect=AssertionError('GPU'))):
@@ -110,6 +117,19 @@ class TestEditorWorkspace(LocalAITestCase):
             app.button(key='editor_open_export').click().run()
             self.assertFalse(app.exception)
             self.assertEqual(app.session_state['editor_panel'], 'export')
+            # A background-job rerun can clean up the widget key; durable panel
+            # choice must still restore the caption inspector and its styles.
+            from webui.editor_workspace import timeline_component
+            timeline_component.clear()  # AppTest replaces Streamlit's component registry.
+            reopened = AppTest.from_file(str(Path(__file__).parents[2] / 'webui/Main.py'), default_timeout=60)
+            reopened.session_state['ui_language'] = 'en'
+            reopened.session_state['editor_panel_choice'] = 'captions'
+            reopened.query_params['editor'] = self.task_id
+            app = reopened.run()
+            self.assertFalse(app.exception)
+            self.assertEqual(app.session_state['editor_panel'], 'captions')
+            self.assertTrue(any(b.label == 'Save Caption Style' for b in app.button))
+
             app.button(key='editor_back').click().run()
             self.assertFalse(app.exception)
             self.assertNotIn('editor', app.query_params)

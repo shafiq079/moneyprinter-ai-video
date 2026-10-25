@@ -785,6 +785,18 @@
     "Revised Narration Ranges": "原始及调整后的旁白时间（秒）",
     "Revised Visual Coverage": "调整后的画面时间及已保存素材覆盖情况（秒）",
     "Longer Footage Required": "部分场景需要更长或有效的素材。请上传合适片段或恢复合适的已保存版本，然后重新预览。覆盖不足时无法应用；不会拉伸或循环画面素材。",
-    "Timeline Preview Required": "应用前请预览调整后的时间线。草稿、源文件或场景更改后需要重新预览。"
+    "Timeline Preview Required": "应用前请预览调整后的时间线。草稿、源文件或场景更改后需要重新预览。",
+    "All Captions": "所有字幕",
+    "Apply Selected Text Color": "应用所选文字颜色",
+    "Caption Appearance": "字幕样式",
+    "Caption Style Preview Help": "保存样式后预览草稿或应用并导出。SRT下载只包含文字和时间。修改文字会清除该字幕的文字颜色范围。",
+    "Caption Style Scope": "样式范围",
+    "Clear Text Colors": "清除文字颜色",
+    "Reset Caption Style": "重置字幕样式",
+    "Save Caption Style": "保存字幕样式",
+    "Selected Caption": "所选字幕",
+    "Selected Text Color": "所选文字颜色",
+    "Text Selection End": "文字结束位置（不包含）",
+    "Text Selection Start": "文字开始位置（从0计数）"
   }
 }

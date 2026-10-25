@@ -512,3 +512,13 @@ Task Manager. Narration/caption workflow actions are collapsible. See
 `docs/EDITOR_WORKSPACE.md` for timeline interactions, navigation, dependency/build
 choices and the remaining NLE boundaries. Existing source/queue/rollback and
 manual-acceptance limits still apply.
+
+## Caption appearance in the dedicated editor
+
+The editor's Captions inspector now exposes font/size, foreground/background,
+rounded background, stroke, placement and animation for all captions or one
+selected cue. Highlight saved caption text and choose Selected Text Color on
+the timeline toolbar to style just that range. Save, then Preview or Apply to
+render. Optional style and text-color ranges live in the existing caption
+sidecars; SRT downloads remain plain text/timing. See
+[the editor guide](EDITOR_WORKSPACE.md#frame-seeking-and-caption-appearance).

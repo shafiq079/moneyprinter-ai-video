@@ -132,7 +132,7 @@ def dispatch(task_id: str, event: dict, view: dict) -> dict:
     if not isinstance(event, dict) or len(json.dumps(event)) > 16384:
         raise ValueError('invalid timeline event')
     kind = event.get('kind')
-    if kind not in {'select', 'reorder', 'resize', 'caption'}:
+    if kind not in {'select', 'reorder', 'resize', 'caption', 'text_selection'}:
         raise ValueError('unsupported timeline event')
     if event.get('revision') != view['revision']:
         raise ValueError('project changed; refresh the editor and try again')
@@ -143,6 +143,15 @@ def dispatch(task_id: str, event: dict, view: dict) -> dict:
             raise ValueError('selected timeline item is unavailable')
         return {'action': action, 'panel': {'visual': 'visual', 'narration': 'narration',
                 'captions': 'captions', 'music': 'export'}[action['effectId']]}
+    if kind == 'text_selection':
+        index, start, end = event.get('index'), event.get('start'), event.get('end')
+        actions = view['rows'][2]['actions']
+        if (not view['caption_draft'] or type(index) is not int or not 0 <= index < len(actions)
+                or event.get('text') != actions[index]['label']
+                or type(start) is not int or type(end) is not int
+                or not 0 <= start < end <= len(actions[index]['label'])):
+            raise ValueError('select text in a saved caption before choosing its color')
+        return {'selection': {'index': index, 'start': start, 'end': end}}
     if view['busy']:
         raise ValueError('task is busy')
     if kind == 'caption':

@@ -785,6 +785,18 @@
     "Revised Narration Ranges": "Original and revised narration timing (seconds)",
     "Revised Visual Coverage": "Revised visual timing and saved footage coverage (seconds)",
     "Longer Footage Required": "Some scenes need longer or valid footage. Upload a suitable clip or restore a suitable saved version, then preview again. Apply is blocked until coverage is sufficient; footage is never stretched or looped.",
-    "Timeline Preview Required": "Preview the revised timeline before applying. Draft, source or scene changes require a fresh preview."
+    "Timeline Preview Required": "Preview the revised timeline before applying. Draft, source or scene changes require a fresh preview.",
+    "All Captions": "All Captions",
+    "Apply Selected Text Color": "Apply Selected Text Color",
+    "Caption Appearance": "Caption Appearance",
+    "Caption Style Preview Help": "Save styles, then Preview draft or Apply and export. SRT contains text and timing only. Editing cue text clears its text color ranges.",
+    "Caption Style Scope": "Caption Style Scope",
+    "Clear Text Colors": "Clear Text Colors",
+    "Reset Caption Style": "Reset Caption Style",
+    "Save Caption Style": "Save Caption Style",
+    "Selected Caption": "Selected Caption",
+    "Selected Text Color": "Selected Text Color",
+    "Text Selection End": "Text Selection End",
+    "Text Selection Start": "Text Selection Start"
   }
 }

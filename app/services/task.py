@@ -1183,6 +1183,7 @@ def generate_final_videos(
     combined_video_paths = []
     warnings = []
     variable_timing = None
+    caption_render_data = None
     original_audio_file = audio_file
     if local_ai.is_local_ai_source(params.video_source):
         effective_audio = narration_mix.resolve(task_id, audio_file)
@@ -1202,6 +1203,7 @@ def generate_final_videos(
             raise ValueError("independent captions support creative tasks only")
         binding, duration_ms, _base = _caption_sources(task_id, original_audio_file)
         track = caption_edits.resolve(task_id, binding, duration_ms)
+        caption_render_data = track
         subtitle_path = str(caption_edits.file(task_id, track["captions_asset"])) if track["cues"] else ""
         params = params.model_copy(update={"subtitle_enabled": bool(track["cues"]), "subtitle_display_mode": "sentence"})
     local_ai_final_duration = float(audio_duration or 0)
@@ -1392,6 +1394,7 @@ def generate_final_videos(
             output_file=final_video_path,
             params=params,
             bgm_file_override=bgm_file_override,
+            **({"caption_data": caption_render_data} if caption_render_data else {}),
         )
         if local_ai.is_local_ai_source(params.video_source):
             try:
@@ -2411,7 +2414,7 @@ def _preview_local_ai_captions(task_id: str, context: dict, expected_revision: s
             "subtitle_display_mode": "sentence", "bgm_type": "", "bgm_volume": 0})
         audio = narration_mix.resolve(task_id, context["audio"])
         video.generate_video(str(combined), audio, str(captions) if data["cues"] else "", str(output), params,
-                             bgm_file_override="")
+                             bgm_file_override="", caption_data=data)
         video.validate_final_video_output(str(output),
             expected_aspect=str(getattr(params.video_aspect, "value", params.video_aspect)),
             expected_duration=context["duration_ms"] / 1000, require_audio=True)

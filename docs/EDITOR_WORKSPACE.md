@@ -45,7 +45,9 @@ video layers, browser rendering, undo/redo and portable project interchange
 remain future work. This workspace covers the existing saved AI-scene projects;
 it does not manufacture scene manifests for stock tasks or bypass factual gates.
 
-Idle editing does not poll or remount the timeline. Active background jobs poll
+Idle editing does not poll or remount the timeline. The v2 renderer reuses one
+React root on each data update and cleans it up only on unmount; updates must
+never append additional timelines. Active background jobs poll
 progress and refresh the workspace after completion. Refresh also reloads
 external changes. Busy/stale events are rejected before being submitted, with
 existing worker validation and rollback still in force. Opening the editor,
@@ -83,6 +85,43 @@ scene versions, narration/caption sidecars and task state remain canonical.
 Existing rollback, same-task Resume, Regenerate and publishing boundaries remain.
 The caption queue also now infers completed status from saved final output after
 an in-memory-state restart, rather than marking a successful draft edit failed.
+
+## Frame seeking and caption appearance
+
+Use **Exported video** to scrub the complete program. Ruler clicks and playhead
+drags seek the paused native player; Next/Previous frame advance one 30 fps
+output frame. Zoom supports 0.5x–30x, with frame subdivisions at high zoom.
+Seeking at the end selects the last frame rather than the timestamp past it.
+The selected raw-clip preview is limited to its own footage and uses its scene
+start as the timeline offset. These controls do not submit Python requests per
+frame. They do not play the video just to reach a chosen frame.
+
+In **Captions → Caption Appearance**, choose All Captions or Selected Caption.
+Font files include available font faces/styles. Controls include size, text
+color, background on/off/color, rounded background, stroke color/width,
+position/custom percentage and spring animation. Save Caption Style updates
+the draft. A cue override inherits global style until saved; Reset Caption
+Style removes its override. Preview Caption Draft or Apply Captions And Export
+renders the saved appearance in the central preview/final video.
+
+For a text-only highlight, select characters in the saved Caption Text field,
+then click **Selected Text Color** in the timeline toolbar. The color section
+opens with that exact range, including the correct occurrence of repeated
+words. Pick a color and apply. Numeric range controls are also available;
+start is zero-based and end is exclusive. Clear Text Colors removes the cue's
+ranges. Unsaved text must be saved before its selection can be styled. Existing
+ranges survive timing-only changes; changing text or splitting clears ranges,
+and merging uses the first cue's style. Global/cue styles survive all these
+operations. Caption timing/display grouping remains the saved editable cues;
+this does not rerun word alignment or TTS.
+
+The existing source-bound version-1 sidecars accept optional top-level `style`,
+per-cue `style` and per-cue `spans` fields. Styles are bounded and font names
+resolve only within shipped fonts. Ranges are ordered non-overlapping Unicode
+code-point intervals with hex colors. Plain-text SRT is unchanged; sidecars
+retain styling. Preview and final export use the same renderer, including
+per-cue overrides and partial-text colors. Applied tracks remain independent of
+later draft changes, and existing restoration/rollback rules still apply.
 
 ## Verification boundary
 

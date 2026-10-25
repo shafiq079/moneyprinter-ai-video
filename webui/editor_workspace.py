@@ -46,7 +46,7 @@ def _labels(tr):
             'zoom': tr('Editor Zoom'), 'tracks': tr('Editor Tracks'), 'visual': tr('Editor Clips'),
             'narration': tr('Editor Narration'), 'captions': tr('Editor Captions'), 'music': tr('Editor Music'),
             'draft': tr('Editor Caption Draft'), 'saved': tr('Editor Saved Layout'), 'hint': tr('Editor Timeline Hint'),
-            'playError': tr('Editor Play Failed')}
+            'playError': tr('Editor Play Failed'), 'textColor': tr('Selected Text Color'), 'captionText': tr('Caption Text')}
 
 
 def _css():
@@ -112,6 +112,13 @@ def _export_panel(view, tr):
                                    key=f'editor_download_{task_id}_{final.name}', on_click='ignore')
 
 
+def _set_panel(panel):
+    # Widget keys may be cleaned up by Streamlit when a queued-job rerun exits
+    # before the inspector renders. Keep the selected panel in durable state.
+    st.session_state['editor_panel_choice'] = panel
+    st.session_state['editor_panel'] = panel
+
+
 def render_editor(task_id, tr, scene_inspector, caption_inspector):
     _css()
     with st.container(key='editor_shell'):
@@ -122,7 +129,7 @@ def render_editor(task_id, tr, scene_inspector, caption_inspector):
         header[1].markdown(f"### {tr('Video Editor')}")
         header[2].button(tr('Refresh'), key='editor_refresh', icon=':material/refresh:')
         if header[3].button(tr('Editor Export'), key='editor_open_export', type='primary'):
-            st.session_state['editor_panel'] = 'export'
+            _set_panel('export')
         busy = tm.is_task_busy(tm.sm.state.get_task(str(task_id)))
         st.session_state[f'editor_polling_{task_id}'] = busy
         content = st.fragment(_render_content, run_every='2s' if busy else None)
@@ -141,9 +148,14 @@ def _render_content(task_id, tr, scene_inspector, caption_inspector):
     if pending:
         try:
             result = project.dispatch(task_id, pending, view)
-            if 'action' in result:
+            if 'selection' in result:
+                selection = result['selection']
+                _set_panel('captions')
+                st.session_state[f'editor_caption_index_{task_id}'] = selection['index']
+                st.session_state[f'caption_selection_{task_id}_{view["caption_revision"]}_{selection["index"]}'] = selection
+            elif 'action' in result:
                 action = result['action']
-                st.session_state['editor_panel'] = result['panel']
+                _set_panel(result['panel'])
                 st.session_state[f'editor_selected_{task_id}'] = action['id']
                 st.session_state[f'editor_seek_{task_id}'] = action['start']
                 if 'scene_id' in action:
@@ -152,11 +164,11 @@ def _render_content(task_id, tr, scene_inspector, caption_inspector):
                     st.session_state[f'editor_caption_index_{task_id}'] = action['index']
             else:
                 if pending['kind'] == 'caption':
-                    st.session_state['editor_panel'] = 'captions'
+                    _set_panel('captions')
                     st.session_state[f'editor_caption_index_{task_id}'] = pending['index']
                     st.session_state[f'editor_selected_{task_id}'] = f"caption-{pending['index']}"
                 elif 'scene_id' in pending:
-                    st.session_state['editor_panel'] = 'visual'
+                    _set_panel('visual')
                     st.session_state[f'editor_scene_{task_id}'] = pending['scene_id']
                     st.session_state[f'editor_selected_{task_id}'] = f"scene-{pending['scene_id']}"
                     st.session_state[f'editor_seek_after_job_{task_id}'] = True
@@ -197,7 +209,7 @@ def _render_content(task_id, tr, scene_inspector, caption_inspector):
             if st.button(f"{tr('Scene')} {item['id']} · {item['duration']:.2f}s", key=f'editor_media_{task_id}_{item["id"]}',
                          type='primary' if sid == item['id'] else 'secondary', use_container_width=True):
                 st.session_state[f'editor_scene_{task_id}'] = item['id']
-                st.session_state['editor_panel'] = 'visual'
+                _set_panel('visual')
                 st.session_state[f'editor_selected_{task_id}'] = f'scene-{item["id"]}'
                 st.session_state[f'editor_seek_{task_id}'] = item['start']
                 st.rerun()
@@ -236,9 +248,10 @@ def _render_content(task_id, tr, scene_inspector, caption_inspector):
         panels = {'visual': tr('Editor Clips'), 'narration': tr('Editor Narration'),
                   'captions': tr('Editor Captions'), 'export': tr('Editor Export')}
         if st.session_state.get('editor_panel') not in panels:
-            st.session_state['editor_panel'] = 'visual'
+            _set_panel(st.session_state.get('editor_panel_choice', 'visual'))
         panel = st.segmented_control(tr('Editor Inspector'), list(panels), format_func=lambda v: panels[v],
                                      key='editor_panel', selection_mode='single', required=True, label_visibility='collapsed')
+        st.session_state['editor_panel_choice'] = panel
         if panel in {'visual', 'narration'}:
             scene_inspector(workspace=True, scene_id_filter=sid, panel=panel)
         elif panel == 'captions':
@@ -253,7 +266,8 @@ def _render_content(task_id, tr, scene_inspector, caption_inspector):
         else:
             _export_panel(view, tr)
     payload = {k: view[k] for k in ('task_id', 'rows', 'duration', 'extent', 'revision', 'busy')}
-    payload.update(selected=st.session_state.get(f'editor_selected_{task_id}', f'scene-{sid}'),
+    payload.update(captionIndex=st.session_state.get(f'editor_caption_index_{task_id}', 0), fps=30, seekTime=st.session_state.get(f'editor_seek_{task_id}', 0),
+                   seekToken=f"{source_kind}:{st.session_state.get(f'editor_selected_{task_id}', '')}:{st.session_state.get(f'editor_seek_{task_id}', 0)}", selected=st.session_state.get(f'editor_selected_{task_id}', f'scene-{sid}'),
                    labels=_labels(tr), captionDraft=view['caption_draft'], playbackOffset=scene['start'] if source_kind == 'clip' else 0)
     event = timeline_component()(key=f'editor_timeline_{task_id}', data=payload, on_event_change=lambda: None).event
     if isinstance(event, dict) and isinstance(event.get('nonce'), str) and event['nonce'] != st.session_state.get(f'editor_event_seen_{task_id}'):
