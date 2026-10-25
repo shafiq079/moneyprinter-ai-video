@@ -22,6 +22,16 @@ PROVIDER_TIPS_PREFIXES = (
 # 避免把完全相同的品牌名复制十份，也避免长说明后续只更新部分语言。
 ENGLISH_FALLBACK_KEYS = frozenset(
     {
+        'Project Archive Help',
+        'Prepare Project Download',
+        'Preparing Project',
+        'Download Editable Project',
+        'Project Snapshot Help',
+        'Import Editable Project',
+        'Project Import Help',
+        'Project Archive',
+        'Import And Open Project',
+        'Validating Project',
         'All Captions',
         'Apply Selected Text Color',
         'Caption Appearance',

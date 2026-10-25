@@ -29,8 +29,8 @@ contracts, with no mandatory paid video-generation API.
 | Area | Owner's intent and scope decision | Current state / remaining boundary |
 | --- | --- | --- |
 | AI scene generation | Original clips, scene prompts, continuity, selective retries, reusable assets. | Implemented through local Wan/LTX and remote HF LTX paths; one real seven-scene HF LTX task completed. Real **local** Wan/LTX checkpoint validation and comparative GPU tuning remain deferred. |
-| Editable project | Keep independently editable scene clips, narration/audio, captions, prompts and metadata alongside the final MP4. A bad scene or a render-only change must not invalidate unrelated generated assets. | Scene plan, scene versions, final output and portable artifact references exist. A full editable timeline/project with independent audio/text layers does not. |
-| In-product editor | Eventually provide a small, self-hosted, CapCut-like experience; do not copy or depend on CapCut. The initial release need not be a full multi-track NLE. | Existing Streamlit scene editor covers prompt/seed, preview, regenerate, variation, validated manual clip replacement, fixed-duration source trims, visual cut timing, visual playback reordering, version restore, render-only rerender, and saved narration ranges/audio previews with manual boundary adjustment, operator review, and saved replacement narration drafts for audition. The creative fixed-duration narration workflow includes text/TTS edits, uploaded recordings, optional tempo fitting, reviewed-range caption rebuilding, apply/export and restore-original. Automatic word alignment and independent timeline layers remain deferred. |
+| Editable project | Keep independently editable scene clips, narration/audio, captions, prompts and metadata alongside the final MP4. A bad scene or a render-only change must not invalidate unrelated generated assets. | Dedicated editor, scene history, narration/caption editing, independent music/SFX and portable editable project archives are implemented for saved creative AI projects. Undo/redo and stock/factual editor expansion remain later. |
+| In-product editor | Provide a self-hosted, CapCut-like experience using open-source components. | Dedicated full-page Streamlit editor with an embedded offline React timeline. Scene, narration, caption and music/SFX edits plus project archive import/export are implemented. Advanced effects, undo/redo and stock/factual project support remain later. |
 | Scene timing | Let scene count/length follow narration and content instead of forcing every scene to the same fixed length. | Current planner uses measured audio duration, beat weights and a maximum provider-supported scene duration. Visual cut timing rebalances adjacent scenes at fixed total duration. Automatic uses the existing narration-aware planner within model limits; natural-length narration retiming is implemented. Verified semantic/word alignment remains deferred. |
 | Publishing | Complete video generation without an upload dependency. Initially defer upload automation and channel-growth tooling. | Existing optional Upload-Post integration offers YouTube, TikTok and Instagram; operator end-to-end publishing was not established in this development effort. Direct platform OAuth is not an approved replacement. |
 | Factual content | Optional evidence/review mode must not burden creative generation. | User-supplied excerpts, safe one-page import, review-only workflow and structural claim checks exist. Automatic discovery/source authentication and real-model acceptance remain deferred. |
@@ -392,3 +392,20 @@ renders and safe asset references in output packages. See `AUDIO_EDITING.md`.
 This completes independent uploaded music/SFX editing for saved creative AI
 projects. Live waveforms/mixing, automatic ducking/alignment, undo/redo, portable
 project archives, stock/factual editor expansion and publishing remain later.
+
+
+## Completed milestone: portable editable projects
+
+The owner approved Save/Import Project as the next complete milestone. Version-1
+`.mptproject.zip` archives transport the existing editable task layout, including
+scene history, narration/caption edits and independent music/SFX. Import validates
+and creates a new task, opens the full-page editor, and supports rendering from
+saved assets without provider calls. See `PROJECT_ARCHIVES.md`. This is an
+archive envelope over existing sidecars, not a replacement timeline schema.
+
+The current archive boundary is saved creative AI scene projects, 512 MiB per
+archive, with receiver-installed caption fonts and separately configured
+providers for explicit future regeneration. CPU tests cover source deletion,
+restoration, restart, editing/export and invalid inputs. Undo/redo is the next
+recommended editor milestone, followed by stock/factual editor expansion.
+Publishing and real local-GPU acceptance remain deferred.

@@ -2162,6 +2162,8 @@ def _render_task_table(filtered_tasks, key_prefix):
 
 
 def _render_task_manager_panel(tasks=None):
+    from webui.project_archive import import_controls
+    import_controls(tr)
     tasks = tasks if tasks is not None else _collect_task_summaries()
     if not tasks:
         st.info(tr("No Tasks Yet"))

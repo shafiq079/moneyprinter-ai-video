@@ -104,6 +104,8 @@ def _export_panel(view, tr):
         else:
             st.toast(tr('Editor Export Queued'))
             st.rerun()
+    from webui.project_archive import export_controls
+    export_controls(task_id, view['busy'], tr)
     root = project.task_root(task_id)
     for final in sorted(root.glob('final-*.mp4')):
         final = gm.resolve_asset(task_id, final.relative_to(root).as_posix())

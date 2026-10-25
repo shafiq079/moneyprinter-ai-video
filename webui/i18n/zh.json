@@ -833,6 +833,16 @@
     "Audio Rendering Preview": "正在渲染音频预览，已导出的视频仍可播放。",
     "Audio Applying Arrangement": "正在应用音频编排并导出…",
     "Audio Restoring Arrangement": "正在恢复原音频编排…",
-    "Audio Saving Draft": "正在保存音频草稿…"
+    "Audio Saving Draft": "正在保存音频草稿…",
+    "Project Archive Help": "将场景、旁白、字幕和音乐保存为可编辑项目。最大 512 MiB。",
+    "Prepare Project Download": "准备项目下载",
+    "Preparing Project": "正在准备可编辑项目…",
+    "Download Editable Project": "下载可编辑项目",
+    "Project Snapshot Help": "这是保存时的项目快照。继续编辑后请重新准备下载。",
+    "Import Editable Project": "导入可编辑项目",
+    "Project Import Help": "将创意 AI 项目恢复为新任务。现有项目保持不变。导入不会生成视频或语音。",
+    "Project Archive": "项目归档 (.mptproject.zip)",
+    "Import And Open Project": "导入并打开项目",
+    "Validating Project": "正在验证并恢复项目…"
   }
 }

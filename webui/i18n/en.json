@@ -833,6 +833,16 @@
     "Audio Rendering Preview": "Rendering audio preview… Your exported video stays available.",
     "Audio Applying Arrangement": "Applying the audio arrangement and exporting…",
     "Audio Restoring Arrangement": "Restoring the original audio arrangement…",
-    "Audio Saving Draft": "Saving audio draft…"
+    "Audio Saving Draft": "Saving audio draft…",
+    "Project Archive Help": "Save scenes, narration, captions and music as one editable project. Maximum 512 MiB.",
+    "Prepare Project Download": "Prepare Project Download",
+    "Preparing Project": "Preparing editable project…",
+    "Download Editable Project": "Download Editable Project",
+    "Project Snapshot Help": "This download is a saved snapshot. Prepare it again after making more edits.",
+    "Import Editable Project": "Import Editable Project",
+    "Project Import Help": "Restore a creative AI project as a new task. Existing projects stay unchanged. Import does not generate video or voice.",
+    "Project Archive": "Project archive (.mptproject.zip)",
+    "Import And Open Project": "Import and Open Project",
+    "Validating Project": "Validating and restoring project…"
   }
 }

@@ -61,6 +61,8 @@ def combined_key(task_id, params, sources, audio):
     fields = ('video_aspect', 'video_fit_mode', 'video_concat_mode', 'video_transition_mode',
               'video_clip_duration', 'video_clip_speed', 'local_ai_duration_mode')
     manifest = gm.load_manifest(task_id)
+    if manifest is None:
+        raise ValueError('composition cache requires a saved scene manifest')
     value = {'settings': {key: settings[key] for key in fields},
              'snapshot': gm.scene_timing_snapshot(manifest),
              'sources': [gm.media_sha256(Path(source)) for source in sources],

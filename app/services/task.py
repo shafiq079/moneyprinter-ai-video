@@ -1422,6 +1422,10 @@ def generate_final_videos(
                 bgm_file_override = ""
                 warnings.append({"code": warning_code, "video_index": index})
 
+        if path.isfile(path.join(utils.task_dir(task_id), 'project_import.json')) and params.bgm_file and not video_music_provider:
+            from app.services import audio_layers
+            bgm_file_override = audio_layers.saved_base_music(task_id, params) if params.bgm_type and params.bgm_volume > 0 else ''
+
         logger.info(f"\n\n## generating video: {index} => {final_video_path}")
         bgm_mix_succeeded = video.generate_video(
             video_path=combined_video_path,
@@ -1514,6 +1518,10 @@ def _load_scene_regeneration_context(task_id: str):
         state = {}
 
     audio_file = str(state.get("audio_file") or "").strip()
+    if not audio_file or not path.isfile(audio_file):
+        imported = Path(task_root) / 'project_import.json'
+        if imported.is_file() and imported.stat().st_size <= 4096:
+            audio_file = resolve_custom_audio_file(task_id, json.loads(imported.read_text(encoding='utf-8'))['audio'])
     if not audio_file or not path.isfile(audio_file):
         generated_audio = path.join(task_root, "audio.mp3")
         if path.isfile(generated_audio):

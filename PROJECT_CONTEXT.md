@@ -14,10 +14,10 @@ Read this file first in every new AI or developer session. `docs/SRS.md` is the 
 
 The owner confirmed that a final MP4 alone is not the full long-term product:
 an editable project with independently adjustable scene clips, narration,
-captions and audio remains a deferred goal. The existing Streamlit scene editor
-is the first slice, not a complete multi-track timeline. Earlier proposals
-for a specific editor framework, project-file extension or interchange format
-were not accepted architecture decisions. See `docs/PRODUCT_VISION.md` before
+captions and audio is now implemented for saved creative AI projects through
+the dedicated Streamlit editor, embedded offline timeline and portable archive
+workflow. This remains a bounded editor rather than a full NLE. Archive format
+version 1 wraps existing task sidecars; it does not replace their data contracts. See `docs/PRODUCT_VISION.md` before
 scoping editor, variable-duration, publishing or channel-automation work.
 
 Task Manager has a separate **Resume** action for failed local-AI tasks with
@@ -72,6 +72,41 @@ Wan configuration is operator-owned through `[wan22_local]` / environment settin
 M3 exposed `wan22_local` through WebUI, CLI and API using the same provider/preflight rules, added the readiness button and CLI/API preflight commands, documented operator setup in `docs/LOCAL_AI_VIDEO.md`, kept model/checkpoint paths out of public task requests, and left the fake provider internal. The M3 registration commit `09dbdae49cc8533c37f22560bf8c5a80bc3626a3` revealed two stale regression expectations; follow-up `7a6775bfb7e6fec73188f99b9daae6cb613c2927` aligned the Agent Skill exception and WebUI group test. CI run `36325467280` passed Windows smoke, Python 3.11, Python 3.13 and Ruff.
 
 ## Current development boundary
+
+## Completed milestone: portable editable project archives
+
+The owner approved a complete Save/Import Project milestone. Editor → Export
+now prepares a `.mptproject.zip` snapshot; Task Manager imports it as a fresh
+UUID task and opens the dedicated editor. Version-1 inventories retain existing
+task-relative scene versions/order/timing, narration recordings/mixes, caption
+styles/draft/applied tracks, music/SFX drafts/assets/applied arrangements,
+original inputs and saved final videos. No new canonical timeline or renderer
+was introduced. Combined caches and rendered previews are disposable.
+
+Imports validate inventory hashes, bounded paths/files/media, existing layer
+bindings and font availability in hidden staging before atomic publication.
+Failures clean up staging and preserve existing projects. Custom narration
+survives state loss/restart. Random/custom BGM is frozen locally for portable
+rendering without a replacement song or provider call. Source configuration,
+secrets and model weights are excluded. Creative AI scene projects only;
+stock/factual expansion, undo/redo and publishing remain later work.
+
+The previous reload/cache CI exposed a missing-manifest `AttributeError` in
+optional composition-key calculation. Missing manifests now raise the existing
+recoverable `ValueError`, allowing ordinary final-output validation to run; the
+previously failing final-validation regression passes.
+
+See `docs/PROJECT_ARCHIVES.md` for controls, limits, format and concurrency
+boundaries. CPU round-trip tests delete the source task before import and render
+using restored edited layers with generation providers blocked. No real GPU,
+TTS, paid music or publishing requests are part of this milestone.
+
+Verification: **112 editor/audio/narration/queue/artifact/i18n regressions**,
+**73 archive/final-composer checks (3 skips)**, **169 core service smoke checks
+(5 skips)** and **11 startup/history tests** passed. Counts overlap. Ruff,
+compileall and whitespace checks passed. The previous CI failure was reproduced
+from the Actions logs and its missing-manifest fallback is fixed; inspect the
+new commit's CI run for the complete platform matrix.
 
 ## Editor reload consistency and audio-only render reuse
 
