@@ -1405,7 +1405,7 @@ def _render_scene_editor(*, workspace=False, scene_id_filter=None, panel="all") 
                     st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
                 else:
                     st.toast(tr("Narration Previews Queued"))
-                    st.rerun(scope="fragment")
+                    st.rerun(scope="app" if workspace else "fragment")
 
             if active_mix:
                 st.warning(tr("Narration Mix Active"))
@@ -1425,7 +1425,7 @@ def _render_scene_editor(*, workspace=False, scene_id_filter=None, panel="all") 
                         st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
                     else:
                         st.toast(tr("Narration Previews Queued"))
-                        st.rerun(scope="fragment")
+                        st.rerun(scope="app" if workspace else "fragment")
                 if revised_timeline:
                     st.caption(tr("Timeline Duration Change").format(
                         before=revised_timeline["timeline"]["source_duration"], after=revised_timeline["timeline"]["audio_duration"]))
@@ -1453,7 +1453,7 @@ def _render_scene_editor(*, workspace=False, scene_id_filter=None, panel="all") 
                     st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
                 else:
                     st.toast(tr("Narration Previews Queued"))
-                    st.rerun(scope="fragment")
+                    st.rerun(scope="app" if workspace else "fragment")
 
     if panel != "narration":
         if not workspace:
@@ -1472,7 +1472,7 @@ def _render_scene_editor(*, workspace=False, scene_id_filter=None, panel="all") 
                 st.error(f"{tr('Scene Timing Failed')}: {exc}")
             else:
                 st.toast(tr("Scene Timing Queued"))
-                st.rerun(scope="fragment")
+                st.rerun(scope="app" if workspace else "fragment")
 
     for position, scene_id in enumerate(playback_order):
         if scene_id_filter is not None and scene_id != scene_id_filter:
@@ -1521,7 +1521,7 @@ def _render_scene_editor(*, workspace=False, scene_id_filter=None, panel="all") 
                             st.error(f"{tr('Scene Reorder Failed')}: {exc}")
                         else:
                             st.toast(tr("Scene Reorder Queued"))
-                            st.rerun(scope="fragment")
+                            st.rerun(scope="app" if workspace else "fragment")
 
                 duration_value = st.number_input(
                     tr("Scene Screen Duration"), min_value=0.001,
@@ -1545,7 +1545,7 @@ def _render_scene_editor(*, workspace=False, scene_id_filter=None, panel="all") 
                         st.error(f"{tr('Scene Timing Failed')}: {exc}")
                     else:
                         st.toast(tr("Scene Timing Queued"))
-                        st.rerun(scope="fragment")
+                        st.rerun(scope="app" if workspace else "fragment")
 
             if scene.narration_segment:
                 st.caption(scene.narration_segment)
@@ -1568,7 +1568,7 @@ def _render_scene_editor(*, workspace=False, scene_id_filter=None, panel="all") 
                             st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
                         else:
                             st.toast(tr("Narration Previews Queued"))
-                            st.rerun(scope="fragment")
+                            st.rerun(scope="app" if workspace else "fragment")
                     checked = scene_id in narration_map.get("operator_reviewed_scene_ids", [])
                     if checked:
                         st.caption(tr("Narration Reviewed By You"))
@@ -1580,7 +1580,7 @@ def _render_scene_editor(*, workspace=False, scene_id_filter=None, panel="all") 
                             st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
                         else:
                             st.toast(tr("Narration Previews Queued"))
-                            st.rerun(scope="fragment")
+                            st.rerun(scope="app" if workspace else "fragment")
                     edited_text = st.text_area(tr("Replacement Narration Text"),
                         value=(narration_range.get("replacement") or {}).get("text", scene.narration_segment),
                         max_chars=2000, key=f"draft_text_{task_id}_{scene_id}_{narration_revision}", disabled=is_busy or active_mix)
@@ -1601,7 +1601,7 @@ def _render_scene_editor(*, workspace=False, scene_id_filter=None, panel="all") 
                             st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
                         else:
                             st.toast(tr("Narration Previews Queued"))
-                            st.rerun(scope="fragment")
+                            st.rerun(scope="app" if workspace else "fragment")
                     if narration_range.get("replacement") and st.button(tr("Save Draft Transcript"),
                         key=f"draft_transcript_{task_id}_{scene_id}", disabled=is_busy or active_mix or not edited_text.strip()):
                         try:
@@ -1612,7 +1612,7 @@ def _render_scene_editor(*, workspace=False, scene_id_filter=None, panel="all") 
                             st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
                         else:
                             st.toast(tr("Narration Previews Queued"))
-                            st.rerun(scope="fragment")
+                            st.rerun(scope="app" if workspace else "fragment")
                     st.caption(tr("Narration Draft Help"))
                     draft_upload = st.file_uploader(
                         tr("Narration Draft Upload"), type=["wav", "mp3", "m4a"],
@@ -1633,7 +1633,7 @@ def _render_scene_editor(*, workspace=False, scene_id_filter=None, panel="all") 
                             st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
                         else:
                             st.toast(tr("Narration Previews Queued"))
-                            st.rerun(scope="fragment")
+                            st.rerun(scope="app" if workspace else "fragment")
                     has_draft = bool(narration_range.get("replacement"))
                     if has_draft:
                         st.caption(tr("Narration Draft Saved"))
@@ -1648,7 +1648,7 @@ def _render_scene_editor(*, workspace=False, scene_id_filter=None, panel="all") 
                                 st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
                             else:
                                 st.toast(tr("Narration Previews Queued"))
-                                st.rerun(scope="fragment")
+                                st.rerun(scope="app" if workspace else "fragment")
                     preview_key = f"narration_preview_{task_id}_{scene_id}"
                     play_original = st.button(tr("Preview Narration"), key=f"play_narration_{task_id}_{scene_id}", disabled=is_busy)
                     play_draft = st.button(tr("Preview Narration Draft"), key=f"play_narration_draft_{task_id}_{scene_id}", disabled=is_busy or not has_draft)
@@ -1742,7 +1742,7 @@ def _render_scene_editor(*, workspace=False, scene_id_filter=None, panel="all") 
                         st.error(f"{tr('Clip Replacement Failed')}: {exc}")
                     else:
                         st.toast(tr("Clip Replacement Queued"))
-                        st.rerun(scope="fragment")
+                        st.rerun(scope="app" if workspace else "fragment")
 
                 upload_key = f"scene_clip_upload_{task_id}_{scene.scene_id}"
                 upload_revision = st.session_state.get(f"{upload_key}_revision", 0)
@@ -1768,7 +1768,7 @@ def _render_scene_editor(*, workspace=False, scene_id_filter=None, panel="all") 
                     else:
                         st.session_state[f"{upload_key}_revision"] = upload_revision + 1
                         st.toast(tr("Clip Replacement Queued"))
-                        st.rerun(scope="fragment")
+                        st.rerun(scope="app" if workspace else "fragment")
 
                 prompt_value = st.text_area(
                     tr("Scene Prompt"),
@@ -1813,7 +1813,7 @@ def _render_scene_editor(*, workspace=False, scene_id_filter=None, panel="all") 
                             )
                         else:
                             st.toast(tr("Scene Regeneration Queued"))
-                            st.rerun(scope="fragment")
+                            st.rerun(scope="app" if workspace else "fragment")
 
                 with scene_action_cols[1]:
                     if st.button(
@@ -1837,7 +1837,7 @@ def _render_scene_editor(*, workspace=False, scene_id_filter=None, panel="all") 
                             )
                         else:
                             st.toast(tr("Scene Regeneration Queued"))
-                            st.rerun(scope="fragment")
+                            st.rerun(scope="app" if workspace else "fragment")
 
                 with scene_action_cols[2]:
                     restore_disabled = (
@@ -1875,7 +1875,7 @@ def _render_scene_editor(*, workspace=False, scene_id_filter=None, panel="all") 
                             )
                         else:
                             st.toast(tr("Scene Version Restore Queued"))
-                            st.rerun(scope="fragment")
+                            st.rerun(scope="app" if workspace else "fragment")
 
 
 def _select_artifact_package_task(task_id: str) -> None:

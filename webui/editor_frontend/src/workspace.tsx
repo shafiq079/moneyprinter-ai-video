@@ -115,11 +115,11 @@ function Workspace({component}: {component: any}) {
       </div>
     </div>
     {notice && <p role="status">{notice}</p>}
-    <div className="timeline-grid">
+    <div className="timeline-grid" style={{maxHeight: 340, overflowY: 'auto'}}>
       <div className="track-labels"><div className="track-ruler">{labels.tracks}</div>
-        {data.rows.map((row: any) => <div key={row.id} className={`track-label ${row.id}`}><b>{row.id === 'visual' ? 'V1' : row.id === 'captions' ? 'T1' : row.id === 'music' ? 'A2' : 'A1'}</b><span>{labels[row.id]}</span></div>)}
+        {data.rows.map((row: any) => <div key={row.id} className={`track-label ${row.id}`}><b>{row.id === 'visual' ? 'V1' : row.id === 'captions' ? 'T1' : row.kind === 'sfx' ? 'FX' : row.kind === 'music' || row.id === 'music' ? 'A2' : 'A1'}</b><span>{labels[row.kind || row.id]}</span></div>)}
       </div>
-      <Timeline ref={timeline} editorData={rows} effects={{visual: {id: 'visual'}, narration: {id: 'narration'}, captions: {id: 'captions'}, music: {id: 'music'}}}
+      <Timeline ref={timeline} editorData={rows} effects={{visual: {id: 'visual'}, narration: {id: 'narration'}, captions: {id: 'captions'}, music: {id: 'music'}, sfx: {id: 'sfx'}}}
         {...dimensions} style={{width: '100%', height: data.rows.length * 46 + 34}}
         minScaleCount={Math.ceil(data.extent / scale) + 3} scaleSplitCount={zoom >= 10 ? data.fps : scale === 1 ? 5 : 10} gridSnap={false} dragLine
         disableDrag={data.busy} onChange={setRows}

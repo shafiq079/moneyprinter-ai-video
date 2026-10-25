@@ -1348,6 +1348,8 @@ def generate_video(
     params: VideoParams,
     bgm_file_override: str | None = None,
     caption_data: dict | None = None,
+    audio_layers_file: str | None = None,
+    loop_bgm_override: bool = False,
 ) -> bool:
     """
     合成最终视频，并返回本次背景音乐处理是否成功。
@@ -1641,7 +1643,7 @@ def generate_video(
                 # 服务内解析的随机/自定义音乐可能比成片短，需要循环铺满；任务层
                 # 通过 override 传入的文件表示提供商已经完成时长适配。这里依据
                 # 文件来源决定是否循环，避免今后每增加一个提供商都修改名称白名单。
-                if bgm_file_override is None:
+                if bgm_file_override is None or loop_bgm_override:
                     bgm_effects.append(afx.AudioLoop(duration=video_clip.duration))
                 bgm_source_clip = clip_stack.enter_context(AudioFileClip(bgm_file))
                 bgm_clip = bgm_source_clip.with_effects(bgm_effects)
@@ -1655,6 +1657,10 @@ def generate_video(
                     f"file={bgm_file}"
                 )
 
+        if audio_layers_file:
+            layer_source = clip_stack.enter_context(AudioFileClip(audio_layers_file))
+            audio_clip = CompositeAudioClip([audio_clip, layer_source])
+            clip_stack.callback(audio_clip.close)
         final_video_clip = video_clip.with_audio(audio_clip)
         clip_stack.callback(final_video_clip.close)
         # 显式沿用输入音频的采样率；如果取不到，再回退 MoviePy 默认的 44100Hz。

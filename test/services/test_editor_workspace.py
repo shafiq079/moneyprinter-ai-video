@@ -103,6 +103,8 @@ class TestEditorWorkspace(LocalAITestCase):
         with (patch.object(config, 'app', dict(config.app, llm_provider='openai')),
               patch.object(config, 'ui', {}), patch.object(config, 'try_save_config', return_value=True),
               patch.object(local_ai, 'prepare_provider', side_effect=AssertionError('GPU'))):
+            from webui.editor_workspace import timeline_component
+            timeline_component.clear()
             app = AppTest.from_file(str(Path(__file__).parents[2] / 'webui/Main.py'), default_timeout=60)
             app.session_state['ui_language'] = 'en'
             app.query_params['editor'] = self.task_id

@@ -17,3 +17,9 @@ test('paused seeks land on a decoded output frame, including the last frame',()=
   assert.equal(frameTime(2.5+1/30,6),76/30);
   assert.equal(frameTime(-1,6),0);
 });
+
+test('music and SFX timeline events carry stable clip IDs and resize intent',()=>{
+  assert.deepEqual(changeEvent({effectId:'sfx',clip_id:'stable'},1,2,'v'),
+    {kind:'audio',clip_id:'stable',start:1,end:2,resize:false,revision:'v'});
+  assert.equal(changeEvent({effectId:'music',clip_id:'stable'},.5,2,'v',true).resize,true);
+});

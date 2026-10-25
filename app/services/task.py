@@ -11,6 +11,7 @@ import time
 from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 from functools import partial
 from os import path
+from pathlib import Path
 from uuid import uuid4
 
 from loguru import logger
@@ -1220,6 +1221,20 @@ def generate_final_videos(
         else:
             if math.isfinite(measured_audio_duration) and measured_audio_duration > 0:
                 local_ai_final_duration = measured_audio_duration
+    audio_layers_file = None
+    audio_layers_base = None
+    if local_ai.is_local_ai_source(params.video_source):
+        from app.services import audio_layers
+        if audio_layers.file(task_id, audio_layers.ACTIVE).exists():
+            layer_track = audio_layers.load(task_id, generation_manifest.media_sha256(Path(original_audio_file)), audio_layers.ACTIVE)
+            if params.content_mode != 'creative':
+                raise ValueError('audio arrangement editing supports creative AI tasks only')
+            if layer_track['include_base'] and params.bgm_type and params.bgm_type not in _VIDEO_MUSIC_PROVIDERS and params.bgm_volume > 0:
+                audio_layers_base = audio_layers.saved_base_music(task_id, params)
+            if not layer_track['include_base']:
+                params = params.model_copy(update={'bgm_type': '', 'bgm_volume': 0})
+            if layer_track['clips']:
+                audio_layers_file = audio_layers.render_mix(task_id, layer_track, local_ai_final_duration)
     timing_options = {}
     if local_ai.is_local_ai_source(params.video_source):
         manifest = generation_manifest.load_manifest(task_id)
@@ -1393,8 +1408,10 @@ def generate_final_videos(
             subtitle_path=subtitle_path,
             output_file=final_video_path,
             params=params,
-            bgm_file_override=bgm_file_override,
+            bgm_file_override=audio_layers_base if audio_layers_base is not None else bgm_file_override,
+            **({"loop_bgm_override": True} if audio_layers_base else {}),
             **({"caption_data": caption_render_data} if caption_render_data else {}),
+            **({"audio_layers_file": audio_layers_file} if audio_layers_file else {}),
         )
         if local_ai.is_local_ai_source(params.video_source):
             try:

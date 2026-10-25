@@ -513,6 +513,49 @@ def submit_scene_reorder(
     return True
 
 
+def _run_audio_layers(task_id, request, previous):
+    from app.services import audio_layer_tasks
+    error = None
+    try:
+        with config.runtime_config_lock():
+            return audio_layer_tasks.run(task_id, queued=True, **request)
+    except Exception as exc:
+        error = str(exc) if isinstance(exc, (ValueError, RuntimeError)) else type(exc).__name__
+        return {'task_id': task_id, 'error': error}
+    finally:
+        current = sm.state.get_task(task_id) or {}
+        if current.get('current_stage') == 'audio_layers_queued':
+            sm.state.update_task(task_id, **previous)
+        sm.state.patch_task(task_id, audio_layers_error=error)
+
+
+def submit_audio_layers(task_id, *, request):
+    from app.services import audio_layers, audio_layer_tasks
+    with _resume_submission_lock:
+        value = audio_layer_tasks.context(task_id)
+        request = deepcopy(request)
+        if request.get('expected_binding') != value['audio_binding'] or request.get('expected_revision') != audio_layers.revision(task_id):
+            raise ValueError('audio inputs changed; refresh the editor')
+        if request.get('action') in {'apply', 'restore', 'preview'}:
+            if request.get('expected_snapshot') != tm.generation_manifest.scene_timing_snapshot(tm.generation_manifest.load_manifest(task_id)):
+                raise ValueError('scene inputs changed; refresh the editor')
+        if request.get('action') == 'upload' and (not isinstance(request.get('content'), bytes) or len(request['content']) > audio_layers.MAX_UPLOAD):
+            raise ValueError('audio upload must be at most 50 MiB')
+        prior = value['prior']
+        if not prior:
+            finals = tm._existing_final_video_paths(tm._scene_regeneration_task_root(task_id))
+            prior = {'state': const.TASK_STATE_COMPLETE if finals else const.TASK_STATE_FAILED, 'progress': 100 if finals else 0}
+        previous = {key: prior.get(key, default) for key, default in
+                    (('state', const.TASK_STATE_FAILED), ('progress', 0), ('current_stage', None))}
+        sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING,
+                             current_stage='audio_layers_queued', audio_layers_error=None)
+        try:
+            _task_manager.add_task(_run_audio_layers, task_id=task_id, request=request, previous=previous)
+        except Exception:
+            sm.state.update_task(task_id, **previous, audio_layers_error='audio edit could not be scheduled')
+            raise
+
+
 def _run_caption_edit(task_id: str, request: dict, previous: dict) -> dict:
     error = None
     try:

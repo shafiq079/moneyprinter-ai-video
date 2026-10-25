@@ -11,7 +11,7 @@ from pathlib import Path
 
 from app.models.schema import VideoParams
 from app.services import caption_edits as ce, generation_manifest as gm, local_ai, narration_ranges as nr
-from app.services import scene_planner, task as tm, webui_task
+from app.services import scene_planner, task as tm, webui_task, audio_layers as al
 from app.utils import utils
 
 
@@ -115,15 +115,35 @@ def build_view(task_id: str) -> dict:
          'label': c['text'], 'index': i, 'movable': caption_draft and not busy,
          'flexible': caption_draft and not busy, 'minStart': 0, 'maxEnd': audio_duration}
         for i, c in enumerate(captions)]})
-    if params.bgm_type and params.bgm_volume > 0:
+    audio_draft, audio_binding = None, None
+    audio_revision = al.revision(task_id)
+    if binding:
+        audio_binding = binding['source_audio']['sha256']
+        audio_draft = al.load(task_id, audio_binding)
+        # Separate overlapping clips into lanes so every clip remains selectable.
+        for kind in ('music', 'sfx'):
+            lanes = []
+            for clip in sorted((c for c in audio_draft['clips'] if c['kind'] == kind), key=lambda c: (c['start_ms'], c['id'])):
+                lane = next((lane for lane in lanes if lane[-1]['end'] <= clip['start_ms'] / 1000), None)
+                if lane is None:
+                    lane = []
+                    lanes.append(lane)
+                asset = audio_draft['assets'][clip['asset_id']]
+                lane.append({'id': f'audio-{clip["id"]}', 'effectId': kind, 'clip_id': clip['id'],
+                    'start': clip['start_ms'] / 1000, 'end': (clip['start_ms'] + clip['out_ms'] - clip['in_ms']) / 1000,
+                    'label': ('🔇 ' if clip['muted'] else '') + asset['name'],
+                    'movable': not busy, 'flexible': not busy, 'minStart': 0, 'maxEnd': audio_duration})
+            for index, actions in enumerate(lanes or [[]]):
+                rows.append({'id': f'{kind}-{index}', 'kind': kind, 'actions': actions})
+    if params.bgm_type and params.bgm_volume > 0 and (audio_draft is None or audio_draft['include_base']):
         rows.append({'id': 'music', 'actions': [{'id': 'music', 'effectId': 'music', 'start': 0,
-                     'end': audio_duration, 'label': 'Background music', 'movable': False, 'flexible': False}]})
+                     'end': audio_duration, 'label': 'Existing background music', 'movable': False, 'flexible': False}]})
     revision = hashlib.sha256(json.dumps({'snapshot': snapshot, 'caption_revision': draft_revision,
-        'binding': binding, 'params': ce.render_signature(params), 'natural': natural}, sort_keys=True).encode()).hexdigest()
+        'binding': binding, 'audio_revision': audio_revision, 'params': ce.render_signature(params), 'natural': natural}, sort_keys=True).encode()).hexdigest()
     return {'task_id': task_id, 'subject': params.video_subject or script.get('script', '')[:80],
             'params': params, 'snapshot': snapshot, 'order': order, 'scenes': scenes, 'rows': rows,
             'duration': audio_duration, 'extent': max(elapsed, audio_duration), 'revision': revision,
-            'caption_revision': draft_revision, 'binding': binding, 'caption_draft': caption_draft,
+            'caption_revision': draft_revision, 'audio_revision': audio_revision, 'audio_binding': audio_binding, 'audio_draft': audio_draft, 'binding': binding, 'caption_draft': caption_draft,
             'busy': busy, 'state': state, 'notes': notes, 'exact': exact, 'natural': natural}
 
 
@@ -132,7 +152,7 @@ def dispatch(task_id: str, event: dict, view: dict) -> dict:
     if not isinstance(event, dict) or len(json.dumps(event)) > 16384:
         raise ValueError('invalid timeline event')
     kind = event.get('kind')
-    if kind not in {'select', 'reorder', 'resize', 'caption', 'text_selection'}:
+    if kind not in {'select', 'reorder', 'resize', 'caption', 'text_selection', 'audio'}:
         raise ValueError('unsupported timeline event')
     if event.get('revision') != view['revision']:
         raise ValueError('project changed; refresh the editor and try again')
@@ -142,7 +162,7 @@ def dispatch(task_id: str, event: dict, view: dict) -> dict:
         if action is None:
             raise ValueError('selected timeline item is unavailable')
         return {'action': action, 'panel': {'visual': 'visual', 'narration': 'narration',
-                'captions': 'captions', 'music': 'export'}[action['effectId']]}
+                'captions': 'captions', 'music': 'audio', 'sfx': 'audio'}[action['effectId']]}
     if kind == 'text_selection':
         index, start, end = event.get('index'), event.get('start'), event.get('end')
         actions = view['rows'][2]['actions']
@@ -154,6 +174,26 @@ def dispatch(task_id: str, event: dict, view: dict) -> dict:
         return {'selection': {'index': index, 'start': start, 'end': end}}
     if view['busy']:
         raise ValueError('task is busy')
+    if kind == 'audio':
+        clip = next((c for c in (view['audio_draft'] or {}).get('clips', []) if c['id'] == event.get('clip_id')), None)
+        if clip is None:
+            raise ValueError('selected audio clip is unavailable')
+        start = ce.milliseconds(event.get('start'))
+        end = ce.milliseconds(event.get('end'))
+        old_end = clip['start_ms'] + clip['out_ms'] - clip['in_ms']
+        changes = {'start_ms': start}
+        if event.get('resize') is True:
+            changes['in_ms'] = clip['in_ms'] + start - clip['start_ms']
+            changes['out_ms'] = clip['out_ms'] + end - old_end
+        elif end - start != clip['out_ms'] - clip['in_ms']:
+            # Browser pixel conversion can differ by a millisecond at either edge.
+            if abs(end - start - (clip['out_ms'] - clip['in_ms'])) > 2:
+                raise ValueError('moving audio cannot change its duration')
+        request = {'action': 'update', 'clip_id': clip['id'], **changes,
+                   'expected_revision': view['audio_revision'], 'expected_binding': view['audio_binding']}
+        al.edit(view['audio_draft'], 'update', round(view['duration'] * 1000), clip_id=clip['id'], **changes)
+        webui_task.submit_audio_layers(task_id, request=request)
+        return {'queued': True}
     if kind == 'caption':
         index = event.get('index')
         if not view['caption_draft'] or type(index) is not int or not 0 <= index < len(view['rows'][2]['actions']):

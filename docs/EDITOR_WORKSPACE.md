@@ -39,13 +39,14 @@ scene lengths and natural narration retiming remain authoritative.
 Caption moves/resizes update the prepared caption draft through the existing
 source/revision-validated caption queue. Preview or Apply in Caption actions
 renders those changes. Original captions and an already applied track remain
-unchanged until Apply. Narration and music bars select their settings; they are
-not arbitrary movable audio layers. Music/SFX placement, multiple overlapping
-video layers, browser rendering, undo/redo and portable project interchange
-remain future work. This workspace covers the existing saved AI-scene projects;
+unchanged until Apply. Narration remains in its existing range editor. Music/SFX now has independent
+uploaded audio placements, trims, levels and fades; see [audio editing](AUDIO_EDITING.md).
+Multiple overlapping video layers, browser rendering, undo/redo and portable
+project interchange remain future work. This workspace covers the existing saved AI-scene projects;
 it does not manufacture scene manifests for stock tasks or bypass factual gates.
 
-Idle editing does not poll or remount the timeline. The v2 renderer reuses one
+Idle editing does not redraw controls or remount the timeline. Only a small
+job-status fragment polls; completion requests one workspace refresh. The v2 renderer reuses one
 React root on each data update and cleans it up only on unmount; updates must
 never append additional timelines. Active background jobs poll
 progress and refresh the workspace after completion. Refresh also reloads
@@ -133,3 +134,12 @@ selection/seek, caption dragging, Export access, Task Manager Edit navigation,
 responsive desktop layouts and visual dragging/rerendering. No live GPU, TTS,
 paid music or publishing acceptance is claimed. Operator manual acceptance
 remains deferred.
+
+## Music and SFX
+
+Use Music / SFX to import/audition assets, add music/effect clips, edit placement,
+source trims, type, gain, mute and fades, or duplicate/remove clips. Dragging
+moves a clip; edge dragging trims its source. Overlapping placements get separate
+lanes. Save the draft, then Preview Audio Arrangement or Apply Audio And Export.
+See [the audio guide](AUDIO_EDITING.md) for legacy BGM import, original restore,
+retiming behavior, limits and persistence/rollback contracts.

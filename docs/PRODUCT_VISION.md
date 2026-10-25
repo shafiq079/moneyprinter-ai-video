@@ -377,3 +377,18 @@ jobs refresh progress and results. Narration/music bars select existing settings
 arbitrary layers, audio placement, browser effects and undo/redo remain later.
 See `docs/EDITOR_WORKSPACE.md` for the reviewed alternatives, scope and build/
 license/verification contracts. Ordinary users do not need to install Node.
+
+## Completed milestone: independent music and SFX editing
+
+The owner approved independent music/SFX placement after the dedicated editor
+and caption-style corrections. Music / SFX now includes uploads/audition,
+placement and two-sided source trims, per-clip gain/mute/fades, duplicate/remove,
+overlapping lanes, saved draft/applied arrangements, rendered video/audio
+preview and render-only export/restore. Existing saved BGM can be imported for
+editing. The current queue/composer, narration and scene contracts remain.
+Applied arrangements survive reopening and Resume, with rollback on failed
+renders and safe asset references in output packages. See `AUDIO_EDITING.md`.
+
+This completes independent uploaded music/SFX editing for saved creative AI
+projects. Live waveforms/mixing, automatic ducking/alignment, undo/redo, portable
+project archives, stock/factual editor expansion and publishing remain later.

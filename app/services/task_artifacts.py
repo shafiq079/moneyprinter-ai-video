@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any, Mapping
@@ -282,6 +283,28 @@ def build_output_package(
             package["edited_captions"] = _task_relative_existing_file(task_id, data["captions_asset"]) if data["cues"] else None
         except (OSError, ValueError, TypeError, KeyError):
             package["edited_captions"] = None
+    from app.services import audio_layers
+    for name, field in ((audio_layers.DRAFT, 'audio_layers_draft'), (audio_layers.ACTIVE, 'audio_layers_active')):
+        candidate = _task_relative_existing_file(task_id, root / name)
+        if candidate:
+            package[field] = candidate
+            try:
+                layer_data = audio_layers.read(task_id, name)
+                refs = [_task_relative_existing_file(task_id, root / asset['asset']) for asset in layer_data['assets'].values()]
+                package['audio_layer_assets'] = sorted(set(package.get('audio_layer_assets', []) + [ref for ref in refs if ref]))
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
+    base_music = _task_relative_existing_file(task_id, root / 'audio_base_music.json')
+    if base_music:
+        package['audio_base_music'] = base_music
+        try:
+            record = json.loads((root / base_music).read_text())
+            if isinstance(record.get('asset'), str) and re.fullmatch(r'audio_base_music/[a-f0-9]{64}\.[a-z0-9]{1,8}', record['asset']):
+                ref = _task_relative_existing_file(task_id, root / record['asset'])
+                if ref:
+                    package['audio_layer_assets'] = sorted(set(package.get('audio_layer_assets', []) + [ref]))
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
     return package
 
 

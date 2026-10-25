@@ -73,6 +73,44 @@ M3 exposed `wan22_local` through WebUI, CLI and API using the same provider/pref
 
 ## Current development boundary
 
+## Completed milestone: independent music and SFX editing
+
+The owner approved the complete independent-audio milestone. The dedicated
+editor now has a Music / SFX inspector and audio library for uploaded music and
+sound effects, timeline placement, two-sided source trimming, gain/mute/fades,
+duplicate/remove, overlapping lanes and saved draft/applied arrangements.
+Existing saved BGM can be imported as an editable clip; legacy random/custom
+music is frozen locally for consistent arrangement previews and exports.
+
+Version-1 audio-layer sidecars and immutable task-local decoded WAV assets
+extend the current task model; no replacement project format, frontend server
+or audio-provider stack is introduced. Preview/apply/restore use the existing
+composer and saved visuals/voice/captions/music with render backups/rollback.
+Applied arrangements survive reopening, render-only/visual/caption edits and
+same-task Resume. Artifact packages include safe sidecar/media references.
+Limits are 50 MiB/ten minutes per import and 32 assets/32 placements per project.
+Positions use absolute milliseconds. Natural narration shortening crops audio
+at delivery time without changing stored placements; clips do not automatically
+shift with narration. See `docs/AUDIO_EDITING.md` for the full contract.
+
+The editor now polls only a small job-status fragment. Editable controls and
+the timeline are outside timed fragments, preventing repeated stale-control
+redraws while jobs complete. Workspace scene actions rerun the app, retaining
+legacy fragment behavior outside the workspace. Frontend frame seeking and
+singleton React-root ownership remain unchanged.
+
+CPU acceptance covers real sample timing/trims/fades/gain/mute, MP4 preview and
+export/restore, rollback, source/revision/busy checks, BGM freezing/import,
+artifacts and partial Resume. Chromium checks cover upload, adding/trimming,
+fade controls, timeline drag, duplicate overlapping lanes, rendered preview and
+reopen with no JavaScript page errors. No live GPU/TTS/paid music/publishing
+calls were made. Manual operator acceptance remains deferred.
+
+Verification: **172 Python tests and 10302 subtests passed**, plus **5 frontend
+tests** and automated Chromium acceptance. The final focused audio checks also
+exercise frozen legacy music through the real shared composer. Ruff, compileall
+and whitespace checks passed.
+
 ## Editor corrections: singleton timeline, frame seeking and caption styles
 
 The owner reported accumulating timelines during Streamlit updates, a stale

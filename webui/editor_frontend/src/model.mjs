@@ -1,5 +1,6 @@
 export const clampTime = (time, duration) => Math.max(0, Math.min(Number.isFinite(time) ? time : 0, duration));
 export function changeEvent(action, start, end, revision, resize = false) {
+  if (action.clip_id) return {kind: 'audio', clip_id: action.clip_id, start, end, resize, revision};
   if (action.effectId === 'captions') return {kind: 'caption', index: action.index, start, end, revision};
   if (action.effectId === 'visual') return resize
     ? {kind: 'resize', scene_id: action.scene_id, duration: end - start, revision}
