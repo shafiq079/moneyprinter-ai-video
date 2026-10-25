@@ -92,6 +92,8 @@ ENGLISH_FALLBACK_KEYS = frozenset(
         "Artifact Package Help",
         "Artifact Package Unavailable",
         "Scene Editor",
+        "Automatic Clip Duration",
+        "Automatic Clip Duration Help",
         "Keep Natural Narration Duration",
         "Preview Revised Timeline",
         "Natural Timeline Help",

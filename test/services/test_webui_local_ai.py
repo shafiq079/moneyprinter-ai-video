@@ -116,7 +116,7 @@ def test_hf_selection_exposes_only_supported_generation_choices():
             if getattr(item, "label", "") == "Maximum Clip Duration (seconds)"
         ]
         assert len(durations) == 1
-        assert durations[0].options == ["2", "3", "4", "5"]
+        assert durations[0].options == ["Automatic (recommended)", "2", "3", "4", "5"]
 
         prompts = [
             item for item in app.text_area
@@ -168,3 +168,56 @@ def test_wan22_selection_shows_readiness_control_without_running_preflight():
         )
         assert not app.exception
         preflight_status.assert_not_called()
+
+
+def test_automatic_duration_selection_persists_and_manual_remains_available():
+    with (
+        patch.object(config, "app", dict(config.app, llm_provider="openai", video_source="ltx25_hf")),
+        patch.object(config, "ui", {}),
+        patch.object(config, "try_save_config", return_value=True),
+        patch("app.services.local_ai.preflight_status") as preflight,
+    ):
+        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=60)
+        app.session_state["ui_language"] = "en"
+        app.run()
+        assert not app.exception
+        duration = next(i for i in app.selectbox if str(i.key).startswith("video_clip_duration_select"))
+        assert duration.value == "auto"
+        speed = next(i for i in app.slider if str(i.key).startswith("video_clip_speed_slider"))
+        assert speed.disabled
+        assert speed.value == 1
+        assert config.ui["local_ai_duration_mode"] == "auto"
+        duration.set_value(2).run()
+        assert not app.exception
+        assert config.ui["local_ai_duration_mode"] == "manual"
+        speed = next(i for i in app.slider if str(i.key).startswith("video_clip_speed_slider"))
+        assert not speed.disabled
+        app.selectbox(key=duration.key).set_value("auto").run()
+        fresh = AppTest.from_file(str(WEBUI_MAIN), default_timeout=60)
+        fresh.session_state["ui_language"] = "en"
+        fresh.run()
+        assert not fresh.exception
+        assert next(i for i in fresh.selectbox if str(i.key).startswith("video_clip_duration_select")).value == "auto"
+        # Restoring a legacy task explicitly selects its saved numeric maximum.
+        fresh.session_state["task_restore_payload"] = {"task_id": "old-task", "params": {
+            "video_subject": "Flowers", "video_source": "ltx25_hf", "video_clip_duration": 3}}
+        fresh.run()
+        assert not fresh.exception
+        assert next(i for i in fresh.selectbox if str(i.key).startswith("video_clip_duration_select")).value == 3
+        assert config.ui["local_ai_duration_mode"] == "manual"
+        fresh.session_state["task_restore_payload"] = {"task_id": "automatic-task", "params": {
+            "video_subject": "Flowers", "video_source": "ltx25_hf", "video_clip_duration": 5,
+            "local_ai_duration_mode": "auto"}}
+        fresh.run()
+        assert not fresh.exception
+        assert next(i for i in fresh.selectbox if str(i.key).startswith("video_clip_duration_select")).value == "auto"
+        # A numeric stock duration must not silently choose manual mode for a
+        # newly selected AI source in the same browser session.
+        fresh.session_state["video_source_select_en"] = "pexels"
+        fresh.run()
+        assert not fresh.exception
+        fresh.session_state["video_source_select_en"] = "wan22_local"
+        fresh.run()
+        assert not fresh.exception
+        assert next(i for i in fresh.selectbox if str(i.key).startswith("video_clip_duration_select")).value == "auto"
+        preflight.assert_not_called()

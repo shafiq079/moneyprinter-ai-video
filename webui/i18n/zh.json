@@ -1,6 +1,8 @@
 {
   "Language": "简体中文",
   "Translation": {
+    "Automatic Clip Duration": "自动（推荐）",
+    "Automatic Clip Duration Help": "现有场景导演根据脚本和实测旁白时长，在模型上限内自动决定 AI 片段长度，各片段可以不同。保持正常播放速度。这是估算的场景匹配，并非已验证的语音对齐。选择数字可手动设置最大时长。",
     "YouTube Audience": "YouTube 受众",
     "Made for Kids": "是，面向儿童",
     "Not Made for Kids": "否，不面向儿童",

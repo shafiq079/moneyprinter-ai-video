@@ -31,7 +31,7 @@ contracts, with no mandatory paid video-generation API.
 | AI scene generation | Original clips, scene prompts, continuity, selective retries, reusable assets. | Implemented through local Wan/LTX and remote HF LTX paths; one real seven-scene HF LTX task completed. Real **local** Wan/LTX checkpoint validation and comparative GPU tuning remain deferred. |
 | Editable project | Keep independently editable scene clips, narration/audio, captions, prompts and metadata alongside the final MP4. A bad scene or a render-only change must not invalidate unrelated generated assets. | Scene plan, scene versions, final output and portable artifact references exist. A full editable timeline/project with independent audio/text layers does not. |
 | In-product editor | Eventually provide a small, self-hosted, CapCut-like experience; do not copy or depend on CapCut. The initial release need not be a full multi-track NLE. | Existing Streamlit scene editor covers prompt/seed, preview, regenerate, variation, validated manual clip replacement, fixed-duration source trims, visual cut timing, visual playback reordering, version restore, render-only rerender, and saved narration ranges/audio previews with manual boundary adjustment, operator review, and saved replacement narration drafts for audition. The creative fixed-duration narration workflow includes text/TTS edits, uploaded recordings, optional tempo fitting, reviewed-range caption rebuilding, apply/export and restore-original. Automatic word alignment and independent timeline layers remain deferred. |
-| Scene timing | Let scene count/length follow narration and content instead of forcing every scene to the same fixed length. | Current planner uses measured audio duration, beat weights and a maximum provider-supported scene duration. Visual cut timing rebalances adjacent scenes at fixed total duration. Semantic audio alignment and retiming after narration changes remain deferred. |
+| Scene timing | Let scene count/length follow narration and content instead of forcing every scene to the same fixed length. | Current planner uses measured audio duration, beat weights and a maximum provider-supported scene duration. Visual cut timing rebalances adjacent scenes at fixed total duration. Automatic uses the existing narration-aware planner within model limits; natural-length narration retiming is implemented. Verified semantic/word alignment remains deferred. |
 | Publishing | Complete video generation without an upload dependency. Initially defer upload automation and channel-growth tooling. | Existing optional Upload-Post integration offers YouTube, TikTok and Instagram; operator end-to-end publishing was not established in this development effort. Direct platform OAuth is not an approved replacement. |
 | Factual content | Optional evidence/review mode must not burden creative generation. | User-supplied excerpts, safe one-page import, review-only workflow and structural claim checks exist. Automatic discovery/source authentication and real-model acceptance remain deferred. |
 | Deployment | Start with a working single-product workflow; add multi-user infrastructure or new frontend only when real needs justify it. | No decision to add accounts, billing, distributed GPU scheduling, or a React editor now. |
@@ -280,3 +280,46 @@ provider. Real GPU generation and manual operator acceptance remain deferred.
 This completes variable-duration creative narration; factual narration edits,
 independent timeline layers, automatic word alignment and portable project
 archives remain future work.
+
+## Automatic AI clip duration
+
+The owner clarified that flexible clip length should also be an option when
+starting a video, where the numeric clip-length selector lives. **Automatic
+(recommended)** is now available for Wan Local, LTX Local and LTX Hugging Face.
+Fresh WebUI AI-source selections default to Automatic; selecting a number keeps
+the existing manual maximum. Automatic/manual is remembered and restored with
+task settings. Older saved tasks and API requests without the new field retain
+manual behavior. Stock/paid-provider selectors retain their existing behavior.
+
+Automatic uses the existing Scene Director and deterministic fallback unchanged:
+measured narration duration, script segmentation and beat weighting choose the
+scene count and individual target lengths. The planning ceiling is the smaller
+of the public model limit and the provider's configured limit (Wan 5s, local
+LTX 8s, HF LTX at most 5s). Longer narration is split into multiple clips.
+The total video still follows narration; this does not promise arbitrary single
+model clip lengths or verified word/sentence alignment. Provider frame rounding
+and minimum request lengths remain owned by the existing adapters. No extra
+LLM, TTS or alignment-model call was introduced.
+
+Automatic exports use the saved scene target durations with cumulative frame
+rounding, sequential footage and normal playback speed. They do not reapply a
+hidden numeric cap or loop excess footage into a different scene. Insufficient
+footage fails explicitly. Saved visual timing overrides and active natural-length
+narration retiming take precedence. The original generation plan remains the
+source of truth for Resume, scene regeneration and render-only rerender.
+The UI fixes speed at 1x in Automatic; an API/CLI request for another speed is
+rejected before provider preparation or TTS.
+
+The additive `VideoParams.local_ai_duration_mode` field accepts `auto` or
+`manual`, defaulting to `manual` for backward compatibility. `video_clip_duration`
+remains a positive integer and is the manual maximum. API and batch JSON can
+set `"local_ai_duration_mode": "auto"`; CLI can use
+`--local-ai-duration-mode auto`. Duration mode is a generation/planning choice,
+not a render-only settings override. Resume retains the saved mode and plan;
+Regenerate restores the mode into the ordinary new-task controls.
+
+CPU checks cover provider/configured bounds, backward-compatible request and CLI
+serialization, the WebUI default/manual switch and legacy task restore, real
+variable-scene MP4 export, process-state restart/partial Resume and render-only
+reuse without new speech or model work. Manual operator and real-GPU acceptance
+remain deferred.

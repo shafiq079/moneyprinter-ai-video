@@ -486,6 +486,12 @@ Batch manifests:
         help="transition applied between source clips (default: none)",
     )
     video_group.add_argument(
+        "--local-ai-duration-mode",
+        choices=["auto", "manual"],
+        default=None,
+        help="auto: let the narration-aware scene planner choose AI clip lengths within model limits; manual: use --video-clip-duration as the cap (default: manual)",
+    )
+    video_group.add_argument(
         "--video-clip-duration",
         type=_positive_int,
         default=None,
@@ -996,6 +1002,7 @@ def build_video_params(args: argparse.Namespace) -> VideoParams:
     optional_arg_names = [
         "video_language",
         "local_ai_generation_mode",
+        "local_ai_duration_mode",
         "local_ai_seed",
         "local_ai_visual_style",
         "paragraph_number",

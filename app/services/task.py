@@ -841,6 +841,7 @@ def get_video_materials(
                 max_scene_duration=local_ai.scene_duration_limit(
                     provider,
                     params.video_clip_duration,
+                    automatic=params.local_ai_duration_mode == "auto",
                 ),
                 aspect=str(aspect),
                 base_seed=(
@@ -1219,6 +1220,15 @@ def generate_final_videos(
             expected_paths = generation_manifest.active_scene_paths(task_id)
             if list(downloaded_videos) != expected_paths:
                 raise ValueError("scene timing materials do not match saved playback order")
+            timing_options["scene_durations"] = [
+                durations[str(scene_id)] for scene_id in generation_manifest.scene_playback_order(manifest)
+            ]
+        elif manifest is not None and params.local_ai_duration_mode == "auto":
+            # Keep each generated shot attached to the exact duration chosen by
+            # the existing narration-aware planner, including reordered footage.
+            if list(downloaded_videos) != generation_manifest.active_scene_paths(task_id):
+                raise ValueError("automatic scene materials do not match saved playback order")
+            durations = generation_manifest.scene_playback_durations(manifest)
             timing_options["scene_durations"] = [
                 durations[str(scene_id)] for scene_id in generation_manifest.scene_playback_order(manifest)
             ]
@@ -2957,7 +2967,10 @@ def _run_pipeline(
                     aspect=params.video_aspect,
                     clip_duration=params.video_clip_duration,
                     seed=params.local_ai_seed,
+                    duration_mode=params.local_ai_duration_mode,
                 )
+            if params.local_ai_duration_mode == "auto" and params.video_clip_speed != 1.0:
+                raise ValueError("automatic scene duration requires normal playback speed")
             prepared_local_ai_provider = local_ai.prepare_provider(
                 params.video_source,
                 generation_mode=params.local_ai_generation_mode,

@@ -96,6 +96,7 @@ def validate_generation_request(
     aspect: Any,
     clip_duration: Any,
     seed: int | None,
+    duration_mode: str = "manual",
 ) -> LocalAICapability:
     capability = source_capability(source)
     mode = str(generation_mode or "").strip().lower()
@@ -114,8 +115,13 @@ def validate_generation_request(
             f"supports aspect ratio(s): {allowed}"
         )
 
+    if duration_mode not in {"manual", "auto"}:
+        raise LocalAICapabilityError("local AI duration mode must be manual or auto")
+    # Automatic planning has no user-selected duration. The provider's actual
+    # configured bound is resolved after preflight, before the existing planner.
+    selected_duration = max(capability.clip_durations) if duration_mode == "auto" else clip_duration
     try:
-        duration = int(clip_duration)
+        duration = int(selected_duration)
     except (TypeError, ValueError) as exc:
         raise LocalAICapabilityError("local AI clip duration must be an integer") from exc
     if duration not in capability.clip_durations:

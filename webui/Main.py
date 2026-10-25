@@ -2286,7 +2286,9 @@ def _apply_restored_params(params):
         params.get("video_fit_mode") or VideoFitMode.cover.value,
     )
     _set_stable_widget_value(
-        "video_clip_duration_select", params.get("video_clip_duration", 3)
+        f"video_clip_duration_select_{video_source}" if local_ai.is_public_source(video_source) else "video_clip_duration_select",
+        "auto" if params.get("local_ai_duration_mode", "manual") == "auto" and local_ai.is_public_source(video_source)
+        else params.get("video_clip_duration", 3)
     )
     _set_stable_widget_value(
         "video_clip_speed_slider",
@@ -6386,7 +6388,7 @@ def _render_video_settings(panel, params):
             # MiniMax H3 的远端时长范围是 4～15 秒。选择秘塔时使用完整能力
             # 范围，既避免 2/3 秒被按 4 秒计费，也让 WebUI 与 CLI、服务层一致。
             if local_ai_capability is not None:
-                video_clip_durations = list(local_ai_capability.clip_durations)
+                video_clip_durations = ["auto", *local_ai_capability.clip_durations]
             elif params.video_source == "metaso_minimax":
                 video_clip_durations = list(
                     range(
@@ -6403,10 +6405,10 @@ def _render_video_settings(panel, params):
                 )
             else:
                 video_clip_durations = [2, 3, 4, 5, 6, 7, 8, 9, 10]
-            params.video_clip_duration = stable_selectbox(
+            selected_clip_duration = stable_selectbox(
                 tr("Clip Duration"),
                 options=video_clip_durations,
-                default_value=_saved_ui_choice(
+                default_value="auto" if local_ai_capability is not None and config.ui.get("local_ai_duration_mode", "auto") == "auto" else _saved_ui_choice(
                     "video_clip_duration",
                     video_clip_durations,
                     (
@@ -6417,9 +6419,19 @@ def _render_video_settings(panel, params):
                         else 3
                     ),
                 ),
-                key="video_clip_duration_select",
-                help=tr("Clip Duration Help"),
+                key=f"video_clip_duration_select_{params.video_source}" if local_ai_capability is not None else "video_clip_duration_select",
+                help=tr("Automatic Clip Duration Help") if local_ai_capability is not None else tr("Clip Duration Help"),
+                format_func=lambda value, auto_label=tr("Automatic Clip Duration"): auto_label if value == "auto" else str(value),
             )
+            params.local_ai_duration_mode = "auto" if selected_clip_duration == "auto" else "manual"
+            params.video_clip_duration = (
+                max(local_ai_capability.clip_durations)
+                if selected_clip_duration == "auto" else selected_clip_duration
+            )
+            if local_ai_capability is not None:
+                _set_runtime_config("ui", "local_ai_duration_mode", params.local_ai_duration_mode)
+                if params.local_ai_duration_mode == "auto":
+                    st.caption(tr("Automatic Clip Duration Help"))
             _set_runtime_config(
                 "ui", "video_clip_duration", params.video_clip_duration
             )
@@ -6433,6 +6445,8 @@ def _render_video_settings(panel, params):
                     _saved_ui_number("video_clip_speed", 1.0, 0.5, 2.0),
                 )
             )
+            if params.local_ai_duration_mode == "auto":
+                st.session_state[clip_speed_key] = 1.0
             params.video_clip_speed = st.slider(
                 tr("Clip Speed"),
                 min_value=0.5,
@@ -6441,6 +6455,7 @@ def _render_video_settings(panel, params):
                 format="%.2fx",
                 key=clip_speed_key,
                 help=tr("Clip Speed Help"),
+                disabled=params.local_ai_duration_mode == "auto",
             )
             _set_runtime_config("ui", "video_clip_speed", params.video_clip_speed)
             video_count_options = [1, 2, 3, 4, 5]

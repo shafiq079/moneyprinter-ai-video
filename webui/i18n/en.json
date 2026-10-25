@@ -1,6 +1,8 @@
 {
   "Language": "English",
   "Translation": {
+    "Automatic Clip Duration": "Automatic (recommended)",
+    "Automatic Clip Duration Help": "The existing Scene Director chooses AI scene lengths from the script and measured narration, within the model limit. Each scene can have a different length. Playback stays at normal speed. Matching is estimated, not verified speech alignment. Select a number for a manual maximum.",
     "YouTube Audience": "YouTube audience",
     "Made for Kids": "Yes, made for kids",
     "Not Made for Kids": "No, not made for kids",

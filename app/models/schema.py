@@ -169,6 +169,7 @@ class VideoParams(BaseModel):
 
     video_source: Optional[str] = "pexels"
     local_ai_generation_mode: Literal["fast", "quality"] = "fast"
+    local_ai_duration_mode: Literal["manual", "auto"] = "manual"
     local_ai_seed: Optional[int] = Field(default=None, ge=0)
     local_ai_visual_style: str = Field(default="", max_length=2000)
     video_materials: Optional[List[MaterialInfo]] = (

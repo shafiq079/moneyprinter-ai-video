@@ -203,7 +203,14 @@ def preflight_status(
     }
 
 
-def scene_duration_limit(provider: LocalVideoProvider, requested: float) -> float:
+def scene_duration_limit(provider: LocalVideoProvider, requested: float, *, automatic: bool = False) -> float:
+    """Use the existing planner with either a manual cap or model-safe ceiling."""
+    if automatic:
+        capability_limit = (
+            max(source_capability(provider.provider_id).clip_durations)
+            if is_public_source(provider.provider_id) else getattr(provider, "max_scene_duration", float(requested))
+        )
+        return min(float(capability_limit), float(getattr(provider, "max_scene_duration", capability_limit)))
     provider_limit = getattr(provider, "max_scene_duration", None)
     if provider_limit is None:
         return float(requested)

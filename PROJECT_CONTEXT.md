@@ -73,6 +73,59 @@ M3 exposed `wan22_local` through WebUI, CLI and API using the same provider/pref
 
 ## Current development boundary
 
+## Automatic AI clip duration
+
+The owner clarified that flexible clip length should also be an option when
+starting a video, where the numeric clip-length selector lives. **Automatic
+(recommended)** is now available for Wan Local, LTX Local and LTX Hugging Face.
+Fresh WebUI AI-source selections default to Automatic; selecting a number keeps
+the existing manual maximum. Automatic/manual is remembered and restored with
+task settings. Older saved tasks and API requests without the new field retain
+manual behavior. Stock/paid-provider selectors retain their existing behavior.
+
+Automatic uses the existing Scene Director and deterministic fallback unchanged:
+measured narration duration, script segmentation and beat weighting choose the
+scene count and individual target lengths. The planning ceiling is the smaller
+of the public model limit and the provider's configured limit (Wan 5s, local
+LTX 8s, HF LTX at most 5s). Longer narration is split into multiple clips.
+The total video still follows narration; this does not promise arbitrary single
+model clip lengths or verified word/sentence alignment. Provider frame rounding
+and minimum request lengths remain owned by the existing adapters. No extra
+LLM, TTS or alignment-model call was introduced.
+
+Automatic exports use the saved scene target durations with cumulative frame
+rounding, sequential footage and normal playback speed. They do not reapply a
+hidden numeric cap or loop excess footage into a different scene. Insufficient
+footage fails explicitly. Saved visual timing overrides and active natural-length
+narration retiming take precedence. The original generation plan remains the
+source of truth for Resume, scene regeneration and render-only rerender.
+The UI fixes speed at 1x in Automatic; an API/CLI request for another speed is
+rejected before provider preparation or TTS.
+
+The additive `VideoParams.local_ai_duration_mode` field accepts `auto` or
+`manual`, defaulting to `manual` for backward compatibility. `video_clip_duration`
+remains a positive integer and is the manual maximum. API and batch JSON can
+set `"local_ai_duration_mode": "auto"`; CLI can use
+`--local-ai-duration-mode auto`. Duration mode is a generation/planning choice,
+not a render-only settings override. Resume retains the saved mode and plan;
+Regenerate restores the mode into the ordinary new-task controls.
+
+CPU checks cover provider/configured bounds, backward-compatible request and CLI
+serialization, the WebUI default/manual switch and legacy task restore, real
+variable-scene MP4 export, process-state restart/partial Resume and render-only
+reuse without new speech or model work. Manual operator and real-GPU acceptance
+remain deferred.
+
+Automatic-duration verification: **378 passed, 3 skipped and 10372 subtests
+passed** across planning/providers, shared rendering/audio, scene/narration
+editing, Resume, API schema/CLI and WebUI regressions. After the source-specific
+selector adjustment, fresh UI/history/default/translation checks passed with
+**37 passed and 10225 subtests passed**. Ruff, compileall and whitespace checks
+passed. The prior natural-duration milestone also has green full CI on
+`a9e839fbdd5613f0c811e24eb96a87f62a18f68a`. Check current GitHub CI for the new
+published head; no live GPU/speech acceptance is claimed.
+
+
 ### Completed creative narration/caption milestone (fixed timeline)
 
 The owner explicitly requested finishing the milestone end to end rather than
