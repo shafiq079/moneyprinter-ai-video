@@ -34,7 +34,7 @@ contracts, with no mandatory paid video-generation API.
 | Scene timing | Let scene count/length follow narration and content instead of forcing every scene to the same fixed length. | Current planner uses measured audio duration, beat weights and a maximum provider-supported scene duration. Visual cut timing rebalances adjacent scenes at fixed total duration. Automatic uses the existing narration-aware planner within model limits; natural-length narration retiming is implemented. Verified semantic/word alignment remains deferred. |
 | Publishing | Complete video generation without an upload dependency. Initially defer upload automation and channel-growth tooling. | Existing optional Upload-Post integration offers YouTube, TikTok and Instagram; operator end-to-end publishing was not established in this development effort. Direct platform OAuth is not an approved replacement. |
 | Factual content | Optional evidence/review mode must not burden creative generation. | User-supplied excerpts, safe one-page import, review-only workflow and structural claim checks exist. Automatic discovery/source authentication and real-model acceptance remain deferred. |
-| Deployment | Start with a working single-product workflow; add multi-user infrastructure or new frontend only when real needs justify it. | No decision to add accounts, billing, distributed GPU scheduling, or a React editor now. |
+| Deployment | Start with a working single-product workflow; add multi-user infrastructure or new frontend only when real needs justify it. | An embedded React timeline in the existing Streamlit product is now approved and implemented. Accounts, billing, distributed scheduling and a replacement frontend remain outside scope. |
 
 ## Deferred editor requirements to design incrementally
 
@@ -352,3 +352,28 @@ limitation. No new project format or frontend stack is selected.
 This completes independent caption editing; independently positioned music/SFX,
 portable project archives and automatic word alignment remain later work.
 Manual operator acceptance remains deferred; automated verification is CPU-only.
+
+## Completed milestone: dedicated video editor workspace
+
+The owner rejected editing inside Task Manager and approved an editor-style
+workspace plus reuse of open-source UI code. Task Manager's **Edit** action now
+navigates to a separate full-page editor, with media library, large video
+preview, interactive timeline and selected-item inspector. Back returns to the
+task list; direct editor URLs can be reopened. Task Manager no longer renders
+the scene/narration/caption editing panels.
+
+The component uses MIT-licensed `@xzdarcy/react-timeline-editor@1.0.0` with React
+18, shipped as a local prebuilt bundle. The selected timeline-engine package
+lists ISC; notices/licenses are distributed. OpenCut and OpenReel were reviewed
+as complete applications and retained as references. The current Streamlit
+shell, Python renderer, saved task assets and edit/recovery contracts remain.
+No new canonical timeline format or separate frontend server is introduced.
+
+Browser playback and scrubbing drive the timeline playhead; clip/cue selection
+opens the corresponding inspector. Visual drag/rebalance and caption drag/resize
+use existing validated queues. All earlier inspector actions and render-only
+exports remain available. Idle editing stays stable without polling; active
+jobs refresh progress and results. Narration/music bars select existing settings;
+arbitrary layers, audio placement, browser effects and undo/redo remain later.
+See `docs/EDITOR_WORKSPACE.md` for the reviewed alternatives, scope and build/
+license/verification contracts. Ordinary users do not need to install Node.

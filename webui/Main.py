@@ -1221,15 +1221,17 @@ def _build_video_download_name(subject, index, total):
 
 
 def _select_scene_editor_task(task_id: str) -> None:
-    st.session_state["scene_editor_task_id"] = str(task_id)
+    from webui.editor_workspace import open_editor
+    open_editor(task_id)
 
 
-def _render_caption_editor() -> None:
+def _render_caption_editor(*, workspace=False) -> None:
     task_id = str(st.session_state.get("scene_editor_task_id") or "")
     if not task_id:
         return
-    st.subheader(tr("Independent Caption Editor"))
-    st.caption(tr("Independent Caption Help"))
+    if not workspace:
+        st.subheader(tr("Independent Caption Editor"))
+        st.caption(tr("Independent Caption Help"))
     try:
         context = tm.caption_editor_context(task_id, read_only=True)
         snapshot = generation_manifest.scene_timing_snapshot(generation_manifest.load_manifest(task_id))
@@ -1258,23 +1260,27 @@ def _render_caption_editor() -> None:
         else:
             st.toast(tr("Caption Edit Queued"))
             st.rerun(scope="fragment")
-    if st.button(tr("Prepare Caption Draft"), key=f"caption_prepare_{task_id}", disabled=busy):
-        queue("prepare")
-    if st.button(tr("Restore Base Captions"), key=f"caption_restore_{task_id}",
-                 disabled=busy or not ce.file(task_id, ce.ACTIVE).exists()):
-        queue("restore")
+    with st.expander(tr("Editor Caption Actions"), expanded=draft is None) if workspace else st.container():
+        if st.button(tr("Prepare Caption Draft"), key=f"caption_prepare_{task_id}", disabled=busy):
+            queue("prepare")
+        if st.button(tr("Restore Base Captions"), key=f"caption_restore_{task_id}",
+                     disabled=busy or not ce.file(task_id, ce.ACTIVE).exists()):
+            queue("restore")
+        if draft is not None:
+            cues = draft["cues"]
+            st.download_button(tr("Download Caption Draft"), ce.srt(cues), file_name="caption-draft.srt",
+                               key=f"caption_download_{task_id}")
+            if st.button(tr("Preview Caption Draft"), key=f"caption_preview_{task_id}", disabled=busy):
+                queue("preview")
+            if st.button(tr("Apply Captions And Export"), key=f"caption_apply_{task_id}", disabled=busy):
+                queue("apply")
     if draft is None:
         st.info(tr("Caption Draft Required"))
         return
     cues = draft["cues"]
-    st.dataframe([{"cue": i + 1, "start": c["start_ms"] / 1000, "end": c["end_ms"] / 1000,
-                   "text": c["text"]} for i, c in enumerate(cues)], hide_index=True)
-    st.download_button(tr("Download Caption Draft"), ce.srt(cues), file_name="caption-draft.srt",
-                       key=f"caption_download_{task_id}")
-    if st.button(tr("Preview Caption Draft"), key=f"caption_preview_{task_id}", disabled=busy):
-        queue("preview")
-    if st.button(tr("Apply Captions And Export"), key=f"caption_apply_{task_id}", disabled=busy):
-        queue("apply")
+    if not workspace:
+        st.dataframe([{"cue": i + 1, "start": c["start_ms"] / 1000, "end": c["end_ms"] / 1000,
+                       "text": c["text"]} for i, c in enumerate(cues)], hide_index=True)
     if not cues:
         st.info(tr("Empty Caption Track"))
     else:
@@ -1308,12 +1314,12 @@ def _render_caption_editor() -> None:
         if st.button(tr("Add Caption Cue"), key=f"caption_add_{task_id}", disabled=busy):
             queue("add", start=start, end=end, text=text)
     preview = ce.load_preview(task_id, context["binding"], context["duration_ms"], snapshot, ce.render_signature(context["params"]))
-    if preview:
+    if preview and not workspace:
         st.caption(tr("Caption Preview Help"))
         st.video(str(ce.file(task_id, preview["preview_asset"])))
 
 
-def _render_scene_editor() -> None:
+def _render_scene_editor(*, workspace=False, scene_id_filter=None, panel="all") -> None:
     task_id = str(st.session_state.get("scene_editor_task_id") or "")
     if not task_id:
         return
@@ -1343,16 +1349,17 @@ def _render_scene_editor() -> None:
         task_state = {}
     is_busy = tm.is_task_busy(task_state)
 
-    st.divider()
-    title_cols = st.columns([5, 1], vertical_alignment="center")
-    title_cols[0].subheader(tr("Scene Editor"))
-    if title_cols[1].button(
-        tr("Close"),
-        key=f"close_scene_editor_{task_id}",
-        use_container_width=True,
-    ):
-        st.session_state.pop("scene_editor_task_id", None)
-        return
+    if not workspace:
+        st.divider()
+        title_cols = st.columns([5, 1], vertical_alignment="center")
+        title_cols[0].subheader(tr("Scene Editor"))
+        if title_cols[1].button(
+            tr("Close"),
+            key=f"close_scene_editor_{task_id}",
+            use_container_width=True,
+        ):
+            st.session_state.pop("scene_editor_task_id", None)
+            return
 
     regeneration_error = str(
         task_state.get("scene_regeneration_error") or ""
@@ -1381,85 +1388,91 @@ def _render_scene_editor() -> None:
         narration_map, narration_revision = tm.narration_ranges.read_snapshot(task_id)
     except (ValueError, OSError):
         st.warning(tr("Narration Ranges Unavailable"))
-    st.caption(tr("Narration Ranges Help"))
-    if task_state.get("narration_ranges_error"):
-        st.warning(str(task_state["narration_ranges_error"]))
-    if st.button(tr("Prepare Narration Previews"), key=f"prepare_narration_{task_id}", disabled=is_busy):
-        try:
-            webui_task.submit_narration_ranges(task_id)
-        except Exception as exc:
-            st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
-        else:
-            st.toast(tr("Narration Previews Queued"))
-            st.rerun(scope="fragment")
-
     active_mix = generation_manifest.resolve_asset(task_id, "narration_mix.json").exists()
-    if active_mix:
-        st.warning(tr("Narration Mix Active"))
-    st.caption(tr("Narration Mix Help"))
-    confirm_transcripts = st.checkbox(tr("Narration Mix Confirm"), key=f"mix_confirm_{task_id}", disabled=is_busy)
-    rebuild_captions = st.checkbox(tr("Rebuild Scene Captions"), value=True, key=f"mix_captions_{task_id}", disabled=is_busy or active_mix)
-    st.caption(tr("Scene Captions Help"))
-    natural_pending = any(i.get("replacement", {}).get("timing_mode") == "natural" for i in (narration_map or {}).get("ranges", []))
-    revised_timeline = tm.narration_timeline.load_preview(task_id) if natural_pending else None
-    if natural_pending:
-        st.caption(tr("Natural Timeline Help"))
-        if st.button(tr("Preview Revised Timeline"), key=f"preview_narration_timeline_{task_id}", disabled=is_busy):
-            try:
-                webui_task.submit_narration_ranges(task_id, edit_request={
-                    "operation": "timeline", "expected_revision": narration_revision})
-            except Exception as exc:
-                st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
-            else:
-                st.toast(tr("Narration Previews Queued"))
-                st.rerun(scope="fragment")
-        if revised_timeline:
-            st.caption(tr("Timeline Duration Change").format(
-                before=revised_timeline["timeline"]["source_duration"], after=revised_timeline["timeline"]["audio_duration"]))
-            st.caption(tr("Revised Narration Ranges"))
-            st.dataframe(revised_timeline["timeline"]["segments"], hide_index=True)
-            st.caption(tr("Revised Visual Coverage"))
-            st.dataframe([{k: row.get(k) for k in ("scene_id", "start", "end", "duration", "available_duration", "needs_footage")}
-                          for row in revised_timeline["rows"]], hide_index=True)
-            if not revised_timeline["covered"]:
-                st.warning(tr("Longer Footage Required"))
-        else:
-            st.info(tr("Timeline Preview Required"))
-    apply_mix = st.button(tr("Apply Narration Drafts"), key=f"apply_narration_mix_{task_id}",
-                          disabled=is_busy or active_mix or not confirm_transcripts or (natural_pending and (not revised_timeline or not revised_timeline["covered"])) or not any(i.get("replacement") for i in (narration_map or {}).get("ranges", [])))
-    reset_mix = st.button(tr("Restore Original Narration"), key=f"reset_narration_mix_{task_id}", disabled=is_busy or not active_mix)
-    if apply_mix or reset_mix:
-        try:
-            webui_task.submit_narration_ranges(task_id, edit_request={
-                "operation": "apply", "expected_revision": narration_revision,
-                "expected_snapshot": timing_snapshot, "reset": reset_mix,
-                "omit_captions": not rebuild_captions, "rebuild_captions": rebuild_captions,
-                "confirm_transcripts": confirm_transcripts,
-                **({"expected_timeline": revised_timeline["signature"]} if natural_pending and revised_timeline else {})})
-        except Exception as exc:
-            st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
-        else:
-            st.toast(tr("Narration Previews Queued"))
-            st.rerun(scope="fragment")
+    if panel != "visual":
+        with st.expander(tr("Editor Narration Actions"), expanded=narration_map is None) if workspace else st.container():
+            st.caption(tr("Narration Ranges Help"))
+            if task_state.get("narration_ranges_error"):
+                st.warning(str(task_state["narration_ranges_error"]))
+            if st.button(tr("Prepare Narration Previews"), key=f"prepare_narration_{task_id}", disabled=is_busy):
+                try:
+                    webui_task.submit_narration_ranges(task_id)
+                except Exception as exc:
+                    st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
+                else:
+                    st.toast(tr("Narration Previews Queued"))
+                    st.rerun(scope="fragment")
 
-    st.caption(tr("Scene Reorder Help"))
-    st.caption(tr("Scene Timing Help"))
-    if task_state.get("scene_timing_error"):
-        st.warning(f"{tr('Scene Timing Failed')}: {task_state['scene_timing_error']}")
-    if st.button(
-        tr("Reset Scene Timing"), key=f"reset_scene_timing_{task_id}",
-        disabled=is_busy or "playback_durations" not in manifest,
-    ):
-        defaults = {str(scene.scene_id): scene.target_duration for scene in plan.scenes}
-        try:
-            webui_task.submit_scene_timing(task_id, defaults, expected_snapshot=timing_snapshot)
-        except Exception as exc:
-            st.error(f"{tr('Scene Timing Failed')}: {exc}")
-        else:
-            st.toast(tr("Scene Timing Queued"))
-            st.rerun(scope="fragment")
+            if active_mix:
+                st.warning(tr("Narration Mix Active"))
+            st.caption(tr("Narration Mix Help"))
+            confirm_transcripts = st.checkbox(tr("Narration Mix Confirm"), key=f"mix_confirm_{task_id}", disabled=is_busy)
+            rebuild_captions = st.checkbox(tr("Rebuild Scene Captions"), value=True, key=f"mix_captions_{task_id}", disabled=is_busy or active_mix)
+            st.caption(tr("Scene Captions Help"))
+            natural_pending = any(i.get("replacement", {}).get("timing_mode") == "natural" for i in (narration_map or {}).get("ranges", []))
+            revised_timeline = tm.narration_timeline.load_preview(task_id) if natural_pending else None
+            if natural_pending:
+                st.caption(tr("Natural Timeline Help"))
+                if st.button(tr("Preview Revised Timeline"), key=f"preview_narration_timeline_{task_id}", disabled=is_busy):
+                    try:
+                        webui_task.submit_narration_ranges(task_id, edit_request={
+                            "operation": "timeline", "expected_revision": narration_revision})
+                    except Exception as exc:
+                        st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
+                    else:
+                        st.toast(tr("Narration Previews Queued"))
+                        st.rerun(scope="fragment")
+                if revised_timeline:
+                    st.caption(tr("Timeline Duration Change").format(
+                        before=revised_timeline["timeline"]["source_duration"], after=revised_timeline["timeline"]["audio_duration"]))
+                    st.caption(tr("Revised Narration Ranges"))
+                    st.dataframe(revised_timeline["timeline"]["segments"], hide_index=True)
+                    st.caption(tr("Revised Visual Coverage"))
+                    st.dataframe([{k: row.get(k) for k in ("scene_id", "start", "end", "duration", "available_duration", "needs_footage")}
+                                  for row in revised_timeline["rows"]], hide_index=True)
+                    if not revised_timeline["covered"]:
+                        st.warning(tr("Longer Footage Required"))
+                else:
+                    st.info(tr("Timeline Preview Required"))
+            apply_mix = st.button(tr("Apply Narration Drafts"), key=f"apply_narration_mix_{task_id}",
+                                  disabled=is_busy or active_mix or not confirm_transcripts or (natural_pending and (not revised_timeline or not revised_timeline["covered"])) or not any(i.get("replacement") for i in (narration_map or {}).get("ranges", [])))
+            reset_mix = st.button(tr("Restore Original Narration"), key=f"reset_narration_mix_{task_id}", disabled=is_busy or not active_mix)
+            if apply_mix or reset_mix:
+                try:
+                    webui_task.submit_narration_ranges(task_id, edit_request={
+                        "operation": "apply", "expected_revision": narration_revision,
+                        "expected_snapshot": timing_snapshot, "reset": reset_mix,
+                        "omit_captions": not rebuild_captions, "rebuild_captions": rebuild_captions,
+                        "confirm_transcripts": confirm_transcripts,
+                        **({"expected_timeline": revised_timeline["signature"]} if natural_pending and revised_timeline else {})})
+                except Exception as exc:
+                    st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
+                else:
+                    st.toast(tr("Narration Previews Queued"))
+                    st.rerun(scope="fragment")
+
+    if panel != "narration":
+        if not workspace:
+            st.caption(tr("Scene Reorder Help"))
+            st.caption(tr("Scene Timing Help"))
+        if task_state.get("scene_timing_error"):
+            st.warning(f"{tr('Scene Timing Failed')}: {task_state['scene_timing_error']}")
+        if st.button(
+            tr("Reset Scene Timing"), key=f"reset_scene_timing_{task_id}",
+            disabled=is_busy or "playback_durations" not in manifest,
+        ):
+            defaults = {str(scene.scene_id): scene.target_duration for scene in plan.scenes}
+            try:
+                webui_task.submit_scene_timing(task_id, defaults, expected_snapshot=timing_snapshot)
+            except Exception as exc:
+                st.error(f"{tr('Scene Timing Failed')}: {exc}")
+            else:
+                st.toast(tr("Scene Timing Queued"))
+                st.rerun(scope="fragment")
 
     for position, scene_id in enumerate(playback_order):
+        if scene_id_filter is not None and scene_id != scene_id_filter:
+            continue
         scene = scenes_by_id[scene_id]
         try:
             record = generation_manifest.scene_record(
@@ -1479,382 +1492,386 @@ def _render_scene_editor() -> None:
             f"{position + 1}. {tr('Scene')} {scene.scene_id} · {scene.beat} · "
             f"{playback_durations[str(scene.scene_id)]:.2f}s"
         )
-        with st.expander(label, expanded=False):
-            move_cols = st.columns(2)
-            for column, offset, title in (
-                (move_cols[0], -1, "Move Earlier"),
-                (move_cols[1], 1, "Move Later"),
-            ):
-                target_position = position + offset
-                if column.button(
-                    tr(title), key=f"move_scene_{offset}_{task_id}_{scene.scene_id}",
-                    disabled=is_busy or not 0 <= target_position < len(playback_order),
+        with st.expander(label, expanded=workspace):
+            if panel != "narration":
+                move_cols = st.columns(2)
+                for column, offset, title in (
+                    (move_cols[0], -1, "Move Earlier"),
+                    (move_cols[1], 1, "Move Later"),
+                ):
+                    target_position = position + offset
+                    if column.button(
+                        tr(title), key=f"move_scene_{offset}_{task_id}_{scene.scene_id}",
+                        disabled=is_busy or not 0 <= target_position < len(playback_order),
+                        use_container_width=True,
+                    ):
+                        proposed_order = list(playback_order)
+                        proposed_order[position], proposed_order[target_position] = (
+                            proposed_order[target_position], proposed_order[position]
+                        )
+                        try:
+                            webui_task.submit_scene_reorder(
+                                task_id, proposed_order, expected_order=playback_order,
+                            )
+                        except Exception as exc:
+                            st.error(f"{tr('Scene Reorder Failed')}: {exc}")
+                        else:
+                            st.toast(tr("Scene Reorder Queued"))
+                            st.rerun(scope="fragment")
+
+                duration_value = st.number_input(
+                    tr("Scene Screen Duration"), min_value=0.001,
+                    value=max(0.001, playback_durations[str(scene_id)]), step=0.1,
+                    key=f"scene_screen_duration_{task_id}_{scene_id}_{playback_durations[str(scene_id)]}",
+                    disabled=is_busy or position == len(playback_order) - 1,
+                )
+                if st.button(
+                    tr("Apply Scene Timing"), key=f"apply_scene_timing_{task_id}_{scene_id}",
+                    disabled=(is_busy or position == len(playback_order) - 1
+                              or abs(float(duration_value) - playback_durations[str(scene_id)]) < 1e-6),
                     use_container_width=True,
                 ):
-                    proposed_order = list(playback_order)
-                    proposed_order[position], proposed_order[target_position] = (
-                        proposed_order[target_position], proposed_order[position]
-                    )
+                    next_id = str(playback_order[position + 1])
+                    proposed = dict(playback_durations)
+                    proposed[next_id] += proposed[str(scene_id)] - float(duration_value)
+                    proposed[str(scene_id)] = float(duration_value)
                     try:
-                        webui_task.submit_scene_reorder(
-                            task_id, proposed_order, expected_order=playback_order,
-                        )
+                        webui_task.submit_scene_timing(task_id, proposed, expected_snapshot=timing_snapshot)
                     except Exception as exc:
-                        st.error(f"{tr('Scene Reorder Failed')}: {exc}")
+                        st.error(f"{tr('Scene Timing Failed')}: {exc}")
                     else:
-                        st.toast(tr("Scene Reorder Queued"))
+                        st.toast(tr("Scene Timing Queued"))
                         st.rerun(scope="fragment")
-
-            duration_value = st.number_input(
-                tr("Scene Screen Duration"), min_value=0.001,
-                value=max(0.001, playback_durations[str(scene_id)]), step=0.1,
-                key=f"scene_screen_duration_{task_id}_{scene_id}_{playback_durations[str(scene_id)]}",
-                disabled=is_busy or position == len(playback_order) - 1,
-            )
-            if st.button(
-                tr("Apply Scene Timing"), key=f"apply_scene_timing_{task_id}_{scene_id}",
-                disabled=(is_busy or position == len(playback_order) - 1
-                          or abs(float(duration_value) - playback_durations[str(scene_id)]) < 1e-6),
-                use_container_width=True,
-            ):
-                next_id = str(playback_order[position + 1])
-                proposed = dict(playback_durations)
-                proposed[next_id] += proposed[str(scene_id)] - float(duration_value)
-                proposed[str(scene_id)] = float(duration_value)
-                try:
-                    webui_task.submit_scene_timing(task_id, proposed, expected_snapshot=timing_snapshot)
-                except Exception as exc:
-                    st.error(f"{tr('Scene Timing Failed')}: {exc}")
-                else:
-                    st.toast(tr("Scene Timing Queued"))
-                    st.rerun(scope="fragment")
 
             if scene.narration_segment:
                 st.caption(scene.narration_segment)
-            narration_range = next((item for item in (narration_map or {}).get("ranges", []) if item["scene_id"] == scene_id), None)
-            if narration_range is not None:
-                range_label = "Adjusted Narration Range" if narration_map["basis"] == "operator_adjusted" else "Estimated Narration Range"
-                st.caption(tr(range_label).format(start=narration_range["start"], end=narration_range["end"]))
-                last_narration = narration_map["ranges"][-1]["scene_id"] == scene_id
-                boundary = st.number_input(
-                    tr("Narration Range End"), min_value=0.0, value=float(narration_range["end"]), step=0.05,
-                    key=f"narration_end_{task_id}_{scene_id}_{narration_revision}", disabled=is_busy or last_narration,
-                )
-                if st.button(tr("Apply Narration Boundary"), key=f"apply_narration_boundary_{task_id}_{scene_id}",
-                             disabled=is_busy or active_mix or last_narration or abs(boundary - narration_range["end"]) < 1e-8):
-                    try:
-                        webui_task.submit_narration_ranges(task_id, edit_request={"scene_id": scene_id,
-                            "expected_revision": narration_revision, "end": float(boundary)})
-                    except Exception as exc:
-                        st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
-                    else:
-                        st.toast(tr("Narration Previews Queued"))
-                        st.rerun(scope="fragment")
-                checked = scene_id in narration_map.get("operator_reviewed_scene_ids", [])
-                if checked:
-                    st.caption(tr("Narration Reviewed By You"))
-                if st.button(tr("Mark Narration Reviewed"), key=f"review_narration_{task_id}_{scene_id}", disabled=is_busy or checked):
-                    try:
-                        webui_task.submit_narration_ranges(task_id, edit_request={"scene_id": scene_id,
-                            "expected_revision": narration_revision, "reviewed": True})
-                    except Exception as exc:
-                        st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
-                    else:
-                        st.toast(tr("Narration Previews Queued"))
-                        st.rerun(scope="fragment")
-                edited_text = st.text_area(tr("Replacement Narration Text"),
-                    value=(narration_range.get("replacement") or {}).get("text", scene.narration_segment),
-                    max_chars=2000, key=f"draft_text_{task_id}_{scene_id}_{narration_revision}", disabled=is_busy or active_mix)
-                natural_duration = st.checkbox(tr("Keep Natural Narration Duration"),
-                    value=(narration_range.get("replacement") or {}).get("timing_mode") == "natural",
-                    key=f"draft_natural_{task_id}_{scene_id}", disabled=is_busy or active_mix)
-                fit_duration = st.checkbox(tr("Fit Narration Duration"), value=True,
-                    key=f"draft_fit_{task_id}_{scene_id}", disabled=is_busy or active_mix or natural_duration)
-                st.caption(tr("Narration Text Help"))
-                if st.button(tr("Generate Scene Speech"), key=f"tts_draft_{task_id}_{scene_id}",
-                             disabled=is_busy or active_mix or not checked or not edited_text.strip()):
-                    try:
-                        webui_task.submit_narration_ranges(task_id, edit_request={
-                            "operation": "tts", "scene_id": scene_id, "expected_revision": narration_revision,
-                            "text": edited_text, "fit_duration": fit_duration and not natural_duration,
-                            **({"natural_duration": True} if natural_duration else {})})
-                    except Exception as exc:
-                        st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
-                    else:
-                        st.toast(tr("Narration Previews Queued"))
-                        st.rerun(scope="fragment")
-                if narration_range.get("replacement") and st.button(tr("Save Draft Transcript"),
-                    key=f"draft_transcript_{task_id}_{scene_id}", disabled=is_busy or active_mix or not edited_text.strip()):
-                    try:
-                        webui_task.submit_narration_ranges(task_id, edit_request={
-                            "operation": "transcript", "scene_id": scene_id,
-                            "expected_revision": narration_revision, "text": edited_text})
-                    except Exception as exc:
-                        st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
-                    else:
-                        st.toast(tr("Narration Previews Queued"))
-                        st.rerun(scope="fragment")
-                st.caption(tr("Narration Draft Help"))
-                draft_upload = st.file_uploader(
-                    tr("Narration Draft Upload"), type=["wav", "mp3", "m4a"],
-                    key=f"narration_upload_{task_id}_{scene_id}_{narration_revision}",
-                    disabled=is_busy or not checked or active_mix,
-                )
-                if st.button(tr("Save Narration Draft"), key=f"save_narration_draft_{task_id}_{scene_id}",
-                             disabled=is_busy or active_mix or not checked or draft_upload is None):
-                    try:
-                        if draft_upload.size > tm.narration_ranges.MAX_REPLACEMENT_BYTES:
-                            raise ValueError("narration upload must contain at most 20 MiB")
-                        webui_task.submit_narration_ranges(task_id, edit_request={
-                            "operation": "replacement", "scene_id": scene_id,
-                            "expected_revision": narration_revision, "content": draft_upload.getvalue(),
-                            "text": edited_text, "fit_duration": fit_duration and not natural_duration,
-                            **({"natural_duration": True} if natural_duration else {})})
-                    except Exception as exc:
-                        st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
-                    else:
-                        st.toast(tr("Narration Previews Queued"))
-                        st.rerun(scope="fragment")
-                has_draft = bool(narration_range.get("replacement"))
-                if has_draft:
-                    st.caption(tr("Narration Draft Saved"))
-                    if "fit_ratio" in narration_range["replacement"]:
-                        st.caption(tr("Narration Fit Result").format(ratio=narration_range["replacement"]["fit_ratio"]))
-                    if st.button(tr("Remove Narration Draft"), key=f"remove_narration_draft_{task_id}_{scene_id}", disabled=is_busy or active_mix):
+            if panel != "visual":
+                narration_range = next((item for item in (narration_map or {}).get("ranges", []) if item["scene_id"] == scene_id), None)
+                if narration_range is not None:
+                    range_label = "Adjusted Narration Range" if narration_map["basis"] == "operator_adjusted" else "Estimated Narration Range"
+                    st.caption(tr(range_label).format(start=narration_range["start"], end=narration_range["end"]))
+                    last_narration = narration_map["ranges"][-1]["scene_id"] == scene_id
+                    boundary = st.number_input(
+                        tr("Narration Range End"), min_value=0.0, value=float(narration_range["end"]), step=0.05,
+                        key=f"narration_end_{task_id}_{scene_id}_{narration_revision}", disabled=is_busy or last_narration,
+                    )
+                    if st.button(tr("Apply Narration Boundary"), key=f"apply_narration_boundary_{task_id}_{scene_id}",
+                                 disabled=is_busy or active_mix or last_narration or abs(boundary - narration_range["end"]) < 1e-8):
                         try:
-                            webui_task.submit_narration_ranges(task_id, edit_request={
-                                "operation": "replacement", "scene_id": scene_id,
-                                "expected_revision": narration_revision})
+                            webui_task.submit_narration_ranges(task_id, edit_request={"scene_id": scene_id,
+                                "expected_revision": narration_revision, "end": float(boundary)})
                         except Exception as exc:
                             st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
                         else:
                             st.toast(tr("Narration Previews Queued"))
                             st.rerun(scope="fragment")
-                preview_key = f"narration_preview_{task_id}_{scene_id}"
-                play_original = st.button(tr("Preview Narration"), key=f"play_narration_{task_id}_{scene_id}", disabled=is_busy)
-                play_draft = st.button(tr("Preview Narration Draft"), key=f"play_narration_draft_{task_id}_{scene_id}", disabled=is_busy or not has_draft)
-                if play_original or play_draft:
-                    try:
-                        for cached_key in list(st.session_state):
-                            if str(cached_key).startswith("narration_preview_"):
-                                st.session_state.pop(cached_key, None)
-                        st.session_state[preview_key] = tm.local_ai_narration_preview(task_id, scene_id, replacement=play_draft)
-                    except Exception as exc:
+                    checked = scene_id in narration_map.get("operator_reviewed_scene_ids", [])
+                    if checked:
+                        st.caption(tr("Narration Reviewed By You"))
+                    if st.button(tr("Mark Narration Reviewed"), key=f"review_narration_{task_id}_{scene_id}", disabled=is_busy or checked):
+                        try:
+                            webui_task.submit_narration_ranges(task_id, edit_request={"scene_id": scene_id,
+                                "expected_revision": narration_revision, "reviewed": True})
+                        except Exception as exc:
+                            st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
+                        else:
+                            st.toast(tr("Narration Previews Queued"))
+                            st.rerun(scope="fragment")
+                    edited_text = st.text_area(tr("Replacement Narration Text"),
+                        value=(narration_range.get("replacement") or {}).get("text", scene.narration_segment),
+                        max_chars=2000, key=f"draft_text_{task_id}_{scene_id}_{narration_revision}", disabled=is_busy or active_mix)
+                    natural_duration = st.checkbox(tr("Keep Natural Narration Duration"),
+                        value=(narration_range.get("replacement") or {}).get("timing_mode") == "natural",
+                        key=f"draft_natural_{task_id}_{scene_id}", disabled=is_busy or active_mix)
+                    fit_duration = st.checkbox(tr("Fit Narration Duration"), value=True,
+                        key=f"draft_fit_{task_id}_{scene_id}", disabled=is_busy or active_mix or natural_duration)
+                    st.caption(tr("Narration Text Help"))
+                    if st.button(tr("Generate Scene Speech"), key=f"tts_draft_{task_id}_{scene_id}",
+                                 disabled=is_busy or active_mix or not checked or not edited_text.strip()):
+                        try:
+                            webui_task.submit_narration_ranges(task_id, edit_request={
+                                "operation": "tts", "scene_id": scene_id, "expected_revision": narration_revision,
+                                "text": edited_text, "fit_duration": fit_duration and not natural_duration,
+                                **({"natural_duration": True} if natural_duration else {})})
+                        except Exception as exc:
+                            st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
+                        else:
+                            st.toast(tr("Narration Previews Queued"))
+                            st.rerun(scope="fragment")
+                    if narration_range.get("replacement") and st.button(tr("Save Draft Transcript"),
+                        key=f"draft_transcript_{task_id}_{scene_id}", disabled=is_busy or active_mix or not edited_text.strip()):
+                        try:
+                            webui_task.submit_narration_ranges(task_id, edit_request={
+                                "operation": "transcript", "scene_id": scene_id,
+                                "expected_revision": narration_revision, "text": edited_text})
+                        except Exception as exc:
+                            st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
+                        else:
+                            st.toast(tr("Narration Previews Queued"))
+                            st.rerun(scope="fragment")
+                    st.caption(tr("Narration Draft Help"))
+                    draft_upload = st.file_uploader(
+                        tr("Narration Draft Upload"), type=["wav", "mp3", "m4a"],
+                        key=f"narration_upload_{task_id}_{scene_id}_{narration_revision}",
+                        disabled=is_busy or not checked or active_mix,
+                    )
+                    if st.button(tr("Save Narration Draft"), key=f"save_narration_draft_{task_id}_{scene_id}",
+                                 disabled=is_busy or active_mix or not checked or draft_upload is None):
+                        try:
+                            if draft_upload.size > tm.narration_ranges.MAX_REPLACEMENT_BYTES:
+                                raise ValueError("narration upload must contain at most 20 MiB")
+                            webui_task.submit_narration_ranges(task_id, edit_request={
+                                "operation": "replacement", "scene_id": scene_id,
+                                "expected_revision": narration_revision, "content": draft_upload.getvalue(),
+                                "text": edited_text, "fit_duration": fit_duration and not natural_duration,
+                                **({"natural_duration": True} if natural_duration else {})})
+                        except Exception as exc:
+                            st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
+                        else:
+                            st.toast(tr("Narration Previews Queued"))
+                            st.rerun(scope="fragment")
+                    has_draft = bool(narration_range.get("replacement"))
+                    if has_draft:
+                        st.caption(tr("Narration Draft Saved"))
+                        if "fit_ratio" in narration_range["replacement"]:
+                            st.caption(tr("Narration Fit Result").format(ratio=narration_range["replacement"]["fit_ratio"]))
+                        if st.button(tr("Remove Narration Draft"), key=f"remove_narration_draft_{task_id}_{scene_id}", disabled=is_busy or active_mix):
+                            try:
+                                webui_task.submit_narration_ranges(task_id, edit_request={
+                                    "operation": "replacement", "scene_id": scene_id,
+                                    "expected_revision": narration_revision})
+                            except Exception as exc:
+                                st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
+                            else:
+                                st.toast(tr("Narration Previews Queued"))
+                                st.rerun(scope="fragment")
+                    preview_key = f"narration_preview_{task_id}_{scene_id}"
+                    play_original = st.button(tr("Preview Narration"), key=f"play_narration_{task_id}_{scene_id}", disabled=is_busy)
+                    play_draft = st.button(tr("Preview Narration Draft"), key=f"play_narration_draft_{task_id}_{scene_id}", disabled=is_busy or not has_draft)
+                    if play_original or play_draft:
+                        try:
+                            for cached_key in list(st.session_state):
+                                if str(cached_key).startswith("narration_preview_"):
+                                    st.session_state.pop(cached_key, None)
+                            st.session_state[preview_key] = tm.local_ai_narration_preview(task_id, scene_id, replacement=play_draft)
+                        except Exception as exc:
+                            st.session_state.pop(preview_key, None)
+                            st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
+                    preview = st.session_state.get(preview_key)
+                    if preview and not is_busy and tm.narration_ranges.preview_is_current(task_id, preview, audio_file=task_state.get("audio_file")):
+                        st.caption(tr("Narration Draft Saved") if preview.get("replacement") else tr("Preview Narration"))
+                        st.audio(preview["audio"], format="audio/wav")
+                    else:
                         st.session_state.pop(preview_key, None)
-                        st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
-                preview = st.session_state.get(preview_key)
-                if preview and not is_busy and tm.narration_ranges.preview_is_current(task_id, preview, audio_file=task_state.get("audio_file")):
-                    st.caption(tr("Narration Draft Saved") if preview.get("replacement") else tr("Preview Narration"))
-                    st.audio(preview["audio"], format="audio/wav")
-                else:
-                    st.session_state.pop(preview_key, None)
 
 
-            selected_version = active_asset
-            selected_version_metadata = None
-            if versions:
-                version_key = f"scene_version_{task_id}_{scene.scene_id}"
-                active_key = f"{version_key}_active"
-                if st.session_state.get(active_key) != active_asset:
-                    # Follow a completed edit once, while still letting the user
-                    # preview older versions between edits.
-                    st.session_state[version_key] = active_asset
-                    st.session_state[active_key] = active_asset
-                default_index = (
-                    versions.index(active_asset)
-                    if active_asset in versions
-                    else len(versions) - 1
-                )
-                def version_label(value, version_record=record, active=active_asset):
-                    metadata = generation_manifest.scene_version_metadata(version_record, value) or {}
-                    label = os.path.basename(value)
-                    if metadata.get("asset_origin") == "imported":
-                        trimmed = (metadata.get("import_metadata") or {}).get("operation") == "trim"
-                        label += f" · {tr('Trimmed Clip') if trimmed else tr('Uploaded Clip')}"
-                    if value == active:
-                        label += f" · {tr('Current Version')}"
-                    return label
-
-                selected_version = st.selectbox(
-                    tr("Scene Versions"),
-                    options=versions,
-                    index=default_index,
-                    format_func=version_label,
-                    key=version_key,
-                )
-                try:
-                    preview_path = generation_manifest.resolve_asset(
-                        task_id,
-                        selected_version,
+            if panel != "narration":
+                selected_version = active_asset
+                selected_version_metadata = None
+                if versions:
+                    version_key = f"scene_version_{task_id}_{scene.scene_id}"
+                    active_key = f"{version_key}_active"
+                    if st.session_state.get(active_key) != active_asset:
+                        # Follow a completed edit once, while still letting the user
+                        # preview older versions between edits.
+                        st.session_state[version_key] = active_asset
+                        st.session_state[active_key] = active_asset
+                    default_index = (
+                        versions.index(active_asset)
+                        if active_asset in versions
+                        else len(versions) - 1
                     )
-                except ValueError:
-                    preview_path = None
-                if preview_path is not None and preview_path.is_file():
-                    st.video(str(preview_path))
-                selected_version_metadata = (
-                    generation_manifest.scene_version_metadata(
-                        record,
-                        selected_version,
+                    def version_label(value, version_record=record, active=active_asset,
+                                      trimmed_label=tr("Trimmed Clip"), uploaded_label=tr("Uploaded Clip"), current_label=tr("Current Version")):
+                        metadata = generation_manifest.scene_version_metadata(version_record, value) or {}
+                        label = os.path.basename(value)
+                        if metadata.get("asset_origin") == "imported":
+                            trimmed = (metadata.get("import_metadata") or {}).get("operation") == "trim"
+                            label += f" · {trimmed_label if trimmed else uploaded_label}"
+                        if value == active:
+                            label += f" · {current_label}"
+                        return label
+
+                    selected_version = st.selectbox(
+                        tr("Scene Versions"),
+                        options=versions,
+                        index=default_index,
+                        format_func=version_label,
+                        key=version_key,
                     )
-                )
-
-            if record.get("asset_origin") == "imported":
-                trimmed = (record.get("import_metadata") or {}).get("operation") == "trim"
-                st.caption(tr("Trimmed Clip Active") if trimmed else tr("Uploaded Clip Active"))
-            trim_start = st.number_input(
-                tr("Clip Start Seconds"), min_value=0.0, value=0.0, step=0.1,
-                key=f"scene_trim_start_{task_id}_{scene.scene_id}_{active_asset}",
-                disabled=is_busy,
-                help=tr("Clip Trim Help"),
-            )
-            if st.button(
-                tr("Trim Saved Clip"), key=f"trim_scene_clip_{task_id}_{scene.scene_id}",
-                disabled=is_busy or not active_asset or trim_start <= 0,
-                use_container_width=True,
-            ):
-                try:
-                    webui_task.submit_scene_clip_replacement(
-                        task_id, scene.scene_id, b"", start_seconds=float(trim_start),
-                        expected_asset=active_asset,
+                    try:
+                        preview_path = generation_manifest.resolve_asset(
+                            task_id,
+                            selected_version,
+                        )
+                    except ValueError:
+                        preview_path = None
+                    if not workspace and preview_path is not None and preview_path.is_file():
+                        st.video(str(preview_path))
+                    selected_version_metadata = (
+                        generation_manifest.scene_version_metadata(
+                            record,
+                            selected_version,
+                        )
                     )
-                except Exception as exc:
-                    st.error(f"{tr('Clip Replacement Failed')}: {exc}")
-                else:
-                    st.toast(tr("Clip Replacement Queued"))
-                    st.rerun(scope="fragment")
 
-            upload_key = f"scene_clip_upload_{task_id}_{scene.scene_id}"
-            upload_revision = st.session_state.get(f"{upload_key}_revision", 0)
-            uploaded_clip = st.file_uploader(
-                tr("Replacement Clip"), type=["mp4"],
-                max_upload_size=MAX_CLIP_UPLOAD_BYTES // (1024 * 1024),
-                key=f"{upload_key}_{upload_revision}", disabled=is_busy,
-                help=tr("Replacement Clip Help"),
-            )
-            if st.button(
-                tr("Replace Scene Clip"),
-                key=f"replace_scene_clip_{task_id}_{scene.scene_id}",
-                disabled=is_busy or uploaded_clip is None,
-                icon=":material/upload:", use_container_width=True,
-            ):
-                try:
-                    webui_task.submit_scene_clip_replacement(
-                        task_id, scene.scene_id, uploaded_clip.getvalue(),
-                        start_seconds=float(trim_start),
-                    )
-                except Exception as exc:
-                    st.error(f"{tr('Clip Replacement Failed')}: {exc}")
-                else:
-                    st.session_state[f"{upload_key}_revision"] = upload_revision + 1
-                    st.toast(tr("Clip Replacement Queued"))
-                    st.rerun(scope="fragment")
-
-            prompt_value = st.text_area(
-                tr("Scene Prompt"),
-                value=scene.prompt,
-                key=f"scene_prompt_{task_id}_{scene.scene_id}",
-                height=140,
-            )
-            seed_value = int(
-                st.number_input(
-                    tr("Scene Seed"),
-                    min_value=0,
-                    value=max(0, int(scene.seed)),
-                    step=1,
-                    key=f"scene_seed_{task_id}_{scene.scene_id}",
-                )
-            )
-
-            scene_action_cols = st.columns(
-                3,
-                vertical_alignment="center",
-                gap="small",
-            )
-            with scene_action_cols[0]:
-                if st.button(
-                    tr("Regenerate Scene"),
-                    key=f"regenerate_scene_{task_id}_{scene.scene_id}",
-                    use_container_width=True,
-                    icon=":material/refresh:",
+                if record.get("asset_origin") == "imported":
+                    trimmed = (record.get("import_metadata") or {}).get("operation") == "trim"
+                    st.caption(tr("Trimmed Clip Active") if trimmed else tr("Uploaded Clip Active"))
+                trim_start = st.number_input(
+                    tr("Clip Start Seconds"), min_value=0.0, value=0.0, step=0.1,
+                    key=f"scene_trim_start_{task_id}_{scene.scene_id}_{active_asset}",
                     disabled=is_busy,
-                    help=tr("Regenerate Scene Help"),
-                ):
-                    try:
-                        webui_task.submit_scene_regeneration(
-                            task_id,
-                            scene.scene_id,
-                            prompt=prompt_value,
-                            seed=seed_value,
-                        )
-                    except Exception as exc:
-                        st.error(
-                            f"{tr('Scene Regeneration Failed')}: {exc}"
-                        )
-                    else:
-                        st.toast(tr("Scene Regeneration Queued"))
-                        st.rerun(scope="fragment")
-
-            with scene_action_cols[1]:
-                if st.button(
-                    tr("New Variation"),
-                    key=f"variation_scene_{task_id}_{scene.scene_id}",
-                    use_container_width=True,
-                    icon=":material/casino:",
-                    disabled=is_busy,
-                    help=tr("New Variation Help"),
-                ):
-                    try:
-                        webui_task.submit_scene_regeneration(
-                            task_id,
-                            scene.scene_id,
-                            prompt=prompt_value,
-                            seed=seed_value + 1,
-                        )
-                    except Exception as exc:
-                        st.error(
-                            f"{tr('Scene Regeneration Failed')}: {exc}"
-                        )
-                    else:
-                        st.toast(tr("Scene Regeneration Queued"))
-                        st.rerun(scope="fragment")
-
-            with scene_action_cols[2]:
-                restore_disabled = (
-                    is_busy
-                    or not selected_version
-                    or selected_version == active_asset
-                    or selected_version_metadata is None
+                    help=tr("Clip Trim Help"),
                 )
-                restore_help = (
-                    tr("Legacy Scene Version Help")
-                    if (
-                        selected_version
-                        and selected_version != active_asset
-                        and selected_version_metadata is None
+                if st.button(
+                    tr("Trim Saved Clip"), key=f"trim_scene_clip_{task_id}_{scene.scene_id}",
+                    disabled=is_busy or not active_asset or trim_start <= 0,
+                    use_container_width=True,
+                ):
+                    try:
+                        webui_task.submit_scene_clip_replacement(
+                            task_id, scene.scene_id, b"", start_seconds=float(trim_start),
+                            expected_asset=active_asset,
+                        )
+                    except Exception as exc:
+                        st.error(f"{tr('Clip Replacement Failed')}: {exc}")
+                    else:
+                        st.toast(tr("Clip Replacement Queued"))
+                        st.rerun(scope="fragment")
+
+                upload_key = f"scene_clip_upload_{task_id}_{scene.scene_id}"
+                upload_revision = st.session_state.get(f"{upload_key}_revision", 0)
+                uploaded_clip = st.file_uploader(
+                    tr("Replacement Clip"), type=["mp4"],
+                    max_upload_size=MAX_CLIP_UPLOAD_BYTES // (1024 * 1024),
+                    key=f"{upload_key}_{upload_revision}", disabled=is_busy,
+                    help=tr("Replacement Clip Help"),
+                )
+                if st.button(
+                    tr("Replace Scene Clip"),
+                    key=f"replace_scene_clip_{task_id}_{scene.scene_id}",
+                    disabled=is_busy or uploaded_clip is None,
+                    icon=":material/upload:", use_container_width=True,
+                ):
+                    try:
+                        webui_task.submit_scene_clip_replacement(
+                            task_id, scene.scene_id, uploaded_clip.getvalue(),
+                            start_seconds=float(trim_start),
+                        )
+                    except Exception as exc:
+                        st.error(f"{tr('Clip Replacement Failed')}: {exc}")
+                    else:
+                        st.session_state[f"{upload_key}_revision"] = upload_revision + 1
+                        st.toast(tr("Clip Replacement Queued"))
+                        st.rerun(scope="fragment")
+
+                prompt_value = st.text_area(
+                    tr("Scene Prompt"),
+                    value=scene.prompt,
+                    key=f"scene_prompt_{task_id}_{scene.scene_id}",
+                    height=140,
+                )
+                seed_value = int(
+                    st.number_input(
+                        tr("Scene Seed"),
+                        min_value=0,
+                        value=max(0, int(scene.seed)),
+                        step=1,
+                        key=f"scene_seed_{task_id}_{scene.scene_id}",
                     )
-                    else tr("Restore Scene Version Help")
                 )
-                if st.button(
-                    tr("Restore Scene Version"),
-                    key=f"restore_scene_version_{task_id}_{scene.scene_id}",
-                    use_container_width=True,
-                    icon=":material/history:",
-                    disabled=restore_disabled,
-                    help=restore_help,
-                ):
-                    try:
-                        webui_task.submit_scene_version_restore(
-                            task_id,
-                            scene.scene_id,
-                            relative_path=selected_version,
+
+                scene_action_cols = st.columns(
+                    3,
+                    vertical_alignment="center",
+                    gap="small",
+                )
+                with scene_action_cols[0]:
+                    if st.button(
+                        tr("Regenerate Scene"),
+                        key=f"regenerate_scene_{task_id}_{scene.scene_id}",
+                        use_container_width=True,
+                        icon=":material/refresh:",
+                        disabled=is_busy,
+                        help=tr("Regenerate Scene Help"),
+                    ):
+                        try:
+                            webui_task.submit_scene_regeneration(
+                                task_id,
+                                scene.scene_id,
+                                prompt=prompt_value,
+                                seed=seed_value,
+                            )
+                        except Exception as exc:
+                            st.error(
+                                f"{tr('Scene Regeneration Failed')}: {exc}"
+                            )
+                        else:
+                            st.toast(tr("Scene Regeneration Queued"))
+                            st.rerun(scope="fragment")
+
+                with scene_action_cols[1]:
+                    if st.button(
+                        tr("New Variation"),
+                        key=f"variation_scene_{task_id}_{scene.scene_id}",
+                        use_container_width=True,
+                        icon=":material/casino:",
+                        disabled=is_busy,
+                        help=tr("New Variation Help"),
+                    ):
+                        try:
+                            webui_task.submit_scene_regeneration(
+                                task_id,
+                                scene.scene_id,
+                                prompt=prompt_value,
+                                seed=seed_value + 1,
+                            )
+                        except Exception as exc:
+                            st.error(
+                                f"{tr('Scene Regeneration Failed')}: {exc}"
+                            )
+                        else:
+                            st.toast(tr("Scene Regeneration Queued"))
+                            st.rerun(scope="fragment")
+
+                with scene_action_cols[2]:
+                    restore_disabled = (
+                        is_busy
+                        or not selected_version
+                        or selected_version == active_asset
+                        or selected_version_metadata is None
+                    )
+                    restore_help = (
+                        tr("Legacy Scene Version Help")
+                        if (
+                            selected_version
+                            and selected_version != active_asset
+                            and selected_version_metadata is None
                         )
-                    except Exception as exc:
-                        st.error(
-                            f"{tr('Scene Regeneration Failed')}: {exc}"
-                        )
-                    else:
-                        st.toast(tr("Scene Version Restore Queued"))
-                        st.rerun(scope="fragment")
+                        else tr("Restore Scene Version Help")
+                    )
+                    if st.button(
+                        tr("Restore Scene Version"),
+                        key=f"restore_scene_version_{task_id}_{scene.scene_id}",
+                        use_container_width=True,
+                        icon=":material/history:",
+                        disabled=restore_disabled,
+                        help=restore_help,
+                    ):
+                        try:
+                            webui_task.submit_scene_version_restore(
+                                task_id,
+                                scene.scene_id,
+                                relative_path=selected_version,
+                            )
+                        except Exception as exc:
+                            st.error(
+                                f"{tr('Scene Regeneration Failed')}: {exc}"
+                            )
+                        else:
+                            st.toast(tr("Scene Version Restore Queued"))
+                            st.rerun(scope="fragment")
 
 
 def _select_artifact_package_task(task_id: str) -> None:
@@ -2079,16 +2096,17 @@ def _render_task_table(filtered_tasks, key_prefix):
                             st.rerun(scope="app")
 
                 with action_cols[4]:
-                    scenes_label = tr("Scenes")
+                    scenes_label = tr("Edit Video")
                     if st.button(
                         scenes_label,
-                        key=f"scenes_task_{key_prefix}_{task_id}",
+                        key=f"edit_task_{key_prefix}_{task_id}",
                         use_container_width=True,
-                        icon=":material/view_list:",
+                        icon=":material/movie_edit:",
                         help=scenes_label,
                         disabled=is_processing or not has_scene_plan,
                     ):
                         _select_scene_editor_task(task_id)
+                        st.rerun(scope="app")
 
                 with action_cols[5]:
                     artifacts_label = tr("Artifacts")
@@ -2169,8 +2187,6 @@ def _render_task_manager_panel(tasks=None):
             ]
             _render_task_table(filtered_tasks, status_key)
 
-    _render_scene_editor()
-    _render_caption_editor()
 
     _render_artifact_package_view()
 
@@ -2214,6 +2230,11 @@ def _render_task_video_preview():
             icon=":material/download:",
             on_click="ignore",
         )
+
+
+@st.fragment(run_every="2s")
+def _render_task_manager_page():
+    _render_task_manager_panel()
 
 
 @st.fragment(run_every="2s")
@@ -9557,6 +9578,17 @@ def _render_generation_controls(
 
 def _render_application():
     """按固定顺序渲染顶部栏、弹窗、生成表单和任务结果。"""
+    from webui.editor_workspace import render_editor, requested_task
+    editor_task = requested_task()
+    if editor_task:
+        render_editor(editor_task, tr, _render_scene_editor, _render_caption_editor)
+        return
+    if st.query_params.get("view") == "tasks":
+        if st.button(tr("Back To Generator"), key="tasks_back_to_generator"):
+            st.query_params.clear()
+            st.rerun()
+        _render_task_manager_page()
+        return
     _render_top_bar()
 
     if st.session_state.get("settings_dialog_open", False):

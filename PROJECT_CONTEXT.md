@@ -73,6 +73,38 @@ M3 exposed `wan22_local` through WebUI, CLI and API using the same provider/pref
 
 ## Current development boundary
 
+## Completed milestone: dedicated video editor workspace
+
+The owner rejected editing inside Task Manager and approved an editor-style
+workspace plus reuse of open-source UI code. Task Manager's **Edit** action now
+navigates to a separate full-page editor, with media library, large video
+preview, interactive timeline and selected-item inspector. Back returns to the
+task list; direct editor URLs can be reopened. Task Manager no longer renders
+the scene/narration/caption editing panels.
+
+The component uses MIT-licensed `@xzdarcy/react-timeline-editor@1.0.0` with React
+18, shipped as a local prebuilt bundle. The selected timeline-engine package
+lists ISC; notices/licenses are distributed. OpenCut and OpenReel were reviewed
+as complete applications and retained as references. The current Streamlit
+shell, Python renderer, saved task assets and edit/recovery contracts remain.
+No new canonical timeline format or separate frontend server is introduced.
+
+Browser playback and scrubbing drive the timeline playhead; clip/cue selection
+opens the corresponding inspector. Visual drag/rebalance and caption drag/resize
+use existing validated queues. All earlier inspector actions and render-only
+exports remain available. Idle editing stays stable without polling; active
+jobs refresh progress and results. Narration/music bars select existing settings;
+arbitrary layers, audio placement, browser effects and undo/redo remain later.
+See `docs/EDITOR_WORKSPACE.md` for the reviewed alternatives, scope and build/
+license/verification contracts. Ordinary users do not need to install Node.
+
+Verification: **126 Python tests and 10259 subtests passed**, plus **2 frontend
+unit tests**. Real Chromium checks verified playback, seeking, caption drag
+persistence, clip reorder/rerender, export controls and Task Manager navigation
+with no JavaScript page errors. Checks used synthetic CPU media; no live GPU,
+TTS, paid music or publishing services were invoked.
+
+
 ## Completed milestone: independent caption editing
 
 Creative AI tasks now support independently editable caption drafts: text and

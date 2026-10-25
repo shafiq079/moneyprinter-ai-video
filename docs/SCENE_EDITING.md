@@ -503,3 +503,12 @@ CPU acceptance uses real MP4 composition and fake video fixtures, offline audio,
 Streamlit controls, queue/status checks, invalid/stale-input and rollback cases,
 No Voice/factual boundaries, and partial Resume with active natural narration.
 Manual operator acceptance and real-GPU testing remain deferred.
+
+## Editor navigation
+
+Use **Task Manager → Edit** to open the dedicated full-page video editor. The
+controls documented above now live in the selected-item inspector, not inside
+Task Manager. Narration/caption workflow actions are collapsible. See
+`docs/EDITOR_WORKSPACE.md` for timeline interactions, navigation, dependency/build
+choices and the remaining NLE boundaries. Existing source/queue/rollback and
+manual-acceptance limits still apply.

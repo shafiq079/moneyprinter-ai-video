@@ -540,6 +540,10 @@ def submit_caption_edit(task_id: str, *, request: dict) -> None:
             snapshot = tm.generation_manifest.scene_timing_snapshot(tm.generation_manifest.load_manifest(task_id))
             if request.get("expected_snapshot") != snapshot:
                 raise ValueError("scene inputs changed; refresh the editor")
+        if not context["prior"]:
+            finals = tm._existing_final_video_paths(tm._scene_regeneration_task_root(task_id))
+            context["prior"] = {"state": const.TASK_STATE_COMPLETE if finals else const.TASK_STATE_FAILED,
+                                "progress": 100 if finals else 0}
         previous = {k: context["prior"].get(k, default) for k, default in
                     (("state", const.TASK_STATE_FAILED), ("progress", 0), ("current_stage", None))}
         sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING,
