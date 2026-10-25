@@ -290,3 +290,48 @@ including interrupted upload/decode folders on the next preparation/save.
 Changed or missing draft files fail preview validation; originals stay available.
 This adds saved replacement auditions only. Applying edits to the master track,
 text/TTS editing, caption rebuilding and downstream retiming remain deferred.
+
+## Apply replacement recordings to exports
+
+For an existing **creative** AI-video task, **Apply narration drafts and
+rerender** now creates an edited narration track and exports existing footage
+with that track. First tick **I want to export edited narration without
+captions**. Old caption timing cannot be assumed valid for a new recording,
+even when its duration matches. This milestone deliberately omits captions
+from edited exports; it does not regenerate or validate spoken words. Factual
+tasks reject apply until an appropriate edited-content review path exists.
+
+**Restore original narration and rerender** switches exports back to the
+original track and saved caption settings. The master narration, caption file,
+script, scene plan, scene versions, visual order and screen timings are never
+rewritten. Drafts remain available after restore. While a mix is active,
+restore before changing drafts or boundaries. Preview original/draft controls
+still audition their respective recordings. Source changes invalidate active
+mix use; restore can recover even from damaged mix metadata.
+
+The separate `narration_mix.json` records a schema version, source binding,
+range/draft signature, task-relative mixed WAV reference/hash and
+`captions_omitted=true`. Audio lives under
+`narration_mixes/<UUID>/audio.wav`. Mixing uses the original decoded 16 kHz
+mono PCM timeline and only substitutes selected ranges. The existing 2 ms
+upload tolerance is normalized at the replacement tail (at most 32 samples)
+so later samples do not shift. This does not support variable-duration edits,
+text/TTS rebuilding, automatic speech alignment or caption rebuilding.
+
+Apply/restore use the serialized narration queue with immutable range and
+scene snapshots. The worker rechecks sources and scene versions/order/timing.
+New mix media is staged before atomic active-metadata publication. Rendering
+backs up previous final/combined outputs and restores them and previous mix
+metadata on failure. Successful apply cleans inactive owned mix directories.
+A process kill between metadata publication and render completion is not a
+multi-file atomic transaction: rerender or restore can rebuild exports from
+saved original/draft/mix assets after restarting.
+
+The shared local-AI composer validates active mix inputs/hash on every later
+render, including visual edits, render-only rerender and same-task Resume.
+Stored generation recipes and source audio remain original. Output-package/API
+fields `narration_mix`, `edited_audio` and `captions_omitted` distinguish the
+edited audio from retained original `audio`/`captions` references. Invalid mix
+media is never silently replaced with another recording. No LLM, TTS, video
+inference, caption generation, paid BGM generation or publishing is triggered
+by apply/restore. Existing generated BGM is reused.

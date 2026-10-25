@@ -73,6 +73,40 @@ M3 exposed `wan22_local` through WebUI, CLI and API using the same provider/pref
 
 ## Current development boundary
 
+The eighth editor extension applies saved replacement narration to creative
+AI-video exports. Apply explicitly requires caption omission because matching
+audio duration does not establish matching word timings. Restore rerenders
+original narration with saved caption settings. The original audio, captions,
+script, scene plan, visual versions and timing remain untouched. Factual-task
+apply is blocked; edited-content review and caption rebuilding are future work.
+
+`narration_mix.json` binds the active 16 kHz mono PCM track to source hashes
+and range/draft inputs. The shared local-AI final composer validates and uses
+it on later renders, scene edits and Resume. Master-audio state stays original;
+optional artifact/API fields expose `edited_audio`, `narration_mix` and
+`captions_omitted` separately. Restore before changing drafts/boundaries. Apply
+and restore use the existing serialized queue, stale scene/range checks and
+render backups; failed processing restores prior mix metadata and outputs.
+The active sidecar is atomic, but a process kill between sidecar publication
+and rendering is not a multi-file atomic transaction; saved assets permit
+rerender/restore recovery. See `docs/SCENE_EDITING.md` for the exact contract.
+No GPU/video generation, TTS, LLM, caption generation or publishing is invoked.
+
+Verification: **72 narration/UI/translation/artifact/queue tests**, all **9
+scene timing/visual-edit/Resume tests**, and **67 task tests** passed (3 optional
+integrations skipped). A real CPU-composed MP4 contains the replacement tone
+and unchanged later audio; original files remain unchanged. Tests cover restore,
+failed render/publication rollback, stale source rejection, unsafe references,
+queue snapshots, UI apply/restore, and active-mix persistence through restart/
+Resume. Ruff, compilation and whitespace checks passed. No GPU inference or
+manual acceptance was requested; check current GitHub CI after publication.
+
+The operator has now confirmed successful voice sampling and complete Pexels
+and Pixabay videos after upgrading Edge TTS to 7.3.1. This is operator-environment
+acceptance of the shared stock/audio paths; it is not local-GPU acceptance.
+The operator requests continued implementation and defers further manual
+walkthrough/acceptance testing until the end. Continue automated CPU checks.
+
 ### Edge TTS audio regression investigation
 
 Verification: **196 affected voice, WebUI preview, task and queue tests passed**,

@@ -241,6 +241,24 @@ def build_output_package(
     narration = _task_relative_existing_file(task_id, root / "narration_ranges.json")
     if narration:
         package["narration_ranges"] = narration
+    mix = _task_relative_existing_file(task_id, root / "narration_mix.json")
+    if mix:
+        package["narration_mix"] = mix
+        try:
+            from app.services import narration_mix
+            if not audio_file:
+                from app.services import narration_ranges
+                ranges = narration_ranges.read_ranges(task_id)
+                bound_audio = ranges["binding"]["audio_asset"] if ranges else None
+                audio_file = _task_relative_existing_file(task_id, bound_audio)
+                package["audio"] = audio_file
+            source = root / audio_file if audio_file else None
+            if source is not None:
+                effective = narration_mix.resolve(task_id, str(source))
+                package["edited_audio"] = _task_relative_existing_file(task_id, effective)
+                package["captions_omitted"] = True
+        except (OSError, ValueError, TypeError, KeyError):
+            pass
     return package
 
 

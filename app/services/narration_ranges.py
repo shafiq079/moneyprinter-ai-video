@@ -432,6 +432,8 @@ def edit(
         return data
     if left.get("replacement") or right.get("replacement"):
         raise ValueError("remove adjacent narration drafts before moving this boundary")
+    if gm.resolve_asset(task_id, "narration_mix.json").exists():
+        raise ValueError("restore original narration before editing boundaries")
     left["end"] = right["start"] = end
     checked.difference_update((left["scene_id"], right["scene_id"]))
     data["operator_reviewed_scene_ids"] = sorted(checked)
@@ -488,6 +490,8 @@ def replace_draft(task_id: str, plan, audio_file: str, scene_id: int, *,
         raise ValueError("invalid narration scene ID")
     if content is not None and (type(content) is not bytes or not 0 < len(content) <= MAX_REPLACEMENT_BYTES):
         raise ValueError("narration upload must contain at most 20 MiB")
+    if gm.resolve_asset(task_id, "narration_mix.json").exists():
+        raise ValueError("restore original narration before changing drafts")
     input_format = None
     if content is not None:
         # Force an audio demuxer so an uploaded playlist/concat document cannot

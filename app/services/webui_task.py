@@ -519,6 +519,9 @@ def _run_narration_ranges(task_id: str, previous: dict, edit_request: dict | Non
         with config.runtime_config_lock():
             if edit_request is None:
                 tm.prepare_local_ai_narration_ranges(task_id, _queued=True)
+            elif edit_request.get("operation") == "apply":
+                request = {k: v for k, v in edit_request.items() if k != "operation"}
+                tm.apply_local_ai_narration_drafts(task_id, _queued=True, **request)
             elif edit_request.get("operation") == "replacement":
                 request = {k: v for k, v in edit_request.items() if k != "operation"}
                 tm.replace_local_ai_narration_draft(task_id, _queued=True, **request)
@@ -545,7 +548,11 @@ def submit_narration_ranges(task_id: str, *, edit_request: dict | None = None) -
                 if content is not None and (type(content) is not bytes or not 0 < len(content) <= tm.narration_ranges.MAX_REPLACEMENT_BYTES):
                     raise ValueError("narration upload must contain at most 20 MiB")
             edit_request = deepcopy(edit_request)
-            if tm.narration_ranges.revision(task_id) != edit_request.get("expected_revision"):
+            if edit_request.get("operation") == "apply":
+                current = tm.generation_manifest.scene_timing_snapshot(tm.generation_manifest.load_manifest(task_id))
+                if current != edit_request.get("expected_snapshot"):
+                    raise ValueError("scene inputs changed; refresh the Scene Editor")
+            if not (edit_request.get("operation") == "apply" and edit_request.get("reset") is True) and tm.narration_ranges.revision(task_id) != edit_request.get("expected_revision"):
                 raise ValueError("narration ranges changed; refresh the Scene Editor")
         prior = sm.state.get_task(task_id) or {}
         if not prior:

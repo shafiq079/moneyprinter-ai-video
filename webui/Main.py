@@ -1304,6 +1304,26 @@ def _render_scene_editor() -> None:
             st.toast(tr("Narration Previews Queued"))
             st.rerun(scope="fragment")
 
+    active_mix = generation_manifest.resolve_asset(task_id, "narration_mix.json").exists()
+    if active_mix:
+        st.warning(tr("Narration Mix Active"))
+    st.caption(tr("Narration Mix Help"))
+    omit_captions = st.checkbox(tr("Narration Mix Confirm"), key=f"mix_confirm_{task_id}", disabled=is_busy)
+    apply_mix = st.button(tr("Apply Narration Drafts"), key=f"apply_narration_mix_{task_id}",
+                          disabled=is_busy or active_mix or not omit_captions or not any(i.get("replacement") for i in (narration_map or {}).get("ranges", [])))
+    reset_mix = st.button(tr("Restore Original Narration"), key=f"reset_narration_mix_{task_id}", disabled=is_busy or not active_mix)
+    if apply_mix or reset_mix:
+        try:
+            webui_task.submit_narration_ranges(task_id, edit_request={
+                "operation": "apply", "expected_revision": narration_revision,
+                "expected_snapshot": timing_snapshot, "reset": reset_mix,
+                "omit_captions": omit_captions})
+        except Exception as exc:
+            st.error(f"{tr('Narration Ranges Unavailable')}: {exc}")
+        else:
+            st.toast(tr("Narration Previews Queued"))
+            st.rerun(scope="fragment")
+
     st.caption(tr("Scene Reorder Help"))
     st.caption(tr("Scene Timing Help"))
     if task_state.get("scene_timing_error"):
@@ -1403,7 +1423,7 @@ def _render_scene_editor() -> None:
                     key=f"narration_end_{task_id}_{scene_id}_{narration_revision}", disabled=is_busy or last_narration,
                 )
                 if st.button(tr("Apply Narration Boundary"), key=f"apply_narration_boundary_{task_id}_{scene_id}",
-                             disabled=is_busy or last_narration or abs(boundary - narration_range["end"]) < 1e-8):
+                             disabled=is_busy or active_mix or last_narration or abs(boundary - narration_range["end"]) < 1e-8):
                     try:
                         webui_task.submit_narration_ranges(task_id, edit_request={"scene_id": scene_id,
                             "expected_revision": narration_revision, "end": float(boundary)})
@@ -1428,10 +1448,10 @@ def _render_scene_editor() -> None:
                 draft_upload = st.file_uploader(
                     tr("Narration Draft Upload"), type=["wav", "mp3", "m4a"],
                     key=f"narration_upload_{task_id}_{scene_id}_{narration_revision}",
-                    disabled=is_busy or not checked,
+                    disabled=is_busy or not checked or active_mix,
                 )
                 if st.button(tr("Save Narration Draft"), key=f"save_narration_draft_{task_id}_{scene_id}",
-                             disabled=is_busy or not checked or draft_upload is None):
+                             disabled=is_busy or active_mix or not checked or draft_upload is None):
                     try:
                         if draft_upload.size > tm.narration_ranges.MAX_REPLACEMENT_BYTES:
                             raise ValueError("narration upload must contain at most 20 MiB")
@@ -1446,7 +1466,7 @@ def _render_scene_editor() -> None:
                 has_draft = bool(narration_range.get("replacement"))
                 if has_draft:
                     st.caption(tr("Narration Draft Saved"))
-                    if st.button(tr("Remove Narration Draft"), key=f"remove_narration_draft_{task_id}_{scene_id}", disabled=is_busy):
+                    if st.button(tr("Remove Narration Draft"), key=f"remove_narration_draft_{task_id}_{scene_id}", disabled=is_busy or active_mix):
                         try:
                             webui_task.submit_narration_ranges(task_id, edit_request={
                                 "operation": "replacement", "scene_id": scene_id,
@@ -2721,6 +2741,8 @@ def _render_generation_task_snapshot(task_id, task):
                     index=warning.get("video_index", ""), count=warning.get("count", 0)
                 )
             )
+        elif isinstance(warning, Mapping) and warning.get("code") == "edited_narration_captions_omitted":
+            st.warning(tr("Narration Mix Active"))
         elif isinstance(warning, Mapping) and warning.get("code") == "sonilo_bgm_failed":
             st.warning(
                 tr("Sonilo BGM Fallback Warning").format(

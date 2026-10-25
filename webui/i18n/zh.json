@@ -688,11 +688,16 @@
     "Confirm MuAPI Charge": "我已了解 MuAPI 视频生成会创建付费任务",
     "Confirm MuAPI Charge Help": "MuAPI 素材按脚本片段逐段提交，凑够配音所需时长后立即停止。提交状态不明确时不会自动重试，因为远端任务可能已经创建并产生费用。",
     "Confirm MuAPI Charge Required": "请确认 MuAPI 生成费用后再生成视频。",
-    "Narration Draft Help": "试听替换旁白前，请先听取并确认原始区间。最大 20 MiB；时长误差不得超过 2 毫秒。草稿不会更改最终视频、主旁白、脚本或字幕。调整边界前请先移除相邻草稿。",
+    "Narration Draft Help": "试听替换旁白前，请先听取并确认原始区间。最大 20 MiB；时长误差不得超过 2 毫秒。保存草稿不会更改最终视频。请单独应用草稿以导出不含字幕的编辑音频。调整边界前请先移除相邻草稿。",
     "Narration Draft Upload": "替换旁白（WAV、MP3 或 M4A）",
     "Save Narration Draft": "保存旁白草稿",
     "Remove Narration Draft": "移除草稿 / 使用原始旁白",
     "Preview Narration Draft": "试听旁白草稿",
-    "Narration Draft Saved": "替换草稿 — 仅供试听；最终视频仍使用原始旁白。"
+    "Narration Draft Saved": "替换录音 — 可在此试听；使用应用旁白草稿来更新导出。",
+    "Narration Mix Active": "导出已启用编辑后的旁白，字幕将被省略。更改草稿或边界前请先恢复原始旁白。",
+    "Narration Mix Help": "将已保存的替换录音应用于现有视频片段，不生成新场景。仅支持创意任务。由于尚未重建词语时间，导出将省略字幕。原始旁白、字幕和脚本将保留。",
+    "Narration Mix Confirm": "我确认导出编辑后的旁白且不含字幕",
+    "Apply Narration Drafts": "应用旁白草稿并重新渲染",
+    "Restore Original Narration": "恢复原始旁白并重新渲染"
   }
 }

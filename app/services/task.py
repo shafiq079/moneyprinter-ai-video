@@ -18,7 +18,7 @@ from app.models import const
 from app.models.schema import VideoConcatMode, VideoParams
 from app.services import bgm as bgm_service
 from app.services import factual_content
-from app.services import generation_manifest, local_ai, narration_ranges, scene_planner
+from app.services import generation_manifest, local_ai, narration_ranges, narration_mix, scene_planner
 from app.services import (
     elevenlabs_music,
     llm,
@@ -1178,6 +1178,15 @@ def generate_final_videos(
     final_video_paths = []
     combined_video_paths = []
     warnings = []
+    if local_ai.is_local_ai_source(params.video_source):
+        effective_audio = narration_mix.resolve(task_id, audio_file)
+        if effective_audio != audio_file:
+            if params.content_mode != "creative":
+                raise ValueError("edited narration exports currently support creative tasks only")
+            audio_file = effective_audio
+            params = params.model_copy(update={"subtitle_enabled": False})
+            subtitle_path = ""
+            warnings.append({"code": "edited_narration_captions_omitted"})
     local_ai_final_duration = float(audio_duration or 0)
     if local_ai.is_local_ai_source(params.video_source):
         try:
@@ -2178,6 +2187,77 @@ def replace_local_ai_narration_draft(task_id: str, scene_id: int, *, expected_re
     plan, audio = local_ai_narration_context(task_id, _queued=_queued)
     return narration_ranges.replace_draft(task_id, plan, audio, scene_id,
                                          expected_revision=expected_revision, content=content)
+
+
+def apply_local_ai_narration_drafts(task_id: str, *, expected_revision: str,
+                                    expected_snapshot: dict, reset: bool = False,
+                                    omit_captions: bool = False, _queued: bool = False) -> dict:
+    params, plan, audio, captions, duration, prior = _load_scene_regeneration_context(task_id)
+    _assert_scene_edit_available(prior, queued=_queued, stage="narration_ranges")
+    if type(reset) is not bool or type(omit_captions) is not bool:
+        raise ValueError("invalid narration apply request")
+    if not reset and (params.content_mode != "creative" or not omit_captions):
+        raise ValueError("edited narration requires a creative task and explicit caption omission")
+    if not reset and narration_ranges.revision(task_id) != expected_revision:
+        raise ValueError("narration ranges changed; refresh the Scene Editor")
+    manifest = generation_manifest.load_manifest(task_id)
+    if generation_manifest.scene_timing_snapshot(manifest) != expected_snapshot:
+        raise ValueError("scene inputs changed; refresh the Scene Editor")
+    materials = generation_manifest.active_scene_paths(task_id)
+    mix_file = narration_mix.file(task_id)
+    old = mix_file.read_bytes() if mix_file.exists() else None
+    if reset and old is None:
+        return {"task_id": task_id, "applied": False}
+    directory = None
+    metadata = None
+    if not reset:
+        if voice.is_no_voice(params.voice_name) and not params.custom_audio_file:
+            raise ValueError("No Voice has no recorded narration to edit")
+        metadata, directory = narration_mix.build(task_id, plan, audio, expected_revision)
+    root = _scene_regeneration_task_root(task_id)
+    try:
+        backups = _backup_render_paths(root, suffix="narration-edit-backup")
+    except Exception:
+        if directory is not None:
+            shutil.rmtree(directory, ignore_errors=True)
+        raise
+    published = False
+    try:
+        if reset:
+            mix_file.unlink()
+        else:
+            scene_planner._atomic_write_json(mix_file, metadata)
+        published = True
+        sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING,
+                             current_stage="narration_ranges_queued")
+        _clear_render_paths(root)
+        finals, combined, warnings = generate_final_videos(
+            task_id, params, materials, audio, captions, duration,
+            reuse_existing_generated_bgm=True)
+        if ((not reset and narration_ranges.revision(task_id) != expected_revision)
+                or generation_manifest.scene_timing_snapshot(generation_manifest.load_manifest(task_id)) != expected_snapshot):
+            raise ValueError("narration or scene inputs changed during rendering")
+        if not reset:
+            narration_mix.resolve(task_id, audio)
+    except Exception:
+        if published:
+            narration_mix.restore(task_id, old)
+        _restore_render_backups(root, backups)
+        if directory is not None:
+            shutil.rmtree(directory, ignore_errors=True)
+        sm.state.update_task(task_id, state=prior.get("state", const.TASK_STATE_FAILED),
+                             progress=prior.get("progress", 0), current_stage=prior.get("current_stage"))
+        raise
+    _discard_render_backups(backups)
+    sm.state.update_task(task_id, state=const.TASK_STATE_COMPLETE, progress=100,
+                         current_stage=None, videos=finals, combined_videos=combined,
+                         audio_file=audio, audio_duration=duration, subtitle_path=captions,
+                         warnings=warnings or None)
+    try:
+        narration_mix.cleanup(task_id)
+    except (OSError, ValueError, KeyError):
+        logger.warning("Could not clean inactive narration mixes")
+    return {"task_id": task_id, "applied": not reset, "videos": finals}
 
 
 def local_ai_narration_preview(task_id: str, scene_id: int, *, replacement: bool = False) -> dict:

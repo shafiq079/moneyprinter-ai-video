@@ -576,6 +576,133 @@ class TestNarrationRanges(LocalAITestCase):
         self.assertNotIn("replacement", rebuilt["ranges"][0])
         self.assertEqual(list((self.root / "narration_replacements").iterdir()), [])
 
+    def setup_mix(self):
+        from app.services.local_ai.fake import FakeLocalVideoProvider
+        from app.services.local_ai.orchestrator import generate_scene_materials
+        self.prepare()
+        self.review()
+        self.save_draft(self.draft_audio())
+        generate_scene_materials(self.task_id, provider=FakeLocalVideoProvider(), scenes=list(self.plan.scenes))
+        self.params.subtitle_enabled = True
+        self.params.custom_audio_file = "narration.wav"
+        self.params.bgm_type = ""
+        self.params.bgm_volume = 0
+        self.params.n_threads = 1
+        task.save_script_data(self.task_id, self.params.video_script, [], self.params)
+        (self.root / "subtitle.srt").write_text("1\n00:00:00,000 --> 00:00:03,000\nFlowers. Bees.\n\n")
+        return gm.scene_timing_snapshot(gm.load_manifest(self.task_id))
+
+    def apply_mix(self, reset=False):
+        return task.apply_local_ai_narration_drafts(self.task_id,
+            expected_revision=nr.revision(self.task_id),
+            expected_snapshot=gm.scene_timing_snapshot(gm.load_manifest(self.task_id)),
+            reset=reset, omit_captions=True)
+
+    def test_mix_real_export_uses_replacement_and_preserves_originals(self):
+        self.setup_mix()
+        protected = {name: (self.root / name).read_bytes() for name in (
+            "script.json", "scene_plan.json", "narration.wav", "subtitle.srt")}
+        manifest = gm.manifest_path(self.task_id).read_bytes()
+        with (patch.object(task.voice, "tts", side_effect=AssertionError("TTS")),
+              patch.object(task, "generate_subtitle", side_effect=AssertionError("captions")),
+              patch.object(task.local_ai, "prepare_provider", side_effect=AssertionError("GPU")),
+              patch.object(task, "_schedule_cross_post", side_effect=AssertionError("publishing"))):
+            result = self.apply_mix()
+        self.assertTrue(result["applied"])
+        output = self.root / "exported-audio.wav"
+        nr._extract(Path(result["videos"][0]), output, 0, 3)
+        with wave.open(str(output), "rb") as audio:
+            samples = np.frombuffer(audio.readframes(audio.getnframes()), dtype="<i2")
+        for start, end, expected in ((0.2, 0.8, 220), (1.2, 2.8, 880)):
+            chunk = samples[round(start * 16000):round(end * 16000)]
+            frequency = np.fft.rfftfreq(len(chunk), 1 / 16000)[np.abs(np.fft.rfft(chunk)).argmax()]
+            self.assertAlmostEqual(frequency, expected, delta=3)
+        for name, content in protected.items():
+            self.assertEqual((self.root / name).read_bytes(), content)
+        self.assertEqual(gm.manifest_path(self.task_id).read_bytes(), manifest)
+        active = task.narration_mix.resolve(self.task_id, str(self.audio))
+        package = task_artifacts.build_output_package(self.task_id)
+        self.assertEqual(package["edited_audio"], Path(active).relative_to(self.root).as_posix())
+        self.assertTrue(TaskArtifactPackageData.model_validate(package).captions_omitted)
+        self.assertIn({"code": "edited_narration_captions_omitted"}, self.state.get_task(self.task_id)["warnings"])
+        with self.assertRaisesRegex(ValueError, "restore original"):
+            self.save_draft()
+        # Restore uses the original source/caption path through the same composer.
+        with patch.object(task, "generate_final_videos", return_value=(result["videos"], [], [])) as render:
+            self.apply_mix(reset=True)
+        self.assertEqual(render.call_args.args[3], str(self.audio))
+        self.assertTrue(render.call_args.args[4].endswith("subtitle.srt"))
+        self.assertFalse(task.narration_mix.file(self.task_id).exists())
+        self.assertFalse(Path(active).exists())
+
+    def test_mix_render_and_publication_failures_roll_back_outputs_and_state(self):
+        self.setup_mix()
+        final = self.root / "final-1.mp4"
+        final.write_bytes(b"original final")
+        before = nr.revision(self.task_id)
+        def failure(*args, **kwargs):
+            final.write_bytes(b"partial render")
+            raise RuntimeError("render failed")
+        with patch.object(task, "generate_final_videos", side_effect=failure):
+            with self.assertRaises(RuntimeError):
+                self.apply_mix()
+        self.assertEqual(final.read_bytes(), b"original final")
+        self.assertFalse(task.narration_mix.file(self.task_id).exists())
+        self.assertEqual(list((self.root / "narration_mixes").iterdir()), [])
+        self.assertEqual(nr.revision(self.task_id), before)
+        self.assertEqual(self.state.get_task(self.task_id)["state"], const.TASK_STATE_COMPLETE)
+        with patch.object(task.scene_planner, "_atomic_write_json", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.apply_mix()
+        self.assertEqual(final.read_bytes(), b"original final")
+        self.assertFalse(task.narration_mix.file(self.task_id).exists())
+        with patch.object(task, "generate_final_videos", return_value=([str(final)], [], [])):
+            self.apply_mix()
+        old = task.narration_mix.file(self.task_id).read_bytes()
+        final.write_bytes(b"edited final")
+        with patch.object(task, "generate_final_videos", side_effect=failure):
+            with self.assertRaises(RuntimeError):
+                self.apply_mix(reset=True)
+        self.assertEqual(task.narration_mix.file(self.task_id).read_bytes(), old)
+        self.assertEqual(final.read_bytes(), b"edited final")
+        task.narration_mix.resolve(self.task_id, str(self.audio))
+        # A reset can recover invalid active metadata without trusting its paths.
+        task.narration_mix.file(self.task_id).write_text("invalid JSON")
+        with patch.object(task, "generate_final_videos", return_value=([str(final)], [], [])):
+            self.apply_mix(reset=True)
+        self.assertFalse(task.narration_mix.file(self.task_id).exists())
+
+    def test_mix_queue_snapshot_captions_guard_and_stale_input_rejection(self):
+        snapshot = self.setup_mix()
+        request = {"operation": "apply", "expected_revision": nr.revision(self.task_id),
+                   "expected_snapshot": snapshot, "omit_captions": True}
+        with self.assertRaisesRegex(ValueError, "caption omission"):
+            task.apply_local_ai_narration_drafts(self.task_id, expected_revision=nr.revision(self.task_id), expected_snapshot=snapshot)
+        with patch.object(webui_task._task_manager, "add_task") as queue:
+            webui_task.submit_narration_ranges(self.task_id, edit_request=request)
+        request["expected_snapshot"]["order"] = [99]
+        with patch.object(task, "generate_final_videos", return_value=([], [], [])):
+            call = queue.call_args
+            self.assertTrue(call.args[0](**call.kwargs)["prepared"])
+        self.assertTrue(task.narration_mix.file(self.task_id).exists())
+        active_data = task.narration_mix.file(self.task_id).read_bytes()
+        invalid = json.loads(active_data)
+        invalid["audio_asset"] = "../outside.wav"
+        task.narration_mix.file(self.task_id).write_text(json.dumps(invalid))
+        with self.assertRaisesRegex(ValueError, "invalid edited narration"):
+            task.narration_mix.resolve(self.task_id, str(self.audio))
+        task.narration_mix.file(self.task_id).write_bytes(active_data)
+        self.audio.write_bytes(self.audio.read_bytes() + b"new source")
+        with self.assertRaisesRegex(ValueError, "sources changed"):
+            task.narration_mix.resolve(self.task_id, str(self.audio))
+        with patch.object(task, "generate_final_videos", return_value=([], [], [])):
+            self.apply_mix(reset=True)
+        self.params.content_mode = "factual"
+        self.params.factual_sources = [{"url": "https://example.org", "title": "Source", "excerpt": "Flowers grow in the garden with bees."}]
+        task.save_script_data(self.task_id, self.params.video_script, [], self.params)
+        with self.assertRaisesRegex(ValueError, "creative"):
+            self.apply_mix()
+
     def test_scene_editor_labels_estimates_and_plays_validated_clip(self):
         self.prepare()
         source = (Path(__file__).parents[2] / "webui/Main.py").read_text(
@@ -652,6 +779,20 @@ st.session_state['scene_editor_task_id'] = 'narration'
             app.button(key="remove_narration_draft_narration_1").click().run()
             submit.assert_called_once_with(self.task_id, edit_request={
                 "operation": "replacement", "scene_id": 1, "expected_revision": nr.revision(self.task_id)})
+        app.checkbox(key="mix_confirm_narration").check().run()
+        with patch.object(webui_task, "submit_narration_ranges") as submit, patch("streamlit.rerun"):
+            app.button(key="apply_narration_mix_narration").click().run()
+            submit.assert_called_once_with(self.task_id, edit_request={
+                "operation": "apply", "expected_revision": nr.revision(self.task_id),
+                "expected_snapshot": gm.scene_timing_snapshot(gm.load_manifest(self.task_id)),
+                "reset": False, "omit_captions": True})
+        task.narration_mix.file(self.task_id).write_text("{}")
+        app.run()
+        self.assertTrue(app.button(key="save_narration_draft_narration_1").disabled)
+        with patch.object(webui_task, "submit_narration_ranges") as submit, patch("streamlit.rerun"):
+            app.button(key="reset_narration_mix_narration").click().run()
+            self.assertTrue(submit.call_args.kwargs["edit_request"]["reset"])
+        task.narration_mix.file(self.task_id).unlink()
         self.audio.write_bytes(self.audio.read_bytes() + b"changed")
         app.run()
         self.assertEqual(len(app.get("audio")), 0)
