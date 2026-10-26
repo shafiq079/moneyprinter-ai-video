@@ -428,3 +428,12 @@ Do not continue building a parallel custom NLE by default. Keep original scene
 and narration-generation tools as explicit supporting controls. Evaluate this
 branch with the owner before merging it into development/main or expanding the
 stock/factual import contract. OpenCut beta features are not assumed complete.
+
+## Native OpenCut clip iteration and MoneyPrinter fonts
+
+The combined milestone lives on `opencut-editor` by owner request. Clip iteration
+uses OpenCut's native inspector, preview and Undo rather than a parallel editor.
+Generation produces reviewable independent candidates; applying changes one
+selected occurrence, preserving the original generation project. Installed
+MoneyPrinter fonts extend the native Font Family field and initial caption import.
+See OPENCUT_EDITOR.md for the implemented contract and remaining import limits.

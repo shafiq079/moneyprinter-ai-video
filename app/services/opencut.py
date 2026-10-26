@@ -91,7 +91,7 @@ def seed(task_id):
         cues, style = current['cues'], current.get('style', {})
     elif base:
         cues = ce.parse_srt(Path(base).read_text(encoding='utf-8'))
-    notes = ['Caption fonts initially use Arial in OpenCut; choose a font in its text properties.' ] if params.font_name else []
+    notes = []
     active = al.load(task_id, gm.media_sha256(Path(audio)), al.ACTIVE)
     al.resolve_assets(task_id, active)
     for clip in active['clips']:

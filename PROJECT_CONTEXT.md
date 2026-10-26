@@ -2,6 +2,41 @@
 
 Read this file first in every new AI or developer session. `docs/SRS.md` is the full product specification; `docs/MIGRATION_MAP.md` is the file-level porting decision. `docs/PRODUCT_VISION.md` preserves the owner's longer-term editable-project and publishing goals separately from implemented scope and unapproved technical proposals. `docs/CHATGPT_PROJECT_SETUP.md` contains the reusable ChatGPT Project handoff. Update this handoff with every accepted milestone. Local desktop Codex setup and two-machine sync instructions are in `AGENTS.md` and `docs/LOCAL_CODEX_SETUP.md`.
 
+## Combined OpenCut clip controls and font milestone (27 October 2026)
+
+The owner approved both changes together on `opencut-editor`. The base native
+OpenCut integration was previously promoted into development (`b1c9323`);
+this new milestone stays on the OpenCut branch until explicitly promoted.
+
+The native right inspector now includes AI Clip for linked generated footage:
+prompt editing, Regenerate, New variation, Advanced seed, candidate review,
+version history and uploaded replacement footage. Preview uses the upper monitor;
+Use this version replaces only the selected occurrence through the native Undo
+command system and preserves compatible timeline edits. Insufficient footage
+blocks explicitly. Stable scene IDs survive split/duplicate and server reload;
+old drafts link only unambiguous source hashes. Candidate generation is bounded,
+cancellable at provider boundaries and recoverable after interruption. It does
+not rewrite the original manifest/plan or recompose original final video.
+Candidate versions/media travel in existing project archives. See
+`docs/OPENCUT_EDITOR.md` for queue ownership, persistence and scope.
+
+The native Font Family field is now a searchable local/system/OpenCut picker.
+Installed MoneyPrinter fonts are loaded as actual browser FontFaces; TTC files
+are converted to their first face with pinned FontTools. New caption imports
+retain the saved font family. Existing drafts preserve their selected font.
+No other caption controls are duplicated. Local font loading, native preview,
+text edits, reload and export share the same family mapping.
+
+Verification: 18 focused OpenCut/archive CPU tests passed. Real Chromium checked
+local font loading/selection, candidate generation/preview/apply/Undo, selected
+split-occurrence isolation, reload/fresh-browser restoration and native 1080x1920
+WebM export with audible narration saved back to the task. There were no page
+errors in the completed run. The CPU browser harness uses VP9 fixtures and native
+WebGL fallback with CPU rasterization flags, avoiding software Dawn/external-image
+copy and GPU-memory failures observed during initial runs. Production rendering
+and provider dispatch remain unchanged. Ruff, pinned build, formatting and compile
+checks passed. Live model inference/TTS/paid music/publishing were not exercised.
+
 ## Codespaces WebSocket/restart correction
 
 The operator's forwarded HTTPS page stopped at Streamlit's initial skeleton and

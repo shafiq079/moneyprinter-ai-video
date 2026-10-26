@@ -202,3 +202,100 @@ class TestOpenCut(LocalAITestCase):
                 with client.websocket_connect('/_stcore/stream', headers=headers, subprotocols=['streamlit']) as websocket:
                     websocket.send_bytes(b'forwarded browser payload')
                     self.assertEqual(websocket.receive_bytes(), b'forwarded browser payload')
+
+    def _wait_clip_job(self):
+        import time
+        for _ in range(200):
+            value = self.client.get('/opencut/api/clips', headers=self.headers).json()
+            if value.get('job', {}).get('status') not in {'queued', 'generating'}:
+                return value
+            time.sleep(.05)
+        self.fail('clip job did not finish')
+
+    def test_native_candidate_generation_is_review_only_and_keeps_original_inputs(self):
+        from app.services import generation_manifest as gm
+        protected = {p: p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        with patch.object(task.local_ai, 'prepare_provider', return_value=FakeLocalVideoProvider()):
+            response = self.client.post('/opencut/api/clips/1/generate', json={'prompt': 'A blue garden.', 'seed': 78}, headers=self.headers)
+            self.assertEqual(response.status_code, 200, response.text)
+            value = self._wait_clip_job()
+        self.assertEqual(value['job']['status'], 'ready', value)
+        version = next(v for v in value['scenes'][0]['versions'] if v['id'] == value['job']['version_id'])
+        self.assertEqual(version['prompt'], 'A blue garden.')
+        self.assertEqual(version['seed'], 78)
+        fetched = self.client.get('/opencut/api/clips/1/' + version['id'], headers=self.headers)
+        self.assertEqual(gm.media_sha256(gm.resolve_asset(self.task_id, version['source'])), version['blob'])
+        self.assertEqual(hashlib.sha256(fetched.content).hexdigest(), version['blob'])
+        for filename, content in protected.items():
+            self.assertEqual(filename.read_bytes(), content, str(filename))
+        self.assertEqual(self.client.get('/opencut/api/clips/2/' + version['id'], headers=self.headers).status_code, 400)
+
+    def test_native_clip_cancel_failure_busy_and_interrupted_jobs_are_recoverable(self):
+        import threading
+        from app.services import opencut_clips as clips
+        started, release = threading.Event(), threading.Event()
+        provider = FakeLocalVideoProvider()
+        original = provider.generate
+        def blocked(scene, output):
+            started.set()
+            if not release.wait(10):
+                raise RuntimeError('test timeout')
+            return original(scene, output)
+        with patch.object(task.local_ai, 'prepare_provider', return_value=provider), patch.object(provider, 'generate', side_effect=blocked):
+            self.assertEqual(self.client.post('/opencut/api/clips/1/generate', json={}, headers=self.headers).status_code, 200)
+            self.assertTrue(started.wait(5))
+            try:
+                self.assertEqual(self.client.post('/opencut/api/clips/1/generate', json={}, headers=self.headers).status_code, 400)
+                self.client.post('/opencut/api/clips/cancel', headers=self.headers)
+            finally:
+                release.set()
+            value = self._wait_clip_job()
+        self.assertEqual(value['job']['status'], 'cancelled')
+        self.assertFalse((opencut.directory(self.task_id) / 'clips.json').exists())
+        with patch.object(task.local_ai, 'prepare_provider', side_effect=RuntimeError('secret provider error')):
+            self.client.post('/opencut/api/clips/1/generate', json={}, headers=self.headers)
+            value = self._wait_clip_job()
+        self.assertEqual(value['job']['status'], 'failed')
+        self.assertNotIn('secret', value['job']['message'])
+        job = clips._read(self.task_id, 'clip-job.json', {})
+        clips._write(self.task_id, 'clip-job.json', {**job, 'status': 'generating', 'owner': 'old'})
+        self.assertEqual(clips.catalog(self.task_id)['job']['status'], 'interrupted')
+        lease = clips._claim(self.task_id)
+        try:
+            with self.assertRaisesRegex(ValueError, 'already running'):
+                clips._claim(self.task_id)
+        finally:
+            lease.release()
+
+    def test_native_uploaded_candidate_and_history_survive_archive(self):
+        from app.services import generation_manifest as gm, project_archive
+        manifest = gm.manifest_path(self.task_id).read_bytes()
+        footage = Path(gm.active_scene_paths(self.task_id)[0]).read_bytes()
+        result = self.client.post('/opencut/api/clips/1/upload', content=footage, headers=self.headers)
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertEqual(gm.manifest_path(self.task_id).read_bytes(), manifest)
+        self.assertEqual(self.client.post('/opencut/api/clips/1/upload', content=b'bad', headers=self.headers).status_code, 400)
+        archive = project_archive.export_project(self.task_id)
+        self.addCleanup(archive.unlink, missing_ok=True)
+        with archive.open('rb') as stream:
+            restored = project_archive.import_project(stream)
+        from app.services import opencut_clips
+        version_id = result.json()['version_id']
+        self.assertTrue(opencut_clips.version_file(restored, 1, version_id).is_file())
+        self.assertFalse(list(opencut.directory(self.task_id).glob('.clip-upload-*')))
+
+    def test_local_fonts_are_authenticated_and_collections_are_browser_compatible(self):
+        from fontTools.ttLib import TTFont
+        self.assertEqual(self.client.get('/opencut/api/fonts').status_code, 401)
+        fonts = self.client.get('/opencut/api/fonts', headers=self.headers).json()
+        self.assertTrue(any(f['name'] == 'MicrosoftYaHeiBold.ttc' for f in fonts))
+        self.assertFalse(any(f['name'].startswith('.') for f in fonts))
+        for record in fonts:
+            response = self.client.get('/opencut/api/fonts/' + record['id'], headers=self.headers)
+            self.assertEqual(response.status_code, 200)
+            self.assertNotEqual(response.content[:4], b'ttcf')
+            with TTFont(io.BytesIO(response.content)) as font:
+                self.assertGreater(len(font.getBestCmap()), 0)
+        self.assertEqual(self.client.get('/opencut/api/fonts/' + 'f' * 64, headers=self.headers).status_code, 400)
+        for data in ({'seed': -1}, {'seed': True}, {'prompt': ''}, {'prompt': 'x' * 4001}, {'other': 1}):
+            self.assertEqual(self.client.post('/opencut/api/clips/1/generate', json=data, headers=self.headers).status_code, 400)

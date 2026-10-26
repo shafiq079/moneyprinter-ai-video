@@ -112,6 +112,53 @@ def create_app(streamlit_port=None, public_port=None):
     async def session(task_id=Depends(authenticated)):
         return await asyncio.to_thread(bridge.session, task_id)
 
+    @app.get('/opencut/api/fonts')
+    async def fonts(task_id=Depends(authenticated)):
+        from app.services import opencut_fonts
+        return await asyncio.to_thread(opencut_fonts.catalog)
+
+    @app.get('/opencut/api/fonts/{font_id}')
+    async def font(font_id: str, task_id=Depends(authenticated)):
+        from app.services import opencut_fonts
+        return FileResponse(await asyncio.to_thread(opencut_fonts.font_file, font_id))
+
+    @app.get('/opencut/api/clips')
+    async def clips(task_id=Depends(authenticated)):
+        from app.services import opencut_clips
+        return await asyncio.to_thread(opencut_clips.catalog, task_id)
+
+    @app.post('/opencut/api/clips/{scene_id}/generate')
+    async def generate_clip(scene_id: int, request: Request, task_id=Depends(authenticated)):
+        from app.services import opencut_clips
+        body = bytearray()
+        async for chunk in request.stream():
+            body.extend(chunk)
+            if len(body) > 16384:
+                raise HTTPException(413, 'clip request is too large')
+        return await asyncio.to_thread(opencut_clips.submit, task_id, scene_id, json.loads(body))
+
+    @app.post('/opencut/api/clips/cancel')
+    async def cancel_clip(task_id=Depends(authenticated)):
+        from app.services import opencut_clips
+        return await asyncio.to_thread(opencut_clips.cancel, task_id)
+
+    @app.get('/opencut/api/clips/{scene_id}/{version_id}')
+    async def clip_version(scene_id: int, version_id: str, task_id=Depends(authenticated)):
+        from app.services import opencut_clips
+        return FileResponse(await asyncio.to_thread(opencut_clips.version_file, task_id, scene_id, version_id), media_type='video/mp4')
+
+    @app.post('/opencut/api/clips/{scene_id}/upload')
+    async def upload_clip(scene_id: int, request: Request, task_id=Depends(authenticated)):
+        from app.services import opencut_clips
+        directory = bridge.directory(task_id)
+        target = directory / ('.clip-upload-' + uuid.uuid4().hex + '.mp4')
+        try:
+            await bounded_upload(request, target, 100 * 1024 * 1024)
+            digest = await asyncio.to_thread(opencut_clips.upload, task_id, scene_id, target)
+            return {'version_id': digest}
+        finally:
+            target.unlink(missing_ok=True)
+
     @app.get('/opencut/api/archive')
     async def archive(task_id=Depends(authenticated)):
         from app.services import project_archive

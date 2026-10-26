@@ -17,10 +17,29 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 
+def offline_provider():
+    from app.services.local_ai.fake import FakeLocalVideoProvider
+    from app.utils import utils
+    class CPUProvider(FakeLocalVideoProvider):
+        def generate(self, scene, output_path):
+            super().generate(scene, output_path)
+            # VP9 in MP4 exercises the same editor path in Chromium builds that
+            # do not ship proprietary H.264. Production encoding is unchanged.
+            converted = Path(output_path).with_suffix('.vp9.mp4')
+            try:
+                subprocess.run([utils.get_ffmpeg_binary(), '-v', 'error', '-y',
+                    '-i', str(output_path), '-an', '-c:v', 'libvpx-vp9', '-crf', '38',
+                    '-b:v', '0', '-threads', '1', '-row-mt', '1', '-f', 'mp4',
+                    str(converted)], check=True)
+                os.replace(converted, output_path)
+            finally:
+                converted.unlink(missing_ok=True)
+    return CPUProvider()
+
+
 def main():
     from app.models.schema import VideoParams
     from app.services import opencut, scene_planner, task
-    from app.services.local_ai.fake import FakeLocalVideoProvider
     from app.services.local_ai.orchestrator import generate_scene_materials
     from app.utils import utils
     parser = argparse.ArgumentParser()
@@ -40,7 +59,7 @@ def main():
                 'sine=frequency=440:sample_rate=16000', '-t', '4', str(task_root / 'narration.wav')], check=True)
             plan = scene_planner.get_or_create_scene_plan(task_id, params.video_script,
                 audio_duration=4, max_scene_duration=2, aspect='9:16', use_llm=False)
-            generate_scene_materials(task_id, scenes=list(plan.scenes), provider=FakeLocalVideoProvider())
+            generate_scene_materials(task_id, scenes=list(plan.scenes), provider=offline_provider())
             task.save_script_data(task_id, params.video_script, [], params)
             (task_root / 'subtitle.srt').write_text('1\n00:00:00,000 --> 00:00:02,000\nFlowers.\n\n2\n00:00:02,000 --> 00:00:04,000\nBees.\n\n')
             token.write_text(opencut.ticket(task_id))
@@ -49,7 +68,15 @@ def main():
                 port = probe.getsockname()[1]
             log = (args.output / 'server.log').open('w')
             try:
-                process = subprocess.Popen([sys.executable, '-m', 'webui.opencut_server', '--port', str(port)], cwd=ROOT, stdout=log, stderr=log, start_new_session=os.name != 'nt')
+                # Isolate the offline provider substitution to this disposable QA
+                # subprocess; production source dispatch is never changed.
+                offline_server = (
+                    "import runpy; from app.services import local_ai; "
+                    "from scripts.verify_opencut import offline_provider; "
+                    "local_ai.prepare_provider=lambda *a, **k: offline_provider(); "
+                    "runpy.run_module('webui.opencut_server',run_name='__main__')"
+                )
+                process = subprocess.Popen([sys.executable, '-c', offline_server, '--port', str(port)], cwd=ROOT, stdout=log, stderr=log, start_new_session=os.name != 'nt')
                 import httpx
                 for _ in range(150):
                     try:

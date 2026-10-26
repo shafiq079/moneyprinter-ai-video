@@ -36,6 +36,8 @@ dependencies = [
     "audioop-lts==0.2.2; python_version >= '3.13'",
     "litellm==1.86.2",
     "google-genai==2.11.0",
+    "fonttools==4.61.1",
+    "filelock==3.25.2",
 ]
 
 [project.optional-dependencies]

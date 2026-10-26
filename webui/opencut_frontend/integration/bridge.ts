@@ -1,3 +1,4 @@
+import { initFonts, importedFont, loadFonts } from "./fonts";
 import { EditorCore } from "@/core";
 import { storageService } from "@/services/storage/service";
 import { processMediaAssets } from "@/media/processing";
@@ -43,7 +44,7 @@ function setStatus(message: string) {
   status = message;
   notify();
 }
-async function api(path: string, init: RequestInit = {}) {
+export async function api(path: string, init: RequestInit = {}) {
   const response = await fetch("/opencut/api/" + path, {
     ...init,
     headers: { ...init.headers, Authorization: "Bearer " + token },
@@ -162,6 +163,7 @@ function element(type: string, asset: any, start: number, duration: number) {
 export async function bootstrap() {
   if (!token)
     throw new Error("Open this editor from MoneyPrinter Task Manager.");
+  await initFonts();
   await initializeGpuRenderer();
   const response = await api("session");
   const data = await response.json();
@@ -202,7 +204,11 @@ export async function bootstrap() {
     for (const [key, record] of Object.entries(seed.resources) as any) {
       setStatus("Importing " + record.name + "…");
       const response = await api("source/" + key);
-      const file = new File([await response.blob()], record.name, {
+      const sourceScene = seed.scenes.find((s: any) => s.asset === key);
+      const displayName = sourceScene
+        ? `Scene ${sourceScene.id}.mp4`
+        : record.name;
+      const file = new File([await response.blob()], displayName, {
         type:
           response.headers.get("content-type") || "application/octet-stream",
       });
@@ -240,6 +246,7 @@ export async function bootstrap() {
         return {
           ...element("video", asset, s.start, length),
           name: s.label,
+          mptSceneId: s.id,
           isSourceAudioEnabled: false,
           sourceDuration: time({ seconds: asset.duration || length }),
           trimEnd: time({
@@ -306,7 +313,7 @@ export async function bootstrap() {
               fontSize:
                 ((style.font_size || 60) * FONT_SIZE_SCALE_REFERENCE) /
                 canvas.height,
-              fontFamily: "Arial",
+              fontFamily: importedFont(style.font_name),
               color: style.text_fore_color || "#FFFFFF",
               "transform.positionY": canvas.height * (percent / 100 - 0.5),
               "background.enabled": !!style.text_background_color,
@@ -327,6 +334,39 @@ export async function bootstrap() {
         duration: 15000,
       });
   }
+  // Upgrade old drafts by matching immutable source hashes, never clip position.
+  const clips = await (await api("clips")).json();
+  const assets =
+    data.mode === "restore"
+      ? data.media
+      : [...known].map(([id, blob]) => ({ id, blob }));
+  for (const scene of project.scenes) {
+    for (const track of [scene.tracks.main, ...scene.tracks.overlay]) {
+      for (const item of track.elements) {
+        if (item.type !== "video") continue;
+        const digest = assets.find((a: any) => a.id === item.mediaId)?.blob;
+        const matches = clips.scenes.filter((s: any) =>
+          s.versions.some((v: any) => v.id === digest),
+        );
+        if (
+          matches.length === 1 &&
+          (!item.mptSceneId || item.mptSceneId === matches[0].id)
+        ) {
+          item.mptSceneId = matches[0].id;
+          item.mptVersionId ||= digest;
+        }
+      }
+    }
+  }
+  const families = project.scenes.flatMap((s: any) =>
+    s.tracks.overlay.flatMap((t: any) =>
+      t.elements
+        .filter((e: any) => e.type === "text")
+        .map((e: any) => e.params.fontFamily),
+    ),
+  );
+  await loadFonts({ families });
+  await storageService.saveProject({ project });
   const query = new URLSearchParams(window.location.search);
   query.set("project", project.metadata.id);
   window.history.replaceState(
@@ -342,6 +382,17 @@ export async function bootstrap() {
   // OpenCut's native export is retained. Also save successful exports to the task.
   const originalExport = editor.project.export.bind(editor.project);
   editor.project.export = async (args: any) => {
+    await loadFonts({
+      families: editor.scenes
+        .getScenes()
+        .flatMap((s: any) =>
+          s.tracks.overlay.flatMap((t: any) =>
+            t.elements
+              .filter((e: any) => e.type === "text")
+              .map((e: any) => e.params.fontFamily),
+          ),
+        ),
+    });
     const result = await originalExport(args);
     if (result.success && result.buffer) {
       try {
