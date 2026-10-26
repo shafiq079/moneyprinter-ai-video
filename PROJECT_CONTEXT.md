@@ -2,6 +2,24 @@
 
 Read this file first in every new AI or developer session. `docs/SRS.md` is the full product specification; `docs/MIGRATION_MAP.md` is the file-level porting decision. `docs/PRODUCT_VISION.md` preserves the owner's longer-term editable-project and publishing goals separately from implemented scope and unapproved technical proposals. `docs/CHATGPT_PROJECT_SETUP.md` contains the reusable ChatGPT Project handoff. Update this handoff with every accepted milestone. Local desktop Codex setup and two-machine sync instructions are in `AGENTS.md` and `docs/LOCAL_CODEX_SETUP.md`.
 
+## Codespaces WebSocket/restart correction
+
+The operator's forwarded HTTPS page stopped at Streamlit's initial skeleton and
+reported a failed /_stcore/stream WebSocket. Gateway origin checks now accept
+normalized actual Host or forwarded Host, with an exact current-port Codespaces
+host derived from the documented environment variables. A forwarding header can
+no longer override an already-correct Host. Foreign origins remain rejected.
+Loopback WebSockets explicitly bypass environment proxies. Shutdown is bounded,
+and POSIX port probes use listener-compatible SO_REUSEADDR so TIME_WAIT does not
+force unnecessary public-port changes.
+
+Eight focused tests passed. A real Streamlit session received binary new-session
+and UI delta frames through an HTTPS Codespaces-style origin with localhost
+forwarding headers. Stopping with the socket open took about one second in that
+check, and the actual shell launcher immediately restarted on the same port.
+The operator's remote Codespace still requires pulling this fix and restarting;
+no claim is made that its actual browser session was remotely inspected.
+
 ## Owner-approved OpenCut experiment (26 October 2026)
 
 The owner changed direction and explicitly requested a separate `opencut-editor`

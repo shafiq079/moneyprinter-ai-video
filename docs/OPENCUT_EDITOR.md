@@ -141,3 +141,22 @@ Streamlit Task Manager through the gateway. Output evidence is under ignored
 `storage/opencut-browser-check`. No live GPU model, TTS, paid music or publishing
 calls are made. CI builds the pinned source and runs this browser acceptance in
 addition to the existing Python/platform checks and legacy frontend build.
+
+
+## Forwarded page stays on the loading skeleton
+
+The static Streamlit page can load while its live WebSocket fails. The gateway
+checks actual and forwarded hosts without discarding a correct actual Host,
+normalizes HTTPS authorities and recognizes the exact Codespaces hostname for
+its selected public port. Internal WebSocket requests bypass environment
+proxies. Origin checks remain enabled; arbitrary foreign domains are rejected.
+The gateway reports origin rejections in terminal logs without printing cookies
+or session protocols. Codespaces host construction uses GitHub's documented
+`CODESPACE_NAME` and `GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN` variables:
+https://docs.github.com/en/codespaces/developing-in-a-codespace/default-environment-variables-for-your-codespace
+
+After pulling Python/gateway fixes, restart the WebUI; rebuilding the OpenCut
+bundle is unnecessary. Stop old MoneyPrinter gateway and Streamlit child
+processes if a prior shutdown remained running. Open the public port printed by
+the launcher, not the random internal Streamlit port. POSIX port probing now
+handles recently closed sockets, and gateway shutdown has a bounded grace time.

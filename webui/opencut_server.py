@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
 import socket
@@ -28,6 +29,44 @@ from app.utils import utils
 
 FRONTEND = Path(__file__).parent / 'opencut_frontend' / 'dist'
 HOP_HEADERS = {'connection', 'transfer-encoding', 'keep-alive', 'upgrade', 'proxy-connection'}
+LOGGER = logging.getLogger(__name__)
+
+
+def _authority(value, scheme):
+    """Compare authorities without rejecting HTTPS default ports/case changes."""
+    try:
+        parsed = urlsplit(scheme + '://' + value.strip())
+        if not parsed.hostname or parsed.username or parsed.password or parsed.path:
+            return None
+        return (parsed.hostname.lower(), parsed.port or (443 if scheme == 'https' else 80))
+    except (ValueError, AttributeError):
+        return None
+
+
+def _origin_allowed(origin, headers, public_hosts=()):
+    if origin is None:
+        return True
+    try:
+        parsed = urlsplit(origin)
+        if parsed.scheme not in {'http', 'https'} or parsed.path or parsed.query or parsed.fragment:
+            return False
+        authority = _authority(parsed.netloc, parsed.scheme)
+        if authority is None:
+            return False
+        # A forwarding header must not override an already-correct Host header.
+        candidates = [headers.get('host', ''), headers.get('x-forwarded-host', '').split(',')[0].strip(), *public_hosts]
+        return any(_authority(value, parsed.scheme) == authority for value in candidates if value)
+    except (ValueError, AttributeError):
+        return False
+
+
+def _codespace_hosts(public_port):
+    name = os.environ.get('CODESPACE_NAME', '')
+    domain = os.environ.get('GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN', '')
+    if (public_port and 1 <= public_port <= 65535 and re.fullmatch(r'[A-Za-z0-9-]+', name)
+            and re.fullmatch(r'[A-Za-z0-9.-]+', domain)):
+        return (f'{name}-{public_port}.{domain}',)
+    return ()
 
 
 def authenticated(request: Request):
@@ -55,7 +94,8 @@ async def bounded_upload(request, destination, limit):
     return digest.hexdigest()
 
 
-def create_app(streamlit_port=None):
+def create_app(streamlit_port=None, public_port=None):
+    public_hosts = _codespace_hosts(public_port)
     @asynccontextmanager
     async def lifespan(app):
         async with httpx.AsyncClient(timeout=None, trust_env=False) as client:
@@ -181,8 +221,9 @@ def create_app(streamlit_port=None):
         @app.websocket('/{path:path}')
         async def websocket_proxy(websocket: WebSocket, path: str):
             origin = websocket.headers.get('origin')
-            public_host = websocket.headers.get('x-forwarded-host', websocket.headers.get('host', '')).split(',')[0].strip()
-            if origin and urlsplit(origin).netloc != public_host:
+            if not _origin_allowed(origin, websocket.headers, public_hosts):
+                LOGGER.warning('Rejected Streamlit WebSocket origin=%r host=%r forwarded_host=%r',
+                    origin, websocket.headers.get('host'), websocket.headers.get('x-forwarded-host'))
                 await websocket.close(code=1008)
                 return
             protocols = websocket.scope.get('subprotocols', [])
@@ -192,7 +233,8 @@ def create_app(streamlit_port=None):
             if websocket.url.query:
                 uri += '?' + websocket.url.query
             async with websockets.connect(uri, additional_headers=headers,
-                    origin=f'http://127.0.0.1:{streamlit_port}' if origin else None, subprotocols=protocols, max_size=None) as upstream:
+                    origin=f'http://127.0.0.1:{streamlit_port}' if origin else None, subprotocols=protocols,
+                    max_size=None, proxy=None, open_timeout=5, close_timeout=2) as upstream:
                 await websocket.accept(subprotocol=upstream.subprotocol)
                 async def browser_to_backend():
                     while True:
@@ -262,13 +304,15 @@ def main():
             time.sleep(.2)
         else:
             raise RuntimeError('Streamlit startup timed out')
-        uvicorn.run(create_app(internal_port), host=args.host, port=args.port, log_level='warning')
+        uvicorn.run(create_app(internal_port, args.port), host=args.host, port=args.port,
+                    log_level='warning', timeout_graceful_shutdown=5)
     finally:
         process.terminate()
         with suppress(subprocess.TimeoutExpired):
             process.wait(timeout=10)
         if process.poll() is None:
             process.kill()
+            process.wait(timeout=5)
 
 
 if __name__ == '__main__':

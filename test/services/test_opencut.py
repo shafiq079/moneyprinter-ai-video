@@ -161,3 +161,44 @@ class TestOpenCut(LocalAITestCase):
             with self.assertRaises(WebSocketDisconnect):
                 with client.websocket_connect('/_stcore/stream', headers={'Origin': 'https://foreign.example'}):
                     self.fail('foreign origin must not reach Streamlit')
+
+    def test_forwarded_https_hosts_are_normalized_without_wildcard_origins(self):
+        from webui.opencut_server import _origin_allowed, _codespace_hosts
+        origin = 'https://opulent-fishstick-8502.app.github.dev'
+        self.assertTrue(_origin_allowed(origin, {'host': 'opulent-fishstick-8502.app.github.dev', 'x-forwarded-host': 'localhost:8502'}))
+        self.assertTrue(_origin_allowed(origin, {'host': 'localhost:8502', 'x-forwarded-host': 'opulent-fishstick-8502.app.github.dev'}))
+        self.assertTrue(_origin_allowed('https://PUBLIC.EXAMPLE:443', {'host': 'public.example'}))
+        self.assertFalse(_origin_allowed('https://foreign.example', {'host': 'localhost:8502'}))
+        self.assertFalse(_origin_allowed('https://public.example:8502', {'host': 'public.example'}))
+        with patch.dict('os.environ', {'CODESPACE_NAME': 'opulent-fishstick', 'GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN': 'app.github.dev'}):
+            known = _codespace_hosts(8502)
+            self.assertTrue(_origin_allowed(origin, {'host': 'localhost:8502'}, known))
+            self.assertFalse(_origin_allowed('https://other-8502.app.github.dev', {'host': 'localhost:8502'}, known))
+
+    def test_forwarded_websocket_reaches_loopback_without_environment_proxy(self):
+        import asyncio
+        from contextlib import asynccontextmanager
+        class Echo:
+            subprotocol = 'streamlit'
+            def __init__(self):
+                self.queue = asyncio.Queue()
+            async def send(self, value):
+                await self.queue.put(value)
+            def __aiter__(self):
+                return self
+            async def __anext__(self):
+                return await self.queue.get()
+        @asynccontextmanager
+        async def connect(uri, **kwargs):
+            self.assertEqual(uri, 'ws://127.0.0.1:38793/_stcore/stream')
+            self.assertIsNone(kwargs['proxy'])
+            self.assertEqual(kwargs['origin'], 'http://127.0.0.1:38793')
+            self.assertEqual(kwargs['subprotocols'], ['streamlit'])
+            yield Echo()
+        origin = 'https://opulent-fishstick-8502.app.github.dev'
+        headers = {'Host': 'opulent-fishstick-8502.app.github.dev', 'X-Forwarded-Host': 'localhost:8502', 'Origin': origin}
+        with patch('webui.opencut_server.websockets.connect', side_effect=connect):
+            with TestClient(create_app(streamlit_port=38793)) as client:
+                with client.websocket_connect('/_stcore/stream', headers=headers, subprotocols=['streamlit']) as websocket:
+                    websocket.send_bytes(b'forwarded browser payload')
+                    self.assertEqual(websocket.receive_bytes(), b'forwarded browser payload')
