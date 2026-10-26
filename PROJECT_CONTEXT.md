@@ -2,6 +2,43 @@
 
 Read this file first in every new AI or developer session. `docs/SRS.md` is the full product specification; `docs/MIGRATION_MAP.md` is the file-level porting decision. `docs/PRODUCT_VISION.md` preserves the owner's longer-term editable-project and publishing goals separately from implemented scope and unapproved technical proposals. `docs/CHATGPT_PROJECT_SETUP.md` contains the reusable ChatGPT Project handoff. Update this handoff with every accepted milestone. Local desktop Codex setup and two-machine sync instructions are in `AGENTS.md` and `docs/LOCAL_CODEX_SETUP.md`.
 
+## Owner-approved OpenCut experiment (26 October 2026)
+
+The owner changed direction and explicitly requested a separate `opencut-editor`
+branch. This is the authorized exception to the older two-branch rule. It starts
+at development `df626edd3022863723382d7fedf58882ae688629`; do not modify or merge
+into development/main during this experiment. AGENTS.md records this exception.
+
+The real MIT OpenCut Classic editor is now integrated as a pinned source build,
+not a recreated UI. Its native timeline/media/preview/properties/command system
+and browser exporter run full-page on the same WebUI address via a local gateway.
+MoneyPrinter generation, source scene history, Resume/Regenerate and the Python
+composer remain intact. Task Manager Edit opens OpenCut. AI/original tools remain
+available explicitly; native edits are independent of the generation manifest.
+
+Native projects/media are saved under each task's opencut directory with bounded,
+task-scoped capability access, SHA-addressed media, atomic writes and stale-tab
+revision checks. Reload and fresh-browser restoration use server storage.
+Native exports download and also save separately; Task Manager playback prefers
+the newest completed native export. Project archives retain the native draft,
+media and exports, and import copies use task-scoped browser IDs.
+
+See docs/OPENCUT_EDITOR.md for setup, rollback, exact import/style boundaries and
+CPU checks. The upstream main repository is a rewrite; its maintainers recommend
+Classic for a working editor. The integration pins Classic cf5e79e919144200294fb9fed22a222592a0aeea.
+Verification on this branch: 83 focused editor/archive/queue/i18n regressions,
+93 composer/history/artifact checks (3 skipped), 11 native/archive checks and
+20 gateway/history checks passed (counts overlap). The reproducible real
+Chromium acceptance edited a caption, saved/reloaded it, restored media in a
+fresh browser, exported 1080x1920 WebM with audible narration and saved it back
+to the task. Source-only and full pinned npm build setup passed, as did Ruff,
+compileall and shell syntax checks. No model GPU, TTS, paid music or publishing
+calls were made. Full platform/browser CI is configured for this branch.
+
+Initial support remains saved creative AI scene projects. Native beta limitations,
+caption font/word-color/outline/animation mapping and non-mapped transitions are
+explicitly documented. This does not claim full CapCut feature parity.
+
 ## Canonical product and repository state
 
 - **Product base:** `harry0703/MoneyPrinterTurbo` `main`, commit `ad5496f1b729d1d7e361dd972015d26c08b0e052` (verified again on 26 September 2026). The local `upstream` remote points there. Vendor tag: `vendor/mpt-2026-09-26-ad5496f`.

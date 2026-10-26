@@ -6,6 +6,7 @@ on:
     branches:
       - main
       - development
+      - opencut-editor
 
 jobs:
   tests:
@@ -112,6 +113,7 @@ jobs:
           test/services/test_controller_video.py
           test/services/test_webui_task.py
           test/services/test_webui_headless_task_actions.py
+          test/services/test_opencut.py
 
   editor-frontend:
     name: Editor frontend build
@@ -132,3 +134,37 @@ jobs:
         working-directory: webui/editor_frontend
       - name: Verify checked-in offline bundle
         run: git diff --exit-code -- webui/editor_frontend/dist
+
+  opencut-frontend:
+    name: Pinned OpenCut editor build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: webui/opencut_frontend/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: python scripts/setup_opencut.py
+      - run: npm run format:check
+        working-directory: webui/opencut_frontend
+      - run: npx playwright-core install --with-deps chromium
+        working-directory: webui/opencut_frontend
+      - name: Native OpenCut browser acceptance (CPU fixture)
+        run: uv run --no-sync python scripts/verify_opencut.py
+        env:
+          MPT_BROWSER_EXTRA_ARGS: '["--in-process-gpu", "--use-gl=angle"]'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opencut-editor-build
+          path: |
+            webui/opencut_frontend/dist
+            storage/opencut-browser-check

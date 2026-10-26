@@ -7,6 +7,14 @@ documentation relevant to the task (`docs/LOCAL_AI_VIDEO.md` or
 `docs/FACTUAL_MODE.md`). Treat the repository
 and current remote history as the source of truth if a previous chat differs.
 
+## OpenCut branch exception (owner approved 26 October 2026)
+
+The owner explicitly requested a third branch, `opencut-editor`, to integrate
+real OpenCut while keeping `development` as the previous-editor fallback.
+Work on `opencut-editor` for this integration. Do not merge into or modify
+`development`/`main` without a later instruction. This overrides the historical
+two-branch restriction below for this experiment only.
+
 ## Project rules
 
 - This product extends the original MoneyPrinterTurbo Python/WebUI architecture.

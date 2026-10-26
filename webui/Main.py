@@ -788,11 +788,20 @@ def _safe_load_task_script(task_path):
 
 def _find_final_task_video(task_path: str) -> str:
     """
-    返回任务目录中序号最小的最终成片。
+    Prefer a completed native OpenCut export, then the first generated final.
 
-    合成流程还会产生 combined、temp-clip 和 MoviePy 临时文件，这些文件不能
-    表示任务已成功完成，因此这里只接受 ``final-<序号>.<扩展名>``。
+    Only published export names and final-N videos count; temporary/combined
+    render files cannot mark a task complete.
     """
+    export_dir = os.path.join(task_path, 'opencut', 'exports')
+    try:
+        exports = [os.path.join(export_dir, name) for name in os.listdir(export_dir)
+                   if re.fullmatch(r'[a-f0-9]{32}\.(mp4|webm)', name)]
+        exports = [value for value in exports if os.path.isfile(value) and not os.path.islink(value)]
+        if exports:
+            return max(exports, key=lambda value: (os.path.getmtime(value), value))
+    except OSError:
+        pass
     try:
         files = os.listdir(task_path)
     except OSError:
@@ -1039,8 +1048,10 @@ def _collect_task_summaries(limit=20):
         task_path = os.path.join(utils.task_dir(), task_id)
         history_task = history_tasks.get(task_id, {})
         video_files = task.get("videos") or []
+        history_video = history_task.get("video_file", "")
         video_file = (
-            video_files[0] if video_files else history_task.get("video_file", "")
+            history_video if os.path.dirname(history_video) == os.path.join(task_path, 'opencut', 'exports')
+            else video_files[0] if video_files else history_video
         )
         subject = (
             task.get("video_subject")
@@ -1939,6 +1950,14 @@ def _render_artifact_package_view() -> None:
         else:
             st.download_button(tr(label), data=content, file_name=filename, key=f"download_{key}_{task_id}")
 
+    for relative in package.get('opencut_exports', []):
+        candidate = generation_manifest.resolve_asset(task_id, relative)
+        if candidate.stat().st_size <= 512 * 1024 * 1024:
+            with candidate.open('rb') as stream:
+                st.download_button('Download OpenCut export', stream, file_name=candidate.name,
+                    mime=mimetypes.guess_type(candidate.name)[0] or 'video/mp4',
+                    key=f'opencut_artifact_{task_id}_{candidate.name}', on_click='ignore')
+
     if package["factual_review"]:
         try:
             review = factual_content.load_review_summary(task_id)
@@ -2101,7 +2120,10 @@ def _render_task_table(filtered_tasks, key_prefix):
 
                 with action_cols[4]:
                     scenes_label = tr("Edit Video")
-                    if st.button(
+                    if os.environ.get('MPT_OPENCUT') == '1' and has_scene_plan and not is_processing:
+                        from webui.opencut_launch import launch_url
+                        st.link_button(scenes_label, launch_url(task_id), icon=":material/movie_edit:", use_container_width=True)
+                    elif st.button(
                         scenes_label,
                         key=f"edit_task_{key_prefix}_{task_id}",
                         use_container_width=True,
@@ -2225,13 +2247,13 @@ def _render_task_video_preview():
     if closed:
         st.session_state.pop("task_preview_video_file", None)
         return
-    st.video(preview_file)
+    st.video(preview_file, format=mimetypes.guess_type(preview_file)[0] or 'video/mp4')
     with open(preview_file, "rb") as video_file:
         st.download_button(
             tr("Download Video"),
             data=video_file,
             file_name=os.path.basename(preview_file),
-            mime="video/mp4",
+            mime=mimetypes.guess_type(preview_file)[0] or 'video/mp4',
             key=f"download_task_video_preview_{task_name}",
             icon=":material/download:",
             on_click="ignore",
@@ -9587,7 +9609,11 @@ def _render_application():
     from webui.editor_workspace import render_editor, requested_task
     editor_task = requested_task()
     if editor_task:
-        render_editor(editor_task, tr, _render_scene_editor, _render_caption_editor)
+        if st.query_params.get('legacy') == '1' or os.environ.get('MPT_OPENCUT') != '1':
+            render_editor(editor_task, tr, _render_scene_editor, _render_caption_editor)
+        else:
+            from webui.opencut_launch import render_launch
+            render_launch(editor_task, tr)
         return
     if st.query_params.get("view") == "tasks":
         if st.button(tr("Back To Generator"), key="tasks_back_to_generator"):

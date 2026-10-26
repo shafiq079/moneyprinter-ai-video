@@ -1508,6 +1508,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "faster-whisper" },
     { name = "google-genai" },
+    { name = "httpx" },
     { name = "litellm" },
     { name = "loguru" },
     { name = "moviepy" },
@@ -1522,6 +1523,7 @@ dependencies = [
     { name = "streamlit" },
     { name = "streamlit-tour" },
     { name = "uvicorn" },
+    { name = "websockets" },
 ]
 
 [package.optional-dependencies]
@@ -1545,6 +1547,7 @@ requires-dist = [
     { name = "fastapi", specifier = "==0.136.3" },
     { name = "faster-whisper", specifier = "==1.1.0" },
     { name = "google-genai", specifier = "==2.11.0" },
+    { name = "httpx", specifier = "==0.28.1" },
     { name = "litellm", specifier = "==1.86.2" },
     { name = "loguru", specifier = "==0.7.3" },
     { name = "moviepy", specifier = "==2.2.1" },
@@ -1560,6 +1563,7 @@ requires-dist = [
     { name = "streamlit-tour", specifier = "==1.1.0" },
     { name = "twelvelabs", marker = "extra == 'twelvelabs'", specifier = ">=1.2.8" },
     { name = "uvicorn", specifier = "==0.32.1" },
+    { name = "websockets", specifier = "==16.0" },
 ]
 provides-extras = ["twelvelabs"]
 

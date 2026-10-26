@@ -409,3 +409,22 @@ providers for explicit future regeneration. CPU tests cover source deletion,
 restoration, restart, editing/export and invalid inputs. Undo/redo is the next
 recommended editor milestone, followed by stock/factual editor expansion.
 Publishing and real local-GPU acceptance remain deferred.
+
+
+## Owner-approved direction change: OpenCut on an isolated branch
+
+On 26 October 2026 the owner requested a third branch, `opencut-editor`, and the
+real open-source OpenCut editor instead of further custom editor construction.
+The old implementation remains on development as the fallback. This explicitly
+supersedes the earlier two-branch/editor-stack restrictions for this experiment.
+
+Pinned MIT OpenCut Classic now supplies the full-page editor, native timeline,
+media/properties/preview, commands and browser export. MoneyPrinter's generation
+pipeline remains Python/Streamlit. Native drafts/media/exports persist separately
+and are included in portable project backups. The gateway keeps one public WebUI
+address. See OPENCUT_EDITOR.md for setup, proof, limitations and rollback.
+
+Do not continue building a parallel custom NLE by default. Keep original scene
+and narration-generation tools as explicit supporting controls. Evaluate this
+branch with the owner before merging it into development/main or expanding the
+stock/factual import contract. OpenCut beta features are not assumed complete.

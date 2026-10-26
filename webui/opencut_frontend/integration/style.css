@@ -1,0 +1,28 @@
+@import "../upstream/apps/web/src/app/globals.css";
+@source "../upstream/apps/web/src";
+#mpt-bar {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background: #101820;
+  color: #c3d4dd;
+  font: 12px system-ui;
+  border-bottom: 1px solid #2a3841;
+}
+#mpt-bar a {
+  color: #a3ead8;
+  text-decoration: none;
+}
+#mpt-bar button {
+  border: 1px solid #38545b;
+  border-radius: 4px;
+  padding: 3px 10px;
+  background: #20343b;
+  color: #def4f0;
+  cursor: pointer;
+}
+.h-screen {
+  height: calc(100dvh - 34px);
+}

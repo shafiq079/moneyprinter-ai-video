@@ -43,6 +43,8 @@ def _name(value):
 
 def _allowed(name):
     _name(name)
+    if name.startswith('opencut/'):
+        return bool(re.fullmatch(r'opencut/(?:project\.json|media/[a-f0-9]{64}|exports/[a-f0-9]{32}\.(?:mp4|webm))', name))
     p = PurePosixPath(name)
     if len(p.parts) == 1:
         return name in ROOT_FILES or bool(re.fullmatch(r'[A-Za-z0-9_-][A-Za-z0-9_. -]*\.(?:mp3|wav|m4a|ogg|flac)', name)) or bool(re.fullmatch(r'(custom-audio-[A-Za-z0-9_.-]+\.(?:mp3|wav|m4a|ogg|flac)|final-\d+\.mp4|[a-z0-9_-]+-bgm-\d+\.[a-z0-9]+)', name))
@@ -50,7 +52,8 @@ def _allowed(name):
 
 
 def _json(path):
-    if path.stat().st_size > MAX_JSON:
+    limit = 8 * 1024 * 1024 if path.name == 'project.json' and path.parent.name == 'opencut' else MAX_JSON
+    if path.stat().st_size > limit:
         raise ValueError('project metadata is too large')
     return json.loads(path.read_text(encoding='utf-8'))
 
@@ -82,13 +85,13 @@ def _reference(value, root):
 
 
 def _validate_media(root):
-    formats = {'.mp4': 'mov', '.m4a': 'mov', '.mp3': 'mp3', '.wav': 'wav', '.ogg': 'ogg', '.flac': 'flac'}
+    formats = {'.webm': 'matroska', '.mp4': 'mov', '.m4a': 'mov', '.mp3': 'mp3', '.wav': 'wav', '.ogg': 'ogg', '.flac': 'flac'}
     for candidate in root.rglob('*'):
         fmt = formats.get(candidate.suffix.lower())
         if not candidate.is_file() or not fmt:
             continue
         result = subprocess.run([utils.get_ffmpeg_binary(), '-nostdin', '-v', 'error',
-            '-protocol_whitelist', 'file,pipe', '-format_whitelist', 'mov,wav,mp3,ogg,flac',
+            '-protocol_whitelist', 'file,pipe', '-format_whitelist', 'matroska,webm,mov,wav,mp3,ogg,flac',
             '-f', fmt, '-i', str(candidate), '-t', '0.04', '-threads', '1', '-f', 'null', '-'],
             capture_output=True, timeout=20)
         if result.returncode:
@@ -151,6 +154,10 @@ def _validate(task_id, audio_ref):
     for name in (al.DRAFT, al.ACTIVE):
         if al.file(task_id, name).exists():
             al.resolve_assets(task_id, al.load(task_id, gm.media_sha256(root / audio_ref), name))
+    saved_opencut = root / 'opencut' / 'project.json'
+    if saved_opencut.is_file():
+        from app.services import opencut
+        opencut.validate_saved(_json(saved_opencut), saved_opencut.parent)
     return params, duration
 
 
@@ -208,7 +215,8 @@ def export_project(task_id):
                     _references(_json(candidate), stage)
                 size = candidate.stat().st_size
                 total += size
-                records[name] = {'size': size, 'sha256': gm.media_sha256(candidate)}
+                records[name] = {'size': size, 'sha256': gm.media_sha256(candidate),
+                                 'modified_ns': before.get(name, (size, candidate.stat().st_mtime_ns))[1]}
             if total > MAX_TOTAL or len(records) > MAX_FILES:
                 raise ValueError('project exceeds archive limits')
             _write(stage / 'project.json', {'format': FORMAT, 'schema_version': VERSION,
@@ -257,7 +265,8 @@ def import_project(source):
                 if (info.is_dir() or stat.S_ISLNK(mode) or (stat.S_IFMT(mode) not in (0, stat.S_IFREG))
                         or info.flag_bits & 1 or (info.filename != 'project.json' and not _allowed(info.filename))):
                     raise ValueError('unsupported project archive entry')
-                if info.filename.endswith('.json') and info.file_size > MAX_JSON:
+                limit = 8 * 1024 * 1024 if info.filename == 'opencut/project.json' else MAX_JSON
+                if info.filename.endswith('.json') and info.file_size > limit:
                     raise ValueError('project metadata is too large')
             manifest = json.loads(archive.read('project.json'))
             if manifest.get('format') != FORMAT or manifest.get('schema_version') != VERSION:
@@ -274,6 +283,11 @@ def import_project(source):
                     shutil.copyfileobj(incoming, outgoing, 1024 * 1024)
                 if gm.media_sha256(destination) != record.get('sha256'):
                     raise ValueError(f'project file checksum failed: {name}')
+                modified = record.get('modified_ns')
+                if modified is not None:
+                    if type(modified) is not int or not 0 <= modified <= 2**63 - 1:
+                        raise ValueError('invalid project file timestamp')
+                    os.utime(destination, ns=(modified, modified))
         audio_ref = _name(manifest.get('audio'))
         _write(root / 'project_import.json', {'schema_version': 1, 'audio': audio_ref})
         params, duration = _validate(staging_id, audio_ref)

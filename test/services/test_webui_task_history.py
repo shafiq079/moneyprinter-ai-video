@@ -221,3 +221,15 @@ def test_restore_requirements_allow_replacing_upload_with_other_voice_modes():
             has_custom_audio=False,
             voice_mode=voice_mode,
         )
+
+
+def test_find_final_task_video_prefers_native_opencut_export(tmp_path):
+    (tmp_path / 'final-1.mp4').write_bytes(b'original')
+    exports = tmp_path / 'opencut' / 'exports'
+    exports.mkdir(parents=True)
+    completed = exports / ('a' * 32 + '.webm')
+    completed.write_bytes(b'finished native export')
+    (exports / ('.' + 'b' * 32 + '.mp4')).write_bytes(b'partial')
+    assert find_final_task_video(str(tmp_path)) == str(completed)
+    completed.unlink()
+    assert find_final_task_video(str(tmp_path)) == str(tmp_path / 'final-1.mp4')

@@ -65,3 +65,12 @@ re-export/re-import custom narration and frozen music. Negative checks cover
 checksums, versions, references, missing files, links, traversal, playlist media
 and size/count limits. Streamlit tests verify explicit preparation/download and
 that ordinary reruns never submit an import.
+
+
+On the owner-approved `opencut-editor` branch, archives additionally transport
+`opencut/project.json`, SHA-addressed native media and completed native exports.
+Native project metadata has an 8 MiB bound; the archive remains at most 512 MiB.
+This adds a payload to the version-1 envelope and keeps the original layer
+contracts. Reopen imported OpenCut drafts through Task Manager Edit. Installations
+on older development code do not understand this additional native payload;
+restore such archives with the OpenCut branch. See OPENCUT_EDITOR.md.

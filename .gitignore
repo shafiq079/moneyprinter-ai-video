@@ -45,3 +45,7 @@ htmlcov/
 
 # Claude Code 订阅令牌（docker compose 自动读取），禁止提交
 .env
+
+# Pinned OpenCut source/build and operator runtime
+/webui/opencut_frontend/upstream/
+/webui/opencut_frontend/dist/

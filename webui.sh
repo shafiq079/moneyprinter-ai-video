@@ -69,12 +69,10 @@ fi
 MPT_WEBUI_PORT="$SELECTED_WEBUI_PORT"
 
 echo "***** WebUI address: http://$MPT_WEBUI_HOST:$MPT_WEBUI_PORT *****"
-"$@" run "$CURRENT_DIR/webui/Main.py" \
-  --server.address="$MPT_WEBUI_HOST" \
-  --server.port="$MPT_WEBUI_PORT" \
-  --browser.serverAddress="$MPT_WEBUI_HOST" \
-  --browser.gatherUsageStats=False \
-  --client.toolbarMode=minimal \
-  --logger.hideWelcomeMessage=True \
-  --server.showEmailPrompt=False \
-  --server.enableCORS=True
+if [ -x "$CURRENT_DIR/.venv/bin/python" ]; then
+  exec "$CURRENT_DIR/.venv/bin/python" -m webui.opencut_server --host "$MPT_WEBUI_HOST" --port "$MPT_WEBUI_PORT"
+elif command -v uv >/dev/null 2>&1; then
+  exec uv run python -m webui.opencut_server --host "$MPT_WEBUI_HOST" --port "$MPT_WEBUI_PORT"
+else
+  exec python3 -m webui.opencut_server --host "$MPT_WEBUI_HOST" --port "$MPT_WEBUI_PORT"
+fi

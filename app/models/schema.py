@@ -359,6 +359,8 @@ class TaskArtifactPackageData(BaseModel):
     narration_mix: Optional[str] = None
     caption_edits: Optional[str] = None
     caption_track: Optional[str] = None
+    opencut_project: Optional[str] = None
+    opencut_exports: List[str] = Field(default_factory=list)
     audio_layers_draft: Optional[str] = None
     audio_layers_active: Optional[str] = None
     audio_base_music: Optional[str] = None

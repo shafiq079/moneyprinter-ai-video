@@ -305,6 +305,13 @@ def build_output_package(
                     package['audio_layer_assets'] = sorted(set(package.get('audio_layer_assets', []) + [ref]))
         except (OSError, ValueError, KeyError, TypeError):
             pass
+    native_project = _task_relative_existing_file(task_id, root / 'opencut' / 'project.json')
+    if native_project:
+        package['opencut_project'] = native_project
+    exported = [p for p in (root / 'opencut' / 'exports').glob('*')
+                if re.fullmatch(r'[a-f0-9]{32}\.(mp4|webm)', p.name) and p.is_file() and not p.is_symlink()]
+    if exported:
+        package['opencut_exports'] = [p.relative_to(root).as_posix() for p in sorted(exported, key=lambda p: p.stat().st_mtime, reverse=True)]
     return package
 
 
