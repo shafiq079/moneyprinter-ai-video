@@ -2,6 +2,18 @@
 
 Read this file first in every new AI or developer session. `docs/SRS.md` is the full product specification; `docs/MIGRATION_MAP.md` is the file-level porting decision. `docs/PRODUCT_VISION.md` preserves the owner's longer-term editable-project and publishing goals separately from implemented scope and unapproved technical proposals. `docs/CHATGPT_PROJECT_SETUP.md` contains the reusable ChatGPT Project handoff. Update this handoff with every accepted milestone. Local desktop Codex setup and two-machine sync instructions are in `AGENTS.md` and `docs/LOCAL_CODEX_SETUP.md`.
 
+## OpenCut promoted to development (26 October 2026)
+
+After confirming the forwarded UI worked, the owner explicitly requested
+promotion into `development`. It now includes OpenCut integration 0db7537 and
+WebSocket/restart fix 73ec257. Development is again the active implementation
+branch. Main remains unchanged. The opencut-editor branch is retained; earlier
+experiment-only branch instructions below are historical and superseded here.
+The previous custom-editor baseline remains available at df626ed in history,
+and AI/original tools remain accessible from the native editor. No new feature
+or renderer changes were made during promotion. Prior CPU/browser evidence is
+unchanged; platform CI was still running when this promotion was requested.
+
 ## Codespaces WebSocket/restart correction
 
 The operator's forwarded HTTPS page stopped at Streamlit's initial skeleton and
@@ -60,7 +72,7 @@ explicitly documented. This does not claim full CapCut feature parity.
 ## Canonical product and repository state
 
 - **Product base:** `harry0703/MoneyPrinterTurbo` `main`, commit `ad5496f1b729d1d7e361dd972015d26c08b0e052` (verified again on 26 September 2026). The local `upstream` remote points there. Vendor tag: `vendor/mpt-2026-09-26-ad5496f`.
-- **Branches:** `main` is the stable accepted product branch and now includes the completed CPU-tested AI-video and first factual-mode implementation; `development` is the sole active development branch and was fast-forwarded to the promotion merge before further work. Create no other branches. Commit ordinary changes on `development`, promote accepted milestones to `main` with a normal merge commit, then fast-forward `development` to that merge.
+- **Branches:** `main` is the stable accepted product branch and now includes the completed CPU-tested AI-video and first factual-mode implementation; `development` is the active implementation branch and now includes the owner-approved OpenCut integration. The explicitly authorized `opencut-editor` branch is retained for comparison. Create no additional branches. Commit ordinary changes on `development`, promote accepted milestones to `main` with a normal merge commit, then fast-forward `development` to that merge.
 - **Product remote:** `https://github.com/shafiq079/moneyprinter-ai-video`. This CPU hardening pass started at `development` commit `269d5c0202492608e2a1309c94afcf1650bea3fc`; the pinned original vendor commit remains `ad5496f1b729d1d7e361dd972015d26c08b0e052` and is preserved by the vendor tag. Use only the two product branches. `origin` points to this product repository and `upstream` points to `harry0703/MoneyPrinterTurbo`. Do not use the older `shafiq079/MoneyPrinterTurbo` fork for this product.
 - **Old prototype:** `shafiq079/content-factory` `main` at `a1760488aae68b8c1c1076a26720a14f4368088f` is read-only reference. Its Next.js UI, FastAPI project API, SQLite queue, timeline v7 and renderer are **not** the new application.
 - **Completed:** SRS conversion, upstream revalidation and migration decisions; M1 fake-provider foundation; M2/M3 Wan integration and operator surface; M4 Scene Director; LTX 2.5 Fast/DFR; Phase 5 scene iteration; render-only rerender, cancellation, cleanup, provenance/security hardening, true No-Voice local-AI rendering, portable local-AI output packages, per-GPU cross-process runtime serialization, persisted local-AI timing telemetry, local-AI final-output validation, structured local-AI observability, visual-only regeneration/audio-caption reuse regression coverage, final audio gain-control regression coverage, and recoverable final-validation failure classification. Real Wan/LTX inference and Phase 6 quality measurements require GPU hardware and remain deferred.

@@ -7,13 +7,15 @@ documentation relevant to the task (`docs/LOCAL_AI_VIDEO.md` or
 `docs/FACTUAL_MODE.md`). Treat the repository
 and current remote history as the source of truth if a previous chat differs.
 
-## OpenCut branch exception (owner approved 26 October 2026)
+## OpenCut promotion (owner approved 26 October 2026)
 
-The owner explicitly requested a third branch, `opencut-editor`, to integrate
-real OpenCut while keeping `development` as the previous-editor fallback.
-Work on `opencut-editor` for this integration. Do not merge into or modify
-`development`/`main` without a later instruction. This overrides the historical
-two-branch restriction below for this experiment only.
+The owner requested promotion of `opencut-editor` into `development` after
+confirming that the Codespaces connection worked. OpenCut is now the editor on
+`development`; continue ordinary implementation there. Keep `main` unchanged
+unless explicitly asked to promote it. The authorized `opencut-editor` branch
+is retained for comparison. The previous custom editor is preserved in history
+at `df626edd3022863723382d7fedf58882ae688629` and through the original-tools view.
+Do not create additional branches or force-push.
 
 ## Project rules
 

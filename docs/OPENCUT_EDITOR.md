@@ -2,9 +2,9 @@
 
 The owner explicitly approved the additional `opencut-editor` branch on
 26 October 2026. It starts at `development` commit
-`df626edd3022863723382d7fedf58882ae688629`. The former editor and generation
-pipeline remain unchanged on `development`; this experiment is not merged there
-or into `main`.
+`df626edd3022863723382d7fedf58882ae688629`. The owner subsequently requested promotion into `development` after confirming
+the forwarded UI worked. OpenCut is now available there; `main` remains unchanged.
+The pre-OpenCut editor is preserved in history at the baseline above.
 
 ## What is integrated
 
@@ -35,7 +35,7 @@ requirements. Then stop the running WebUI and run:
 
 ```sh
 git fetch origin
-git switch opencut-editor
+git switch development
 uv sync --frozen
 uv run python scripts/setup_opencut.py
 sh webui.sh
@@ -58,14 +58,18 @@ To return to the previous implementation:
 
 ```sh
 # Stop this WebUI first.
-git switch development
+git switch --detach df626edd3022863723382d7fedf58882ae688629
 uv sync --frozen
 sh webui.sh
 ```
 
+This rollback opens the earlier commit for running the previous UI. Return with
+`git switch development` before further development; do not commit in detached
+mode.
+
 Configuration and task assets are retained. OpenCut drafts/exports are separate
 from original generated files, so the old editor does not consume arbitrary
-OpenCut timeline changes. Returning to `opencut-editor` reopens its saved draft.
+OpenCut timeline changes. Returning to current `development` reopens its saved draft.
 
 ## Import and persistence contract
 

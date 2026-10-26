@@ -428,3 +428,13 @@ Do not continue building a parallel custom NLE by default. Keep original scene
 and narration-generation tools as explicit supporting controls. Evaluate this
 branch with the owner before merging it into development/main or expanding the
 stock/factual import contract. OpenCut beta features are not assumed complete.
+
+
+## OpenCut promotion accepted
+
+On 26 October 2026, after confirming the Codespaces UI worked, the owner asked
+for the completed OpenCut integration and connection fix to be pushed into
+development. Development is the active branch again. Main stays unchanged;
+opencut-editor is retained and the prior custom editor is available at df626ed
+in history. Continue the next approved milestone on development. This supersedes
+the earlier experimental-branch-only restriction above.
