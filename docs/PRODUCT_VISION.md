@@ -32,7 +32,7 @@ contracts, with no mandatory paid video-generation API.
 | Editable project | Keep independently editable scene clips, narration/audio, captions, prompts and metadata alongside the final MP4. A bad scene or a render-only change must not invalidate unrelated generated assets. | Dedicated editor, scene history, narration/caption editing, independent music/SFX and portable editable project archives are implemented for saved creative AI projects. Undo/redo and stock/factual editor expansion remain later. |
 | In-product editor | Provide a self-hosted, CapCut-like experience using open-source components. | Dedicated full-page Streamlit editor with an embedded offline React timeline. Scene, narration, caption and music/SFX edits plus project archive import/export are implemented. Advanced effects, undo/redo and stock/factual project support remain later. |
 | Scene timing | Let scene count/length follow narration and content instead of forcing every scene to the same fixed length. | Current planner uses measured audio duration, beat weights and a maximum provider-supported scene duration. Visual cut timing rebalances adjacent scenes at fixed total duration. Automatic uses the existing narration-aware planner within model limits; natural-length narration retiming is implemented. Verified semantic/word alignment remains deferred. |
-| Publishing | Complete video generation without an upload dependency. Initially defer upload automation and channel-growth tooling. | Existing optional Upload-Post integration offers YouTube, TikTok and Instagram; operator end-to-end publishing was not established in this development effort. Direct platform OAuth is not an approved replacement. |
+| Publishing | Generation remains independent. Owner approved YouTube account attachment and reviewed publishing/scheduling first; TikTok/Instagram and channel agents remain later. | YouTube Studio extends the existing Upload-Post integration with connection/profile controls, durable approval/delivery history, scheduling, cancellation and bounded safe retries. Live account publishing acceptance remains operator-owned; direct platform OAuth is not introduced. |
 | Factual content | Optional evidence/review mode must not burden creative generation. | User-supplied excerpts, safe one-page import, review-only workflow and structural claim checks exist. Automatic discovery/source authentication and real-model acceptance remain deferred. |
 | Deployment | Start with a working single-product workflow; add multi-user infrastructure or new frontend only when real needs justify it. | An embedded React timeline in the existing Streamlit product is now approved and implemented. Accounts, billing, distributed scheduling and a replacement frontend remain outside scope. |
 
@@ -437,3 +437,15 @@ Generation produces reviewable independent candidates; applying changes one
 selected occurrence, preserving the original generation project. Installed
 MoneyPrinter fonts extend the native Font Family field and initial caption import.
 See OPENCUT_EDITOR.md for the implemented contract and remaining import limits.
+
+## Approved YouTube-first publishing milestone (27 October 2026)
+
+The owner moved publishing/account attachment into current scope and clarified
+that YouTube comes first; TikTok and Instagram remain later. YouTube Studio now
+extends the existing Upload-Post provider with channel profiles/connection links,
+verified destination identity, frozen-video review, explicit approval, immediate
+or scheduled delivery, status/history, cancellation and bounded safe retry.
+Generation/editing remain independent; this is not approval for unattended video
+generation, analytics, trend research, multi-user accounts or direct Google OAuth.
+See YOUTUBE_PUBLISHING.md for operator setup, approval/queue contracts, provider
+schedule boundaries and tests. Work stays on opencut-editor until promoted.

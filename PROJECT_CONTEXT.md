@@ -2,6 +2,39 @@
 
 Read this file first in every new AI or developer session. `docs/SRS.md` is the full product specification; `docs/MIGRATION_MAP.md` is the file-level porting decision. `docs/PRODUCT_VISION.md` preserves the owner's longer-term editable-project and publishing goals separately from implemented scope and unapproved technical proposals. `docs/CHATGPT_PROJECT_SETUP.md` contains the reusable ChatGPT Project handoff. Update this handoff with every accepted milestone. Local desktop Codex setup and two-machine sync instructions are in `AGENTS.md` and `docs/LOCAL_CODEX_SETUP.md`.
 
+## YouTube-first connected accounts and reviewed publishing (27 October 2026)
+
+The owner approved moving account attachment and publishing automation into
+scope, then explicitly limited the first release to YouTube; TikTok/Instagram
+remain later. Work continues on `opencut-editor`, preserving development/main.
+
+Generator navigation now opens YouTube Studio (`?view=youtube`) outside the
+editor. The existing Upload-Post provider supplies hosted YouTube-only OAuth
+connection links, profile/channel lookup and reconnect/disconnect. Google tokens
+stay with the provider; local cached identity is bound to an API-key fingerprint.
+
+Compose selects a generated final or completed native MP4/WebM export and saves
+an immutable video snapshot with title/description/tags, visibility (private by
+default), explicit audience/content declarations and optional timezone-validated
+schedule. Review and approval are separate. Drafts/history survive restart.
+The bounded durable delivery queue uses cross-process locks, SHA/channel duplicate
+checks, provider idempotency and stable request IDs. Uncertain/interrupted HTTP
+operations reconcile status instead of re-uploading; provider-confirmed failures
+retry retained remote media. Accepted schedules live at Upload-Post. Generation,
+old optional auto-upload behavior, scene contracts and OpenCut are unchanged.
+See `docs/YOUTUBE_PUBLISHING.md`, including the boundary around externally changed
+provider profile destinations and the 24-hour provider idempotency window.
+
+Verification: **78 CPU tests and 10225 translation subtests passed**, covering
+the new provider/storage/UI contracts and existing publishing/audience/settings
+behavior. A real FFmpeg MP4 was decoded and frozen, its source removed, and the
+retained bytes submitted to a mocked scheduled-upload transport. The actual Main
+route, connection controls, separate approval, fresh-session draft recovery,
+unique review widgets and en/zh labels were exercised with Streamlit AppTest.
+Ruff, compilation, frozen dependency sync and whitespace checks passed. Real
+Google sign-in, live YouTube uploads/schedules, model inference and TTS were not
+performed; operator setup and explicit live actions remain necessary.
+
 ## Combined OpenCut clip controls and font milestone (27 October 2026)
 
 The owner approved both changes together on `opencut-editor`. The base native

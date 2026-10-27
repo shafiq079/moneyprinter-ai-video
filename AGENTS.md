@@ -13,7 +13,8 @@ The owner explicitly requested a third branch, `opencut-editor`, to integrate
 real OpenCut while keeping `development` as the previous-editor fallback.
 The base integration was later promoted to `development` at the owner's request.
 The combined native clip-controls/font milestone is authorized on `opencut-editor`
-(27 October 2026). Do not promote new changes to `development`/`main` without a
+(27 October 2026). The owner subsequently approved the YouTube-first connected
+accounts/reviewed publishing milestone on this working line. Do not promote new changes to `development`/`main` without a
 later instruction. This overrides the historical
 two-branch restriction below for this experiment only.
 

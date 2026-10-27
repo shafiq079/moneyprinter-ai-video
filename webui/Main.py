@@ -2661,6 +2661,7 @@ def _render_top_bar():
             width="stretch",
         ):
             _render_task_manager_entry()
+            st.link_button("YouTube Studio", "?view=youtube", icon=":material/video_library:")
 
             st.button(
                 tr("Settings"),
@@ -9606,6 +9607,10 @@ def _render_generation_controls(
 
 def _render_application():
     """按固定顺序渲染顶部栏、弹窗、生成表单和任务结果。"""
+    if st.query_params.get("view") == "youtube":
+        from webui.youtube_studio import render
+        render(tr)
+        return
     from webui.editor_workspace import render_editor, requested_task
     editor_task = requested_task()
     if editor_task:
