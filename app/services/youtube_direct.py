@@ -115,13 +115,22 @@ def _client(job):
     return client
 
 
-def prepare(task_id, relative, cid, value):
+def prepare(task_id, relative, cid, value, *, publishing_package=None, thumbnail=None):
     settings = options(value)
     record = accounts.credential_record(cid)
     channel = GoogleYouTube(cid).verify_channel(record["channel_id"])
     source = legacy.source_file(task_id, relative)
     before = source.stat()
     digest = legacy.gm.media_sha256(source)
+    from app.services import publishing_seo
+
+    preparation = publishing_seo.audit(
+        publishing_package, task_id, relative, "youtube", digest
+    )
+    if thumbnail:
+        if thumbnail.get("source_sha256") != digest:
+            raise ValueError("Thumbnail belongs to a changed video. Build it again.")
+        publishing_seo.thumbnail_file(thumbnail)
     with FileLock(legacy.root() / "catalog.lock"):
         if len(jobs()) >= 1000:
             raise ValueError("Direct delivery history reached its 1000-job limit.")
@@ -187,6 +196,8 @@ def prepare(task_id, relative, cid, value):
             "channel": channel,
             "app": record["app"],
             "options": settings,
+            "publishing_preparation": preparation,
+            "thumbnail": thumbnail,
             "offset": 0,
             "video_id": None,
             "events": [],
@@ -228,6 +239,10 @@ def approve(jid, reviewed=False):
             )
         _client(job)
         legacy.snapshot_file(job)
+        if job.get("thumbnail"):
+            from app.services import publishing_seo
+
+            publishing_seo.thumbnail_file(job["thumbnail"])
         _duplicate(job["sha256"], job["channel"]["channel_id"], jid)
         job["state"] = "queued"
         _write(job, "Approved for direct YouTube upload.")
@@ -361,6 +376,20 @@ def _sync(job, client, allow_release=False):
         status.get("privacyStatus") == expected["privacy"]
         and not expected["scheduled_at"]
     ) or match_schedule
+    if job.get("thumbnail") and not job.get("thumbnail_applied") and not allow_release:
+        job["state"] = "release_pending"
+        return _write(
+            job,
+            "Reviewed thumbnail is still pending. Resume this delivery to apply it before completing publication.",
+        )
+    if allow_release and job.get("thumbnail") and not job.get("thumbnail_applied"):
+        from app.services import publishing_seo
+
+        data = publishing_seo.thumbnail_file(job["thumbnail"]).read_bytes()
+        # Same-video thumbnail replacement is safe to repeat after a lost response.
+        set_thumbnail(job["connection_id"], job["video_id"], data, reviewed=True)
+        job["thumbnail_applied"] = True
+        _write(job, "Reviewed thumbnail accepted by YouTube.")
     if allow_release and not matches:
         if _release(job, client):
             return get(job["id"])
@@ -671,6 +700,8 @@ def set_thumbnail(cid, identity, data, reviewed=False):
     return client.request(
         "POST",
         "thumbnails/set",
-        params={"videoId": video_id(identity)},
-        files={"media": ("thumbnail", data, mime)},
+        thumbnail=True,
+        params={"videoId": video_id(identity), "uploadType": "media"},
+        headers={"Content-Type": mime},
+        data=data,
     )

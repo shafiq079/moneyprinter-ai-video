@@ -164,3 +164,9 @@ Primary implementation references:
   `apiconfig.py` and `session.py` for Page methods, fields, transfer protocol,
   API version and app-secret proof. Meta documentation pages were rate limited
   during implementation; no claim is made that those blocked pages were read.
+
+## AI preparation
+
+Create post now includes AI publishing copy, title alternatives and relevant
+hashtags using the configured LLM. See [AI_PUBLISHING.md](AI_PUBLISHING.md) for
+the exact workflow, platform-specific thumbnail support and review boundaries.

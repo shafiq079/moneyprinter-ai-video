@@ -270,6 +270,11 @@ def _compose(tr):
                 )
             )
         suffix = source["task_id"] + source["asset"]
+        from webui.publishing_seo import render as render_ai
+
+        package, _ = render_ai(
+            tr, source, "facebook", "meta_title:" + suffix, "meta_description:" + suffix
+        )
         with st.form("meta_compose"):
             title = st.text_input(
                 tr("Facebook title"),
@@ -314,6 +319,7 @@ def _compose(tr):
                         "scheduled_at": _when(timing) if timing else None,
                         "timezone": timing[2] if timing else "UTC",
                     },
+                    publishing_package=package,
                 )
                 st.session_state["meta_review"] = job["id"]
                 st.rerun()

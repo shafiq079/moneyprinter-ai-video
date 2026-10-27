@@ -255,6 +255,11 @@ def _review(jid, tr, prefix):
     st.video(str(legacy.snapshot_file(job)), width=360)
     st.write(job["channel"]["name"] + " · " + job["channel"]["channel_id"])
     st.json(job["options"])
+    if job.get("thumbnail"):
+        from app.services import publishing_seo
+
+        st.image(str(publishing_seo.thumbnail_file(job["thumbnail"])), width=400)
+        st.caption(tr("This thumbnail is included in your delivery approval."))
     st.caption(
         tr(
             "A scheduled publication goes public at the reviewed UTC time. Uploads begin privately; YouTube controls processing and publication eligibility."
@@ -303,6 +308,16 @@ def _compose(tr):
             key="social_delivery_mode",
         )
         suffix = source["task_id"] + source["asset"]
+        from webui.publishing_seo import render as render_ai
+
+        package, thumbnail = render_ai(
+            tr,
+            source,
+            "youtube",
+            "social_new:" + suffix + "title",
+            "social_new:" + suffix + "description",
+            "social_new:" + suffix + "tags",
+        )
         with st.form("social_compose"):
             value, when = _fields(
                 tr,
@@ -318,6 +333,8 @@ def _compose(tr):
                     source["asset"],
                     channel["id"],
                     _schedule(value, when),
+                    publishing_package=package,
+                    thumbnail=thumbnail,
                 )
                 st.session_state["social_review"] = job["id"]
                 st.rerun()

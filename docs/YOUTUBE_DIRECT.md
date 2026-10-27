@@ -216,3 +216,9 @@ Official contracts checked 27 October 2026:
 Social Dashboard now has a platform selector. Facebook uses direct Meta app
 setup and Page management, described in [FACEBOOK_DIRECT.md](FACEBOOK_DIRECT.md).
 Google grants and uploads are unchanged. Upload-Post remains legacy only.
+
+## AI preparation
+
+Create post now includes AI publishing copy, title alternatives and relevant
+hashtags using the configured LLM. See [AI_PUBLISHING.md](AI_PUBLISHING.md) for
+the exact workflow, platform-specific thumbnail support and review boundaries.

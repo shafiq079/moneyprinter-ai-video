@@ -2,6 +2,43 @@
 
 Read this file first in every new AI or developer session. `docs/SRS.md` is the full product specification; `docs/MIGRATION_MAP.md` is the file-level porting decision. `docs/PRODUCT_VISION.md` preserves the owner's longer-term editable-project and publishing goals separately from implemented scope and unapproved technical proposals. `docs/CHATGPT_PROJECT_SETUP.md` contains the reusable ChatGPT Project handoff. Update this handoff with every accepted milestone. Local desktop Codex setup and two-machine sync instructions are in `AGENTS.md` and `docs/LOCAL_CODEX_SETUP.md`.
 
+## AI publishing preparation (28 October 2026)
+
+The owner approved AI handling publishing copy instead of manual SEO entry.
+Social Dashboard Create post now has shared AI preparation for direct YouTube
+and Facebook. The existing configured LLM produces validated title alternatives,
+platform-specific descriptions, relevant hashtags, YouTube-only keyword tags,
+and thumbnail text/concepts from the saved script or an explicit updated summary.
+Generated copy fills the existing editable forms. The user still explicitly
+reviews audience/disclosures/visibility/timing and separately approves delivery.
+No new paid intermediary, app stack, dependency or OpenCut rebuild is introduced.
+
+Packages are encrypted under ignored storage/social/publishing-seo and bound to
+the platform, task/export, source and script fingerprints. Reload restores drafts
+without model calls; ordinary reruns preserve manual edits. Regeneration only
+replaces the saved package on success. Invalid/provider responses are explicit
+errors, not silent heuristic fallbacks. Model generation does not call TTS or
+video providers or post socially; existing legacy auto-upload is unchanged.
+
+YouTube can build an actual 1280×720 JPEG from a chosen video frame and editable
+AI overlay text, using installed fonts. The preview/hash is frozen with delivery
+approval. Same-ID thumbnail application precedes visibility/schedule changes;
+failed thumbnail acceptance remains pending for explicit resume, even for private
+uploads. Facebook uses description hashtags but its thumbnail concept is advisory
+because the uploader does not set a cover. No ranking guarantee, live keyword
+research, video understanding or AI-generated-image service is claimed.
+See docs/AI_PUBLISHING.md for workflow, storage, limits and recovery details.
+
+Verification: the final focused run passed 199 tests and 10225 translation
+subtests, including 25 new SEO/service/UI checks, direct/legacy publishing,
+audience/settings and OpenCut. An earlier run hit an intermittent existing
+WebSocket TestClient cleanup CancelledError; a baseline comparison and final
+complete rerun passed, without modifying gateway code or that test. Ruff,
+compileall, frozen sync, lock validation and whitespace checks passed. A real
+CPU video frame was decoded into the reviewed JPEG, and a mocked wire test
+verifies the corrected dedicated Google thumbnail media-upload URL/raw image
+body/content type. No real LLM/social API, GPU or TTS call was made.
+
 ## Direct Facebook authorization and Page publishing (28 October 2026)
 
 The owner approved the direct Facebook milestone on `opencut-editor`. Social

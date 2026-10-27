@@ -101,8 +101,15 @@ class GoogleYouTube:
                 accounts.update_credentials(self.connection_id, credentials)
         return credentials
 
-    def request(self, method, endpoint, *, upload=False, raw=False, **kwargs):
-        url = session_url(endpoint) if upload else BASE + endpoint
+    def request(
+        self, method, endpoint, *, upload=False, thumbnail=False, raw=False, **kwargs
+    ):
+        if thumbnail:
+            if upload or method != "POST" or endpoint != "thumbnails/set":
+                raise ValueError("Invalid YouTube thumbnail upload operation.")
+            url = "https://www.googleapis.com/upload/youtube/v3/thumbnails/set"
+        else:
+            url = session_url(endpoint) if upload else BASE + endpoint
         credentials = self._credentials()
         try:
             response = requests.request(
@@ -112,7 +119,7 @@ class GoogleYouTube:
                     "Authorization": "Bearer " + credentials.token,
                     **kwargs.pop("headers", {}),
                 },
-                timeout=(10, 90 if upload else 30),
+                timeout=(10, 90 if upload or thumbnail else 30),
                 allow_redirects=False,
                 **kwargs,
             )

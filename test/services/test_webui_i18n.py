@@ -22,6 +22,31 @@ PROVIDER_TIPS_PREFIXES = (
 # 避免把完全相同的品牌名复制十份，也避免长说明后续只更新部分语言。
 ENGLISH_FALLBACK_KEYS = frozenset(
     {
+        # AI publishing labels use English fallback in secondary locales.
+        'AI copy filled in below. Review it before preparing the delivery.',
+        'AI preparation runs only when requested. Reloading this page never calls the model or approves a post.',
+        'AI publishing preparation',
+        'Build thumbnail from video',
+        'Facebook uses the description and hashtags below. Thumbnail ideas are advisory; this uploader does not set a Facebook cover.',
+        'For edited OpenCut exports, supply an updated summary if the saved script no longer matches the video.',
+        'Generate AI publishing package',
+        'Include this thumbnail in the reviewed YouTube delivery',
+        'Leave blank to use the saved script. Include only what the finished video actually contains.',
+        'Main topic',
+        'Preparing publishing copy with AI...',
+        'Preview the text and choose an installed font that supports your language.',
+        'Publishing language',
+        'Suggested title',
+        'The video or saved script changed. Regenerate AI copy and review any text remaining in the form.',
+        'This thumbnail is included in your delivery approval.',
+        'Thumbnail font',
+        'Thumbnail frame time (seconds)',
+        'Thumbnail idea',
+        'Thumbnail overlay text',
+        'Use auto for the script language, or enter a language such as English or Urdu.',
+        'Use selected title and AI copy',
+        'Uses your configured LLM and saved script. Accurate titles, descriptions and hashtags help viewers understand the video; ranking is not guaranteed.',
+        'Video summary override (optional)',
         # Direct Facebook dashboard uses English fallback in secondary locales.
         'Approve direct Facebook delivery',
         'Attach selected Facebook Page',

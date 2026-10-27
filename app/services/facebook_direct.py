@@ -286,7 +286,7 @@ def _freeze(task_id, relative, settings):
         output.unlink(missing_ok=True)
 
 
-def prepare(task_id, relative, cid, value):
+def prepare(task_id, relative, cid, value, *, publishing_package=None):
     settings = options(value)
     record = accounts.credential_record(cid)
     page = FacebookPage(cid).verify_page(record["page_id"])
@@ -294,6 +294,11 @@ def prepare(task_id, relative, cid, value):
         if len(jobs()) >= 1000:
             raise ValueError("Facebook delivery history reached its 1000-job limit.")
         source_hash, digest, path = _freeze(task_id, relative, settings)
+        from app.services import publishing_seo
+
+        preparation = publishing_seo.audit(
+            publishing_package, task_id, relative, "facebook", source_hash
+        )
         _duplicate(source_hash, page["page_id"])
         job = {
             "id": uuid.uuid4().hex,
@@ -312,6 +317,7 @@ def prepare(task_id, relative, cid, value):
             "page": page,
             "app": record["app"],
             "options": settings,
+            "publishing_preparation": preparation,
             "video_id": None,
             "offset": 0,
             "events": [],

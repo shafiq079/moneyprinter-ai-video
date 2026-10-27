@@ -476,3 +476,14 @@ video/Reel uploads, native Meta scheduling, content editing/deletion, recovery
 and revocation. Legacy provider records remain accessible separately. No
 personal profile/group/Instagram/TikTok support, analytics or unattended
 generation is implied. See FACEBOOK_DIRECT.md. Work remains on opencut-editor.
+
+## Approved AI publishing preparation (28 October 2026)
+
+The owner approved automating metadata writing for both direct platforms. Shared
+script-grounded AI preparation fills titles, descriptions, hashtags and YouTube
+tags, with alternate titles and editable thumbnail suggestions. YouTube adds a
+reviewable CPU frame/text thumbnail, frozen and uploaded before release. Facebook
+cover selection remains outside its uploader. Durable encrypted drafts and source
+binding preserve review across reloads. Explicit publishing approval and audience/
+disclosure decisions remain. Ranking guarantees, live keyword metrics and
+unattended social posting are not implied. See AI_PUBLISHING.md.
