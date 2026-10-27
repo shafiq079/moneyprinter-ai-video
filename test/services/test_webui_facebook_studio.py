@@ -108,7 +108,7 @@ def test_missing_config_and_main_route(setup_facebook):
         str(Path(__file__).resolve().parents[2] / "webui" / "Main.py"),
         default_timeout=60,
     )
-    app.query_params["view"] = "facebook"
+    app.query_params["view"] = "facebook-legacy"
     app.run()
     assert not app.exception
     assert "Facebook Studio" in [e.value for e in app.title]

@@ -465,5 +465,14 @@ The owner rejected a mandatory intermediary account and approved direct Google
 OAuth plus an in-product Social Dashboard. YouTube account/content management,
 reviewed resumable uploads, direct scheduled publication, metadata/thumbnail
 changes and explicit deletion now use official Google APIs. Existing provider
-records stay separate; Facebook direct support is next, not assumed implemented.
+records stay separate; the later direct Facebook milestone is documented below.
 See YOUTUBE_DIRECT.md for operator configuration, security and acceptance gates.
+
+## Approved direct Facebook integration (28 October 2026)
+
+The owner approved direct Meta login and in-product Page management after direct
+YouTube. Social Dashboard now provides explicit Page attachment, reviewed Page
+video/Reel uploads, native Meta scheduling, content editing/deletion, recovery
+and revocation. Legacy provider records remain accessible separately. No
+personal profile/group/Instagram/TikTok support, analytics or unattended
+generation is implied. See FACEBOOK_DIRECT.md. Work remains on opencut-editor.

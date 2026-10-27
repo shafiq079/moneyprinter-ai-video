@@ -210,3 +210,9 @@ Official contracts checked 27 October 2026:
 - https://developers.google.com/youtube/data/reference/rest/v3/videos/delete
 - https://developers.google.com/youtube/data/reference/rest/v3/thumbnails/set
 - https://developers.google.com/youtube/data/guides/quota_and_compliance_audits
+
+## Facebook alongside YouTube
+
+Social Dashboard now has a platform selector. Facebook uses direct Meta app
+setup and Page management, described in [FACEBOOK_DIRECT.md](FACEBOOK_DIRECT.md).
+Google grants and uploads are unchanged. Upload-Post remains legacy only.

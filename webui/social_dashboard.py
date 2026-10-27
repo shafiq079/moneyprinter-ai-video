@@ -591,9 +591,28 @@ def render(tr):
         st.query_params.clear()
         st.rerun()
     st.title(tr("Social Dashboard"))
+    route = (
+        st.query_params.get("view", "social")
+        + ":"
+        + st.query_params.get("platform", "")
+    )
+    if st.session_state.get("social_platform_route") != route:
+        st.session_state["social_platform_route"] = route
+        st.session_state["social_platform"] = (
+            "Facebook"
+            if route.startswith("facebook:")
+            or st.query_params.get("platform") == "facebook"
+            else "YouTube"
+        )
+    platform = st.radio(
+        tr("Social platform"),
+        ["YouTube", "Facebook"],
+        horizontal=True,
+        key="social_platform",
+    )
     st.caption(
         tr(
-            "YouTube connects directly to Google. Facebook currently uses the separate legacy Upload-Post integration."
+            "YouTube connects directly to Google; Facebook Pages connect directly to Meta. Upload-Post is only used by legacy publishing."
         )
     )
     if config.app.get("upload_post_auto_upload"):
@@ -602,6 +621,11 @@ def render(tr):
                 "Legacy automatic cross-posting is enabled. Turn it off in Settings if you want all videos to use this reviewed workflow."
             )
         )
+    if platform == "Facebook":
+        from webui.facebook_direct_dashboard import render_panels
+
+        render_panels(tr)
+        return
     try:
         accounts.settings()  # Surface a lost encryption key without overwriting records.
         if accounts.configured():
@@ -632,6 +656,6 @@ def render(tr):
                 )
             )
             st.link_button(tr("Legacy YouTube publishing"), "?view=youtube-legacy")
-            st.link_button(tr("Legacy Facebook publishing"), "?view=facebook")
+            st.link_button(tr("Legacy Facebook publishing"), "?view=facebook-legacy")
     except ValueError as exc:
         _error(exc)

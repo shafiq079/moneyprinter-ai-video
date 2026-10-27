@@ -2,12 +2,61 @@
 
 Read this file first in every new AI or developer session. `docs/SRS.md` is the full product specification; `docs/MIGRATION_MAP.md` is the file-level porting decision. `docs/PRODUCT_VISION.md` preserves the owner's longer-term editable-project and publishing goals separately from implemented scope and unapproved technical proposals. `docs/CHATGPT_PROJECT_SETUP.md` contains the reusable ChatGPT Project handoff. Update this handoff with every accepted milestone. Local desktop Codex setup and two-machine sync instructions are in `AGENTS.md` and `docs/LOCAL_CODEX_SETUP.md`.
 
+## Direct Facebook authorization and Page publishing (28 October 2026)
+
+The owner approved the direct Facebook milestone on `opencut-editor`. Social
+Dashboard now switches between YouTube and Facebook; `?view=facebook` routes to
+its direct Meta panels. The generator Facebook shortcut opens the same dashboard.
+Meta app setup, browser-bound Facebook OAuth, permission/Page discovery and
+explicit Page attachment replace Upload-Post in the default Facebook workflow.
+YouTube and its encrypted grants remain independent.
+
+Content loads Page videos/Reels, reviews title/description changes with fresh
+ownership/revision checks and exact-ID permanent deletion. Create post freezes a
+completed video or retained OpenCut export for separate public-post approval.
+WebM converts locally to reviewed MP4, without TTS/GPU/generation. Page video
+uploads use graph-video start/transfer/finish ranges; Reels use validated rupload
+URLs and separate finish. Same-ID recovery and ambiguous-operation blocking
+avoid silently creating replacement uploads. Calendar / Queue restores drafts,
+tracks Meta state, reschedules and explicitly deletes confirmed unpublished
+uploads when cancelling. Local projects are retained.
+
+Application bounds: 512 MiB, one hour Page video, conservative Reels 4–60 sec,
+9:16/minimum 540×960/24–60 fps, 1000 records, bounded dedicated queue and schedules
+15 minutes–7 days ahead. These are application policy rather than claimed Meta
+maximums. A late schedule blocks publication; only a matching actual Meta
+schedule is reported accepted. No private-first Facebook semantics or exactly-once
+network guarantee is promised. Interrupted Reel transfers/publication are never
+blindly resent. Unknown initialization cannot be falsely cancelled.
+
+Meta secrets/flows/jobs are encrypted in ignored storage/social/facebook using
+the existing social encryption key. Account-wide disconnect blocks pending work,
+revokes the grant, clears its Page connections/history, retains local media and
+leaves YouTube alone. An expired token's local removal never claims confirmed
+revocation. The existing gateway serves both callbacks without access-log secrets.
+English/Chinese labels and secondary-locale English fallback are maintained.
+Legacy Facebook is now ?view=facebook-legacy; legacy records and optional automatic
+cross-posting remain separate and are never migrated/replayed automatically.
+
+See docs/FACEBOOK_DIRECT.md for Meta app setup, permissions, API transports,
+security, recovery and operator acceptance. No live Meta authorization/upload,
+App Review approval, production eligibility or GPU validation is claimed.
+TikTok/Instagram, analytics and unattended generation remain future scope.
+
+Verification: 171 focused tests and 10225 translation subtests passed, including
+YouTube, legacy publishing/settings and OpenCut regressions. After final malformed
+start-response protection and actual Main-route checks, all 35 Facebook
+service/dashboard tests passed again. Ruff, compileall, frozen dependency sync,
+lock validation and whitespace checks passed. Real CPU MP4 decoding and WebM
+conversion were verified against mocked Meta transports. No real social account
+was authorized and no remote content was uploaded, edited, scheduled or deleted.
+
 ## Direct YouTube authorization and Social Dashboard (27 October 2026)
 
 The owner clarified that social management must live inside MoneyPrinter, without
 an Upload-Post account. After official API/product research, the owner approved
 the complete direct YouTube milestone on `opencut-editor`. Development/main remain
-unchanged. Facebook direct integration and TikTok/Instagram are later milestones.
+unchanged. The later direct Facebook milestone is documented above; TikTok/Instagram remain later.
 
 The generator opens Social Dashboard (`?view=social`; `?view=youtube` aliases it).
 Accounts provides encrypted Google Web-client setup, Connect YouTube, hosted
@@ -41,7 +90,7 @@ clears selected local API-derived history, retains user-created video/project
 assets, invalidates pending callbacks and flags potentially shared Google grants
 for reconnection. This remains a trusted single-operator WebUI, not multi-user SaaS.
 Legacy Upload-Post records/interfaces remain separate at ?view=youtube-legacy and
-?view=facebook; they are never migrated or resent through Google. Generator,
+?view=facebook-legacy; they are never migrated or resent through Google. Generator,
 OpenCut, narration, scenes and old optional automatic cross-posting are preserved.
 
 See docs/YOUTUBE_DIRECT.md for Google setup, exact callbacks/forwarded ports,

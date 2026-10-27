@@ -1,4 +1,8 @@
-# Facebook Studio: Page videos and Reels
+# Legacy Facebook Studio: Page videos and Reels
+
+The default Facebook dashboard now uses direct Meta authorization. See
+[FACEBOOK_DIRECT.md](FACEBOOK_DIRECT.md). This document describes only the retained
+Upload-Post implementation at `?view=facebook-legacy`.
 
 Approved on 27 October 2026 on `opencut-editor`. Facebook joins YouTube through
 the existing Upload-Post integration. TikTok/Instagram, Stories, analytics and
@@ -12,7 +16,7 @@ unattended content generation remain outside this milestone.
    or set `UPLOAD_POST_API_KEY` in the server environment. Provider plan and
    account permissions apply. Legacy automatic cross-posting is independent;
    leave it disabled if every delivery should use explicit review.
-3. Open **Facebook Studio** in the generator navigation, or `?view=facebook`.
+3. Open **Social Dashboard → Legacy publishing → Legacy Facebook publishing**, or `?view=facebook-legacy`.
    **Pages** can refresh existing profiles, create a profile, and open a
    Facebook-only provider-hosted connection link. Complete Meta authorization
    yourself, return, and refresh. MoneyPrinter never requests your Facebook
