@@ -2,6 +2,67 @@
 
 Read this file first in every new AI or developer session. `docs/SRS.md` is the full product specification; `docs/MIGRATION_MAP.md` is the file-level porting decision. `docs/PRODUCT_VISION.md` preserves the owner's longer-term editable-project and publishing goals separately from implemented scope and unapproved technical proposals. `docs/CHATGPT_PROJECT_SETUP.md` contains the reusable ChatGPT Project handoff. Update this handoff with every accepted milestone. Local desktop Codex setup and two-machine sync instructions are in `AGENTS.md` and `docs/LOCAL_CODEX_SETUP.md`.
 
+## Direct YouTube authorization and Social Dashboard (27 October 2026)
+
+The owner clarified that social management must live inside MoneyPrinter, without
+an Upload-Post account. After official API/product research, the owner approved
+the complete direct YouTube milestone on `opencut-editor`. Development/main remain
+unchanged. Facebook direct integration and TikTok/Instagram are later milestones.
+
+The generator opens Social Dashboard (`?view=social`; `?view=youtube` aliases it).
+Accounts provides encrypted Google Web-client setup, Connect YouTube, hosted
+Google consent and callback, verified channel identity, reconnect and revocation.
+The existing same-origin gateway owns short-lived browser-bound OAuth state/PKCE
+and callback routes. No Google password or Upload-Post key is required. One Google
+Web application is configured by the operator; channel owners authorize it.
+
+Content lists existing channel videos through the uploads playlist, edits
+metadata/visibility with current ownership/ETag checks, preserves private schedules,
+sets validated thumbnails and explicitly deletes videos only after exact-ID
+confirmation. Create post freezes a completed final/native export before separate
+review/approval. Calendar / Queue restores drafts and tracks resumable bytes,
+processing, scheduled/public/private completion, pauses and unconfirmed outcomes.
+Forms remain outside timed status fragments. English/Chinese labels are included.
+
+All uploads start private. Resumable URLs/offsets and returned video IDs persist
+before release changes. A restart reconciles Google's committed bytes; uncertain
+initialization/expired sessions never silently start another video. Scheduled
+public release uses YouTube's publishAt after upload; accepted schedules execute
+at YouTube even while MoneyPrinter is stopped. Passed times stay private until
+explicitly rescheduled. Remote cancellation rechecks removal of the schedule and
+keeps the video private; permanent deletion is separate. Limits remain 512 MiB,
+one hour, 1000 records and a bounded dedicated queue. Exactly-once publication is
+not claimed across network failures or external platform actions.
+
+Google settings, grants, OAuth transactions and jobs are encrypted in ignored
+storage/social/youtube; the key is an operator secret or local 0600 key file.
+No OAuth/session credentials enter task archives or logs. Disconnect revokes and
+clears selected local API-derived history, retains user-created video/project
+assets, invalidates pending callbacks and flags potentially shared Google grants
+for reconnection. This remains a trusted single-operator WebUI, not multi-user SaaS.
+Legacy Upload-Post records/interfaces remain separate at ?view=youtube-legacy and
+?view=facebook; they are never migrated or resent through Google. Generator,
+OpenCut, narration, scenes and old optional automatic cross-posting are preserved.
+
+See docs/YOUTUBE_DIRECT.md for Google setup, exact callbacks/forwarded ports,
+Testing-token lifetime, verification/audit uncertainty, quota and data boundaries.
+The pinned OAuth library is new: run uv sync --frozen before launching. No OpenCut
+rebuild is needed for this Python-only milestone. Real Google sign-in, private
+upload and scheduled-public acceptance require the operator's Google app/channel;
+CPU mocks do not establish project verification or live publishing eligibility.
+
+Verification: **139 focused CPU tests and 10225 translation subtests passed**,
+including old publishing/settings and OpenCut regressions. After the final storage
+worker hardening, all **30 direct-account/service/dashboard tests passed again**.
+The proof includes real OAuth URL/PKCE generation, real gateway cookie callbacks
+with mocked token exchange, encrypted credential/session persistence, interrupted
+byte ranges, missed schedules, lost publication responses, channel isolation,
+revocation, ETag/field preservation and decoded real MP4 upload orchestration to
+mocked Google transport. Actual Main routes and fresh-session review are covered
+by Streamlit AppTest. Ruff, compileall, frozen dependency sync, lock validation
+and whitespace checks passed. Live Google authorization/uploads/public schedules
+remain operator acceptance; no GPU, TTS or paid publishing calls were made.
+
 ## Facebook Pages and Reels publishing (27 October 2026)
 
 The owner approved Facebook as the next publishing platform on `opencut-editor`.

@@ -22,3 +22,6 @@ audioop-lts==0.2.2; python_version >= "3.13"
 litellm==1.86.2
 fonttools==4.61.1
 filelock==3.25.2
+google-auth-oauthlib==1.5.0
+cryptography==49.0.0
+google-auth==2.55.2

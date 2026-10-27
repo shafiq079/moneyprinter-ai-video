@@ -1,4 +1,8 @@
-# YouTube Studio: connected channels and reviewed publishing
+# Legacy Upload-Post YouTube publishing
+
+Direct YouTube is now the default Social Dashboard. See [YOUTUBE_DIRECT.md](YOUTUBE_DIRECT.md).
+This document describes preserved legacy records at `?view=youtube-legacy`; do
+not configure Upload-Post to use the new direct Google workflow.
 
 The owner approved YouTube first on 27 October 2026. TikTok/Instagram and
 continuous generation/channel agents remain later milestones. This extends the
@@ -12,7 +16,7 @@ Google password collection, a replacement task system or a new editor.
    environment instead of the ignored operator config file. Your Upload-Post
    account/plan limits apply. Legacy automatic upload is a separate setting; leave
    it off when using this reviewed workflow.
-2. Open **YouTube Studio** in the generator's top navigation (or `?view=youtube`).
+2. Open **YouTube Studio** in the generator's top navigation (legacy route `?view=youtube-legacy`).
    In **Channels**, refresh existing profiles or create one with a permanent
    identifier and a friendly label. Each profile connects one YouTube channel.
 3. Choose **Connect / reconnect YouTube**, then **Continue to YouTube sign-in**.

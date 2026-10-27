@@ -108,6 +108,11 @@ def create_app(streamlit_port=None, public_port=None):
         from starlette.responses import JSONResponse
         return JSONResponse({'detail': str(exc)}, status_code=400)
 
+    # OAuth routes precede the Streamlit catch-all. No credential-bearing
+    # callback parameters are proxied into Streamlit or returned in redirects.
+    from webui.youtube_oauth import install_routes
+    install_routes(app)
+
     @app.get('/opencut/api/session')
     async def session(task_id=Depends(authenticated)):
         return await asyncio.to_thread(bridge.session, task_id)
@@ -334,7 +339,7 @@ def main():
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0))
         internal_port = sock.getsockname()[1]
-    env = {**os.environ, 'MPT_OPENCUT': '1'}
+    env = {**os.environ, 'MPT_OPENCUT': '1', 'MPT_PUBLIC_PORT': str(args.port)}
     process = subprocess.Popen([sys.executable, '-m', 'streamlit', 'run', str(Path(__file__).parent / 'Main.py'),
         '--server.address=127.0.0.1', f'--server.port={internal_port}', f'--browser.serverPort={args.port}',
         '--browser.gatherUsageStats=False', '--server.headless=True'], env=env)
@@ -352,7 +357,7 @@ def main():
         else:
             raise RuntimeError('Streamlit startup timed out')
         uvicorn.run(create_app(internal_port, args.port), host=args.host, port=args.port,
-                    log_level='warning', timeout_graceful_shutdown=5)
+                    log_level='warning', access_log=False, timeout_graceful_shutdown=5)
     finally:
         process.terminate()
         with suppress(subprocess.TimeoutExpired):

@@ -15,7 +15,9 @@ The base integration was later promoted to `development` at the owner's request.
 The combined native clip-controls/font milestone is authorized on `opencut-editor`
 (27 October 2026). The owner subsequently approved the YouTube-first connected
 accounts/reviewed publishing milestone on this working line, followed by the
-Facebook Page/Reel publishing extension. Do not promote new changes to `development`/`main` without a
+Facebook Page/Reel publishing extension. The owner then approved replacing the
+default YouTube integration with direct Google OAuth and in-product account/
+content management on the same branch. Do not promote new changes to `development`/`main` without a
 later instruction. This overrides the historical
 two-branch restriction below for this experiment only.
 

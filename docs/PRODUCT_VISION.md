@@ -32,7 +32,7 @@ contracts, with no mandatory paid video-generation API.
 | Editable project | Keep independently editable scene clips, narration/audio, captions, prompts and metadata alongside the final MP4. A bad scene or a render-only change must not invalidate unrelated generated assets. | Dedicated editor, scene history, narration/caption editing, independent music/SFX and portable editable project archives are implemented for saved creative AI projects. Undo/redo and stock/factual editor expansion remain later. |
 | In-product editor | Provide a self-hosted, CapCut-like experience using open-source components. | Dedicated full-page Streamlit editor with an embedded offline React timeline. Scene, narration, caption and music/SFX edits plus project archive import/export are implemented. Advanced effects, undo/redo and stock/factual project support remain later. |
 | Scene timing | Let scene count/length follow narration and content instead of forcing every scene to the same fixed length. | Current planner uses measured audio duration, beat weights and a maximum provider-supported scene duration. Visual cut timing rebalances adjacent scenes at fixed total duration. Automatic uses the existing narration-aware planner within model limits; natural-length narration retiming is implemented. Verified semantic/word alignment remains deferred. |
-| Publishing | Generation remains independent. Owner approved YouTube first, then Facebook Pages/Reels with reviewed publishing/scheduling; TikTok/Instagram and channel agents remain later. | YouTube Studio and Facebook Studio extend the existing Upload-Post integration with connection/profile controls, durable approval/delivery history, scheduling, cancellation and bounded safe retries. Live account publishing acceptance remains operator-owned; direct platform OAuth is not introduced. |
+| Publishing | Generation remains independent. Owner approved YouTube first, then Facebook Pages/Reels with reviewed publishing/scheduling; TikTok/Instagram and channel agents remain later. | Social Dashboard now connects YouTube directly to Google and manages content, reviewed resumable uploads and YouTube-owned schedules. Facebook remains on legacy Upload-Post until its direct milestone. Live acceptance and app verification remain operator-owned. |
 | Factual content | Optional evidence/review mode must not burden creative generation. | User-supplied excerpts, safe one-page import, review-only workflow and structural claim checks exist. Automatic discovery/source authentication and real-model acceptance remain deferred. |
 | Deployment | Start with a working single-product workflow; add multi-user infrastructure or new frontend only when real needs justify it. | An embedded React timeline in the existing Streamlit product is now approved and implemented. Accounts, billing, distributed scheduling and a replacement frontend remain outside scope. |
 
@@ -458,3 +458,12 @@ schedules, history and safe retries with YouTube. Personal profiles/groups,
 Stories, TikTok/Instagram, analytics and continuous generation agents remain
 outside this milestone. Provider pin precedence and external destination-change
 boundaries are explicit. See FACEBOOK_PUBLISHING.md. Work stays on opencut-editor.
+
+## Approved direct YouTube integration (27 October 2026)
+
+The owner rejected a mandatory intermediary account and approved direct Google
+OAuth plus an in-product Social Dashboard. YouTube account/content management,
+reviewed resumable uploads, direct scheduled publication, metadata/thumbnail
+changes and explicit deletion now use official Google APIs. Existing provider
+records stay separate; Facebook direct support is next, not assumed implemented.
+See YOUTUBE_DIRECT.md for operator configuration, security and acceptance gates.

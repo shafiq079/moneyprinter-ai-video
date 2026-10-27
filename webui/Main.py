@@ -2661,7 +2661,7 @@ def _render_top_bar():
             width="stretch",
         ):
             _render_task_manager_entry()
-            st.link_button("YouTube Studio", "?view=youtube", icon=":material/video_library:")
+            st.link_button(tr("Social Dashboard"), "?view=social", icon=":material/video_library:")
             st.link_button("Facebook Studio", "?view=facebook", icon=":material/public:")
 
             st.button(
@@ -9613,7 +9613,12 @@ def _render_application():
 
         render(tr)
         return
-    if st.query_params.get("view") == "youtube":
+    if st.query_params.get("view") in {"social", "youtube"}:
+        from webui.social_dashboard import render
+
+        render(tr)
+        return
+    if st.query_params.get("view") == "youtube-legacy":
         from webui.youtube_studio import render
         render(tr)
         return

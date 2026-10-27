@@ -103,7 +103,7 @@ def test_main_application_routes_to_youtube_studio(setup_studio):
         str(Path(__file__).resolve().parents[2] / "webui" / "Main.py"),
         default_timeout=60,
     )
-    app.query_params["view"] = "youtube"
+    app.query_params["view"] = "youtube-legacy"
     app.run()
     assert not app.exception
     assert "YouTube Studio" in [x.value for x in app.title]
