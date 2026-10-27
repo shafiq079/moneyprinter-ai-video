@@ -1,4 +1,4 @@
-"""YouTube-only adapter over the existing Upload-Post provider.
+"""Upload-Post transport and YouTube adapter, also reused by Facebook.
 
 OAuth credentials stay with Upload-Post. Only explicit account actions and
 approved delivery jobs call this adapter; render/generation paths are unchanged.
@@ -37,6 +37,9 @@ class ProviderError(ValueError):
 
 
 class YouTubePublisher:
+    PLATFORM = "youtube"
+    BRAND = "YouTube"
+    POST_HOSTS = {"youtube.com", "www.youtube.com", "youtu.be"}
     BASE = UploadPostService.API_BASE
 
     def __init__(self, key=None):
@@ -157,9 +160,9 @@ class YouTubePublisher:
             "/api/uploadposts/users/generate-jwt",
             json={
                 "username": self.profile_name(profile),
-                "platforms": ["youtube"],
+                "platforms": [self.PLATFORM],
                 "show_calendar": False,
-                "connect_title": "Connect your YouTube channel",
+                "connect_title": "Connect your " + self.BRAND + " account",
             },
         )
         url = data.get("access_url", "")
@@ -180,11 +183,11 @@ class YouTubePublisher:
             "/api/uploadposts/users/social",
             json={
                 "profile_username": self.profile_name(profile),
-                "social_platform": "youtube",
+                "social_platform": self.PLATFORM,
             },
         )
 
-    def upload(self, job, path):
+    def upload_fields(self, job):
         options = job["options"]
         data = [
             ("user", job["channel"]["profile"]),
@@ -205,6 +208,10 @@ class YouTubePublisher:
             data.extend(
                 [("scheduled_date", options["scheduled_at"]), ("timezone", "UTC")]
             )
+        return data
+
+    def upload(self, job, path):
+        data = self.upload_fields(job)
         with path.open("rb") as stream:
             return self.request(
                 "POST",
@@ -237,7 +244,7 @@ class YouTubePublisher:
                 params={
                     "external_id": job["id"],
                     "profile_username": job["channel"]["profile"],
-                    "platform": "youtube",
+                    "platform": self.PLATFORM,
                     "limit": 10,
                 },
             )
@@ -246,7 +253,7 @@ class YouTubePublisher:
                     isinstance(row, dict)
                     and row.get("external_id") == job["id"]
                     and row.get("profile_username") == job["channel"]["profile"]
-                    and row.get("platform") == "youtube"
+                    and row.get("platform") == self.PLATFORM
                     and type(row.get("success")) is bool
                 ):
                     return {

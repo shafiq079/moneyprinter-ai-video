@@ -2,6 +2,41 @@
 
 Read this file first in every new AI or developer session. `docs/SRS.md` is the full product specification; `docs/MIGRATION_MAP.md` is the file-level porting decision. `docs/PRODUCT_VISION.md` preserves the owner's longer-term editable-project and publishing goals separately from implemented scope and unapproved technical proposals. `docs/CHATGPT_PROJECT_SETUP.md` contains the reusable ChatGPT Project handoff. Update this handoff with every accepted milestone. Local desktop Codex setup and two-machine sync instructions are in `AGENTS.md` and `docs/LOCAL_CODEX_SETUP.md`.
 
+## Facebook Pages and Reels publishing (27 October 2026)
+
+The owner approved Facebook as the next publishing platform on `opencut-editor`.
+Facebook Studio (`?view=facebook`) adds Facebook-only hosted connection and
+platform-specific disconnect, profile-scoped Page discovery, explicit Page
+selection, Page video/Reel metadata and AI-label controls, frozen review,
+approval, scheduling and reload-safe history. TikTok/Instagram remain later.
+
+The existing YouTube durable delivery service now handles platform-tagged jobs;
+legacy jobs without a platform remain YouTube. Each studio filters its history,
+while one shared worker resumes approved deliveries for either platform.
+Duplicate protection includes platform and destination, permitting deliberate
+cross-platform publishing without same-Page duplicates. Uploads/results/history
+reconciliation stay platform-specific; unknown outcomes never blindly reupload.
+YouTube generation, editor and legacy optional cross-posting behavior remain.
+
+Facebook Page ID and connected account identity are checked at prepare, approval,
+dispatch and retry. The provider's Page pin overrides request Page ID: conflicting
+pins block, available choices respect pins, and the app never clears pins.
+External profile/pin changes during dispatch or after provider schedule acceptance
+remain outside local locking; use dedicated profiles. Only Pages are supported,
+not personal profiles/groups. Page posts are public and explicitly reviewed.
+Reels have provider API format preflight; Page videos retain existing application
+media limits. See `docs/FACEBOOK_PUBLISHING.md` for setup and exact boundaries.
+
+Verification: all **97 focused test cases passed across the final runs**, plus
+**10225 translation subtests**. The broad run had 95 passes and two existing
+settings-test timeouts; a fresh diagnostic run passed all seven settings tests
+without changes. Facebook coverage includes actual Main routing, separate
+review/approval and recovery, profile-scoped pin checks, cross-platform history
+and duplicate isolation, and a real 540×960/24 fps Reel frozen/decoded then
+submitted through mocked multipart scheduling/cancellation. Ruff, compileall,
+frozen dependency sync and whitespace checks passed. No live Meta sign-in,
+Facebook post/scheduled execution, GPU inference or TTS was performed.
+
 ## YouTube-first connected accounts and reviewed publishing (27 October 2026)
 
 The owner approved moving account attachment and publishing automation into

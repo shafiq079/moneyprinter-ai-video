@@ -108,7 +108,8 @@ This is an operator-trusted deployment, matching the existing WebUI account mode
 
 The original optional cross-posting settings, service, API and generation pipeline
 remain available. Their independently configured auto-upload behavior is not
-silently rewritten. This YouTube-only studio always sends `platform[]=youtube`;
+silently rewritten. Facebook is now available separately in Facebook Studio; see FACEBOOK_PUBLISHING.md.
+Historical jobs without a platform field remain YouTube. This YouTube-only studio always sends `platform[]=youtube`;
 it cannot accidentally inherit legacy TikTok/Instagram destinations.
 
 CPU tests mock provider transport and cover profile/link scoping, credentials,

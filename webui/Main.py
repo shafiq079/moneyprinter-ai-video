@@ -2662,6 +2662,7 @@ def _render_top_bar():
         ):
             _render_task_manager_entry()
             st.link_button("YouTube Studio", "?view=youtube", icon=":material/video_library:")
+            st.link_button("Facebook Studio", "?view=facebook", icon=":material/public:")
 
             st.button(
                 tr("Settings"),
@@ -9607,6 +9608,11 @@ def _render_generation_controls(
 
 def _render_application():
     """按固定顺序渲染顶部栏、弹窗、生成表单和任务结果。"""
+    if st.query_params.get("view") == "facebook":
+        from webui.facebook_studio import render
+
+        render(tr)
+        return
     if st.query_params.get("view") == "youtube":
         from webui.youtube_studio import render
         render(tr)

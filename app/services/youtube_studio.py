@@ -1,4 +1,6 @@
-"""Reviewed, durable YouTube delivery jobs; independent from video generation.
+"""Shared reviewed YouTube/Facebook jobs; independent from video generation.
+
+The historical module name and default API remain compatible with YouTube jobs.
 
 The provider owns accepted schedules. Local immutable snapshots, durable state,
 OS leases and provider idempotency prevent reruns/restarts from reposting media.
@@ -25,6 +27,7 @@ from loguru import logger
 
 from app.services import generation_manifest as gm, scene_planner, video
 from app.services.youtube_publisher import ProviderError, YouTubePublisher, publisher
+from app.services.facebook_publisher import FacebookPublisher
 from app.utils import utils
 
 UTC = timezone.utc
@@ -88,11 +91,13 @@ def _write(job, message=None):
     return job
 
 
-def jobs():
+def jobs(platform="youtube"):
     records = []
     for target in (root() / "jobs").glob("*.json"):
         try:
-            records.append(get(target.stem))
+            job = get(target.stem)
+            if platform is None or job.get("platform", "youtube") == platform:
+                records.append(job)
         except (ValueError, OSError):
             continue
     return sorted(records, key=lambda j: j["created_at"], reverse=True)
@@ -191,7 +196,11 @@ def scheduled_utc(local_time, zone):
     return a.astimezone(UTC).isoformat()
 
 
-def options(value):
+def options(value, platform="youtube"):
+    if platform == "facebook":
+        return facebook_options(value)
+    if platform != "youtube":
+        raise ValueError("Unsupported publishing platform.")
     if not isinstance(value, dict):
         raise ValueError("Invalid YouTube settings.")
     if not isinstance(value.get("title"), str):
@@ -225,19 +234,7 @@ def options(value):
             raise ValueError(
                 "Review the audience and content declarations before continuing."
             )
-    scheduled_at = value.get("scheduled_at") or None
-    if scheduled_at:
-        try:
-            moment = datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))
-        except (ValueError, TypeError, AttributeError) as exc:
-            raise ValueError("Invalid scheduled time.") from exc
-        if moment.tzinfo is None or not _now() + timedelta(
-            minutes=2
-        ) <= moment.astimezone(UTC) <= _now() + timedelta(days=365):
-            raise ValueError(
-                "Schedule at least two minutes ahead and within the next 365 days."
-            )
-        scheduled_at = moment.astimezone(UTC).isoformat()
+    scheduled_at = _schedule(value)
     return {
         "title": title,
         "description": description,
@@ -251,8 +248,66 @@ def options(value):
     }
 
 
-def _client(job=None):
-    client = YouTubePublisher(publisher.api_key)
+def _schedule(value):
+    scheduled_at = value.get("scheduled_at") or None
+    if scheduled_at:
+        try:
+            moment = datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ValueError("Invalid scheduled time.") from exc
+        if moment.tzinfo is None or not _now() + timedelta(
+            minutes=2
+        ) <= moment.astimezone(UTC) <= _now() + timedelta(days=365):
+            raise ValueError(
+                "Schedule at least two minutes ahead and within the next 365 days."
+            )
+        scheduled_at = moment.astimezone(UTC).isoformat()
+    return scheduled_at
+
+
+def facebook_options(value):
+    if not isinstance(value, dict):
+        raise ValueError("Invalid Facebook settings.")
+    title, description = value.get("title"), value.get("description", "")
+    if (
+        not isinstance(title, str)
+        or not title.strip()
+        or len(title) > 100
+        or any(c in title for c in "\n\r")
+    ):
+        raise ValueError(
+            "Enter a Facebook title of 1–100 characters without line breaks."
+        )
+    if not isinstance(description, str) or len(description) > 5000:
+        raise ValueError("Facebook description must contain at most 5000 characters.")
+    if value.get("media_type") not in {"VIDEO", "REELS"}:
+        raise ValueError("Choose a Page video or Reel.")
+    if type(value.get("synthetic")) is not bool:
+        raise ValueError("Review the AI-generated content declaration.")
+    return {
+        "title": title.strip(),
+        "description": description,
+        "media_type": value["media_type"],
+        "synthetic": value["synthetic"],
+        "scheduled_at": _schedule(value),
+        "timezone": str(value.get("timezone") or "UTC")[:80],
+    }
+
+
+def _platform(job):
+    platform = job.get("platform", "youtube")
+    if platform not in {"youtube", "facebook"}:
+        raise ValueError("Unsupported publishing platform.")
+    return platform
+
+
+def _client(job=None, platform="youtube"):
+    platform = _platform(job) if job else platform
+    if platform not in {"youtube", "facebook"}:
+        raise ValueError("Unsupported publishing platform.")
+    client = (FacebookPublisher if platform == "facebook" else YouTubePublisher)(
+        publisher.api_key
+    )
     if not client.configured:
         raise ValueError("Enable Upload-Post and configure its API key first.")
     if job and client.credential_id != job["credential_id"]:
@@ -263,36 +318,50 @@ def _client(job=None):
 
 
 def _channel(client, job):
-    channel = client.get_channel(job["channel"]["profile"])
+    channel = (
+        client.get_channel(job["channel"]["profile"], job["channel"]["channel_id"])
+        if _platform(job) == "facebook"
+        else client.get_channel(job["channel"]["profile"])
+    )
     if not channel["connected"] or channel["reauth_required"]:
-        raise ValueError("Reconnect the selected YouTube channel before continuing.")
-    if channel["channel_id"] != job["channel"]["channel_id"]:
+        raise ValueError("Reconnect the selected publishing account before continuing.")
+    if channel["channel_id"] != job["channel"]["channel_id"] or (
+        _platform(job) == "facebook"
+        and channel["account_id"] != job["channel"]["account_id"]
+    ):
         raise ValueError(
             "The profile now points to another channel. Prepare and review a new post."
         )
     return channel
 
 
-def prepare(task_id, relative, profile, value):
-    client = _client()
-    settings = options(value)
-    channel = client.get_channel(profile)
+def prepare(task_id, relative, profile, value, *, platform="youtube", page_id=None):
+    client = _client(platform=platform)
+    settings = options(value, platform)
+    channel = (
+        client.get_channel(profile, page_id)
+        if platform == "facebook"
+        else client.get_channel(profile)
+    )
+    if platform == "facebook" and not page_id:
+        raise ValueError("Select a Facebook Page explicitly.")
     if not channel["connected"] or channel["reauth_required"]:
-        raise ValueError("Connect a YouTube channel before preparing a post.")
+        raise ValueError("Connect a publishing account before preparing a post.")
     source = source_file(task_id, relative)
     # Freeze bytes before review, so later editor exports cannot change approval.
     before = source.stat()
     digest = gm.media_sha256(source)
     destination = root() / "assets" / (digest + source.suffix.lower())
     with FileLock(root() / "catalog.lock"):
-        existing = jobs()
+        existing = jobs(None)
         if len(existing) >= 1000:
             raise ValueError("Publishing history reached its 1000-job limit.")
         duplicate = next(
             (
                 j
                 for j in existing
-                if j["sha256"] == digest
+                if j.get("platform", "youtube") == platform
+                and j["sha256"] == digest
                 and j["channel"]["channel_id"] == channel["channel_id"]
                 and j["state"] not in {"draft", "cancelled"}
             ),
@@ -324,6 +393,18 @@ def prepare(task_id, relative, profile, value):
                     or min(clip.size) <= 0
                 ):
                     raise ValueError("Video is invalid or exceeds one hour.")
+                if platform == "facebook" and settings["media_type"] == "REELS":
+                    width, height = clip.size
+                    if not (
+                        3 <= clip.duration <= 90
+                        and width >= 540
+                        and height >= 960
+                        and abs(width / height - 9 / 16) <= 0.015
+                        and 24 <= clip.fps <= 60
+                    ):
+                        raise ValueError(
+                            "Reels require 3–90 seconds, 9:16, at least 540×960 and 24–60 fps. Choose Page video or re-export."
+                        )
                 clip.get_frame(0)
             except ValueError:
                 raise
@@ -340,6 +421,7 @@ def prepare(task_id, relative, profile, value):
             temporary.unlink(missing_ok=True)
         job = {
             "id": uuid.uuid4().hex,
+            "platform": platform,
             "state": "draft",
             "created_at": _stamp(),
             "task_id": task_id,
@@ -388,16 +470,17 @@ def approve(job_id, *, reviewed=False):
             job = get(job_id)
             if job["state"] != "draft":
                 raise ValueError("This post is already submitted or cancelled.")
-            options(job["options"])
+            options(job["options"], _platform(job))
             client = _client(job)
             _channel(client, job)
             snapshot_file(job)
             if any(
                 j["id"] != job_id
+                and j.get("platform", "youtube") == _platform(job)
                 and j["sha256"] == job["sha256"]
                 and j["channel"]["channel_id"] == job["channel"]["channel_id"]
                 and j["state"] not in {"draft", "cancelled"}
-                for j in jobs()
+                for j in jobs(None)
             ):
                 raise ValueError(
                     "Another delivery already exists for this video and channel."
@@ -410,6 +493,7 @@ def approve(job_id, *, reviewed=False):
 
 
 def _apply_result(job, data):
+    brand = "Facebook" if _platform(job) == "facebook" else "YouTube"
     provider_id = data.get("job_id")
     if isinstance(provider_id, str) and 0 < len(provider_id) <= 200:
         job["provider_job_id"] = provider_id
@@ -424,7 +508,11 @@ def _apply_result(job, data):
     if not isinstance(results, list):
         results = []
     result = next(
-        (r for r in results if isinstance(r, dict) and r.get("platform") == "youtube"),
+        (
+            r
+            for r in results
+            if isinstance(r, dict) and r.get("platform") == _platform(job)
+        ),
         {},
     )
     job["post_url"] = None
@@ -433,7 +521,12 @@ def _apply_result(job, data):
         parsed = urlsplit(url)
         if (
             parsed.scheme == "https"
-            and parsed.hostname in {"youtube.com", "www.youtube.com", "youtu.be"}
+            and parsed.hostname
+            in (
+                FacebookPublisher.POST_HOSTS
+                if _platform(job) == "facebook"
+                else YouTubePublisher.POST_HOSTS
+            )
             and not parsed.username
             and not parsed.password
         ):
@@ -441,23 +534,27 @@ def _apply_result(job, data):
     state = str(result.get("status") or "").lower()
     if result.get("skipped") or state == "skipped":
         job["state"] = "blocked"
-        message = "YouTube was skipped by the provider. Reconnect the channel and inspect the provider record."
+        message = f"{brand} was skipped by the provider. Reconnect the account and inspect the provider record."
     elif state in {"queued", "processing", "retryable", "pending"}:
         job["state"] = "processing"
         message = (
-            "YouTube is processing or retrying this delivery; no new upload is needed."
+            f"{brand} is processing or retrying this delivery; no new upload is needed."
         )
     elif result.get("success") is False or state == "failed":
         job["state"] = "failed"
-        message = "YouTube delivery failed. Correct the account/settings and use Retry failed delivery."
+        message = f"{brand} delivery failed. Correct the account/settings and use Retry failed delivery."
     elif state == "completed" or (
         result.get("success") is True and data.get("status") == "completed"
     ):
         job["state"] = "completed"
-        message = "YouTube upload completed with the selected visibility."
+        message = (
+            "Facebook upload completed to the reviewed Page."
+            if brand == "Facebook"
+            else "YouTube upload completed with the selected visibility."
+        )
     elif data.get("status") in {"not_found", "failed", "completed"}:
         job["state"] = "unknown"
-        message = "The provider has no confirmed YouTube result. Refresh status; do not upload again."
+        message = f"The provider has no confirmed {brand} result. Refresh status; do not upload again."
     else:
         job["state"] = (
             "scheduled"
@@ -467,7 +564,7 @@ def _apply_result(job, data):
         message = (
             "Scheduled by Upload-Post."
             if job["state"] == "scheduled"
-            else "Upload accepted; waiting for a confirmed YouTube result."
+            else f"Upload accepted; waiting for a confirmed {brand} result."
         )
     job["checked_at"] = _stamp()
     return _write(job, message)
@@ -481,7 +578,7 @@ def dispatch(job_id):
         try:
             client = _client(job)
             _channel(client, job)
-            options(job["options"])
+            options(job["options"], _platform(job))
             path = snapshot_file(job)
         except ValueError as exc:
             job["state"] = "blocked"
@@ -564,7 +661,7 @@ def retry(job_id, *, reviewed=False):
             _write(job, "Retry queued with the original duplicate-protection key.")
         elif job["state"] == "failed":
             job["state"] = "retrying"
-            _write(job, "Retry requested for the failed YouTube destination only.")
+            _write(job, "Retry requested for this failed destination only.")
             try:
                 response = client.retry(job)
             except ProviderError:
@@ -591,7 +688,7 @@ def _work():
         except Exception as exc:
             # Recovery only polls submitting jobs, never re-uploads them.
             logger.warning(
-                "YouTube delivery worker interrupted: job={}, error={}",
+                "Publishing worker interrupted: job={}, error={}",
                 job_id,
                 type(exc).__name__,
             )
@@ -601,7 +698,7 @@ def _work():
                 _enqueued.discard(job_id)
             _queue.task_done()
         if _queue.empty():
-            for pending in reversed(jobs()):
+            for pending in reversed(jobs(None)):
                 if pending["state"] == "queued":
                     start(pending["id"])
 
@@ -613,7 +710,7 @@ def start(job_id):
             return
         if not _worker_started:
             threading.Thread(
-                target=_work, name="youtube-publishing", daemon=True
+                target=_work, name="reviewed-publishing", daemon=True
             ).start()
             _worker_started = True
         try:
@@ -625,7 +722,7 @@ def start(job_id):
 
 def recover():
     """Resume only approved work; opening a page never approves a draft."""
-    for job in jobs():
+    for job in jobs(None):
         if job["state"] == "queued":
             start(job["id"])
         elif job["state"] in {"submitting", "retrying", "cancelling"}:
@@ -666,9 +763,12 @@ def refresh_channels():
     return data
 
 
-def assert_account_editable(profile):
+def assert_account_editable(profile, platform="youtube"):
     if any(
-        j["channel"]["profile"] == profile and j["state"] in _ACTIVE for j in jobs()
+        j["channel"]["profile"] == profile
+        and j.get("platform", "youtube") == platform
+        and j["state"] in _ACTIVE
+        for j in jobs(None)
     ):
         raise ValueError(
             "Cancel or finish this profile’s pending deliveries before changing its connected channel."

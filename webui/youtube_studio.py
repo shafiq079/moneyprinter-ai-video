@@ -255,8 +255,10 @@ def _compose(tr):
         _review(selected, tr)
 
 
-def _review(job_id, tr, prefix="compose"):
-    job = studio.get(job_id)
+def _review(job_id, tr, prefix="compose", service=studio, platform="youtube"):
+    facebook = platform == "facebook"
+    key_prefix = "fb" if facebook else "yt"
+    job = service.get(job_id)
     if job["state"] != "draft":
         st.info(
             tr("This post is already submitted. Its status is in Delivery history.")
@@ -264,51 +266,63 @@ def _review(job_id, tr, prefix="compose"):
         return
     st.divider()
     st.subheader(tr("Review before delivery"))
-    st.video(str(studio.snapshot_file(job)), width=360)
+    st.video(str(service.snapshot_file(job)), width=360)
     st.write(job["options"]["title"])
     st.write(job["channel"]["name"] + " · " + job["channel"]["channel_id"])
     settings = job["options"]
-    st.write(tr("Visibility") + ": " + settings["privacy"])
+    if facebook:
+        st.write(tr("Facebook format") + ": " + settings["media_type"])
+        st.caption(
+            tr("Facebook Page posts are public. Review your Page before approving.")
+        )
+    else:
+        st.write(tr("Visibility") + ": " + settings["privacy"])
     st.write(
         tr("Scheduled time (UTC)")
         + ": "
         + (settings["scheduled_at"] or tr("Immediately after approval"))
     )
-    st.write(
-        tr("Audience declaration")
-        + ": "
-        + (
-            tr("Made for children")
-            if settings["made_for_kids"]
-            else tr("Not made for children")
+    if not facebook:
+        st.write(
+            tr("Audience declaration")
+            + ": "
+            + (
+                tr("Made for children")
+                if settings["made_for_kids"]
+                else tr("Not made for children")
+            )
         )
-    )
     with st.expander(tr("All reviewed settings")):
         st.json(settings)
     reviewed = st.checkbox(
-        tr("I reviewed this video, destination channel and publishing settings"),
-        key="yt_reviewed:" + prefix + ":" + job_id,
+        tr("I reviewed this video, Facebook Page and public publishing settings")
+        if facebook
+        else tr("I reviewed this video, destination channel and publishing settings"),
+        key=key_prefix + "_reviewed:" + prefix + ":" + job_id,
     )
     if st.button(
         tr("Approve schedule")
         if settings["scheduled_at"]
+        else tr("Approve Facebook upload")
+        if facebook
         else tr("Approve YouTube upload"),
         type="primary",
         disabled=not reviewed,
-        key="yt_approve:" + prefix + ":" + job_id,
+        key=key_prefix + "_approve:" + prefix + ":" + job_id,
     ):
         try:
-            studio.approve(job_id, reviewed=reviewed)
-            st.session_state.pop("yt_review_job", None)
+            service.approve(job_id, reviewed=reviewed)
+            st.session_state.pop(key_prefix + "_review_job", None)
             st.success(tr("Delivery approved. Track it in Delivery history."))
             st.rerun()
         except ValueError as exc:
             _error(exc)
 
 
-def _history(tr):
+def _history(tr, service=studio, platform="youtube"):
+    key_prefix = "fb" if platform == "facebook" else "yt"
     st.subheader(tr("Delivery history"))
-    rows = studio.jobs()
+    rows = service.jobs()
     if not rows:
         st.info(tr("No publishing drafts or deliveries yet."))
         return
@@ -320,17 +334,17 @@ def _history(tr):
             for r in rows
             if r["id"] == jid
         ),
-        key="yt_history_post",
+        key=key_prefix + "_history_post",
     )
-    job = studio.get(choice)
+    job = service.get(choice)
     st.write(job["channel"]["name"] + " · " + job["channel"]["channel_id"])
     if job["state"] == "draft":
-        _review(choice, tr, prefix="history")
-        if st.button(tr("Cancel draft"), key="yt_cancel_draft:" + choice):
-            studio.cancel(choice)
+        _review(choice, tr, prefix="history", service=service, platform=platform)
+        if st.button(tr("Cancel draft"), key=key_prefix + "_cancel_draft:" + choice):
+            service.cancel(choice)
             st.rerun()
     if job["state"] != "draft":
-        _delivery(choice, tr)
+        _delivery(choice, tr, service=service, platform=platform)
     with st.expander(tr("Delivery details")):
         st.json(
             {
@@ -345,8 +359,9 @@ def _history(tr):
 
 
 @st.fragment(run_every=10)
-def _delivery(choice, tr):
-    job = studio.get(choice)
+def _delivery(choice, tr, service=studio, platform="youtube"):
+    key_prefix = "fb" if platform == "facebook" else "yt"
+    job = service.get(choice)
     active = job["state"] in {"processing", "unknown", "scheduled"}
     due = not job["options"]["scheduled_at"] or datetime.fromisoformat(
         job["options"]["scheduled_at"]
@@ -356,7 +371,7 @@ def _delivery(choice, tr):
         interval = 60 if job["state"] == "unknown" else 10
         if (datetime.now(timezone.utc) - checked).total_seconds() >= interval:
             try:
-                job = studio.refresh(choice)
+                job = service.refresh(choice)
             except ValueError as exc:
                 st.caption(str(exc))
     st.write(tr("Live delivery status") + ": " + job["state"])
@@ -365,26 +380,33 @@ def _delivery(choice, tr):
         st.link_button(
             "Upload-Post",
             "https://app.upload-post.com/",
-            key="yt_provider_dashboard:" + choice,
+            key=key_prefix + "_provider_dashboard:" + choice,
         )
     if job.get("post_url"):
-        st.link_button(tr("Open YouTube video"), job["post_url"])
+        st.link_button(
+            tr("Open Facebook post")
+            if platform == "facebook"
+            else tr("Open YouTube video"),
+            job["post_url"],
+        )
     if (
-        job["state"] in studio._ACTIVE | {"failed", "blocked", "rejected"}
+        job["state"] in service._ACTIVE | {"failed", "blocked", "rejected"}
         and job["state"] != "queued"
     ):
-        if st.button(tr("Refresh delivery status"), key="yt_history_refresh:" + choice):
+        if st.button(
+            tr("Refresh delivery status"), key=key_prefix + "_history_refresh:" + choice
+        ):
             try:
-                studio.refresh(choice)
+                service.refresh(choice)
                 st.rerun()
             except ValueError as exc:
                 _error(exc)
     if job["state"] in {"queued", "scheduled"} or (
         job["state"] in {"blocked", "rejected"} and not job.get("submitted_once")
     ):
-        if st.button(tr("Cancel delivery"), key="yt_cancel:" + choice):
+        if st.button(tr("Cancel delivery"), key=key_prefix + "_cancel:" + choice):
             try:
-                studio.cancel(choice)
+                service.cancel(choice)
                 st.rerun()
             except ValueError as exc:
                 _error(exc)
@@ -392,14 +414,18 @@ def _delivery(choice, tr):
         job["state"] in {"blocked", "rejected"} and not job.get("submitted_once")
     ):
         reviewed = st.checkbox(
-            tr("I reviewed the channel before retrying this failed delivery"),
-            key="yt_retry_review:" + choice,
+            tr("I reviewed the Facebook Page before retrying this failed delivery")
+            if platform == "facebook"
+            else tr("I reviewed the channel before retrying this failed delivery"),
+            key=key_prefix + "_retry_review:" + choice,
         )
         if st.button(
-            tr("Retry failed delivery"), disabled=not reviewed, key="yt_retry:" + choice
+            tr("Retry failed delivery"),
+            disabled=not reviewed,
+            key=key_prefix + "_retry:" + choice,
         ):
             try:
-                studio.retry(choice, reviewed=reviewed)
+                service.retry(choice, reviewed=reviewed)
                 st.rerun()
             except ValueError as exc:
                 _error(exc)
@@ -412,7 +438,7 @@ def render(tr):
     st.title("YouTube Studio")
     st.caption(
         tr(
-            "Connect a channel, review a completed video, then publish or schedule it. TikTok and Instagram are planned for later."
+            "Connect a channel, review a completed video, then publish or schedule it. Facebook is available in Facebook Studio; TikTok and Instagram are planned for later."
         )
     )
     if not publisher.configured:
