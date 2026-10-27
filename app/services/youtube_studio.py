@@ -160,7 +160,12 @@ def completed_videos():
                 :16
             ]:
                 relative = path.relative_to(directory).as_posix()
-                source_file(directory.name, relative)
+                try:
+                    if path.is_symlink():
+                        continue
+                    source_file(directory.name, relative)
+                except (ValueError, OSError):
+                    continue
                 results.append(
                     {
                         "task_id": directory.name,

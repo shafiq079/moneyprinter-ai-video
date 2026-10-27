@@ -2,6 +2,53 @@
 
 Read this file first in every new AI or developer session. `docs/SRS.md` is the full product specification; `docs/MIGRATION_MAP.md` is the file-level porting decision. `docs/PRODUCT_VISION.md` preserves the owner's longer-term editable-project and publishing goals separately from implemented scope and unapproved technical proposals. `docs/CHATGPT_PROJECT_SETUP.md` contains the reusable ChatGPT Project handoff. Update this handoff with every accepted milestone. Local desktop Codex setup and two-machine sync instructions are in `AGENTS.md` and `docs/LOCAL_CODEX_SETUP.md`.
 
+## Content Library and Batch Publishing Planner (28 October 2026)
+
+Following research of Buffer/Publer/Metricool/Hootsuite/Make workflows, the owner
+approved the full library/batch milestone on opencut-editor. Navigation exposes
+Create, Content Library (?view=library), Publishing (?view=publishing) and Accounts.
+One task card groups originals and OpenCut exports; editing is optional. The user
+reviews/selects one exact final version and can provide an edited-story summary.
+Readiness and batch approvals bind to source hashes and selection revisions.
+
+Saved per-account timezone/weekday slots, language, declarations, format and
+thumbnail defaults drive batch preparation. Five ready tasks and two accounts
+create ten independently tracked direct-service drafts. AI preparation fills
+platform-specific copy and optional real YouTube frame/text thumbnails. Batch
+review edits metadata/times/thumbnails, excludes drafts and explicitly approves
+only currently prepared rows. Changed final versions, settings or thumbnails
+require renewed review; already-approved posts keep their frozen source until
+explicitly managed/cancelled. Originals are usable without opening OpenCut.
+
+Next-slot allocation is serialized across account plans; custom starts space
+videos by a chosen interval. Shared planning bounds are 20 minutes–7 days, with
+DST gaps/folds and conflicting reservations skipped. Calendar/list filters show
+per-destination outcomes. Refresh/resume/reschedule/cancel call existing direct
+services on the same delivery ID; their remote safety semantics remain intact.
+
+Optional automatic AI copy preparation is off until explicitly enabled. A
+best-effort completed-generation hook and gateway startup recovery enqueue
+preparation without marking videos ready or approving/posting anything. The
+bounded background worker persists work and avoids blind retry loops. LLM config
+is captured after the existing task runtime lock; credential snapshots are never
+persisted. Batches use stable child references for crash recovery. Library state
+is encrypted under ignored storage/social/library; frozen media remains in the
+existing publishing assets directory. No frontend rebuild/new dependency needed.
+
+See docs/CONTENT_LIBRARY.md for exact workflow, scheduling, limits and recovery.
+Standalone composers and legacy publishing remain accessible. No live AI/social
+API authorization/upload, analytics, recurring reposts, unattended publishing or
+GPU/TTS generation is implied by this milestone. Development/main stay unchanged.
+
+Verification: 224 publishing/OpenCut tests and 10225 translation subtests passed;
+110 generation/WebUI-task/artifact/archive tests and 18 subtests passed, with
+3 existing skips. The final 29 dedicated library/planner checks passed, including
+five-video/two-account drafts, slot concurrency/DST, reload/edit/approval, summary
+overrides, native editor links, same-ID recovery, frozen approved snapshots,
+bounded status polling and a real CPU MP4/JPEG through mocked dual-platform
+delivery. Ruff, compileall, frozen sync, lock validation and whitespace passed.
+No live AI/social authorization or uploads, GPU inference or TTS calls were made.
+
 ## AI publishing preparation (28 October 2026)
 
 The owner approved AI handling publishing copy instead of manual SEO entry.

@@ -115,7 +115,16 @@ def _client(job):
     return client
 
 
-def prepare(task_id, relative, cid, value, *, publishing_package=None, thumbnail=None):
+def prepare(
+    task_id,
+    relative,
+    cid,
+    value,
+    *,
+    publishing_package=None,
+    thumbnail=None,
+    planner_reference=None,
+):
     settings = options(value)
     record = accounts.credential_record(cid)
     channel = GoogleYouTube(cid).verify_channel(record["channel_id"])
@@ -197,6 +206,7 @@ def prepare(task_id, relative, cid, value, *, publishing_package=None, thumbnail
             "app": record["app"],
             "options": settings,
             "publishing_preparation": preparation,
+            "planner_reference": planner_reference,
             "thumbnail": thumbnail,
             "offset": 0,
             "video_id": None,

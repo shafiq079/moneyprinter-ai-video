@@ -20,7 +20,9 @@ default YouTube integration with direct Google OAuth and in-product account/
 content management on the same branch. On 28 October 2026 the owner approved
 the equivalent direct Meta Facebook Page/Reel integration on this branch.
 The owner then approved AI publishing copy and thumbnail preparation for both
-direct platforms on this same working line (28 October 2026).
+direct platforms on this same working line (28 October 2026). The owner also
+approved the Content Library and Batch Publishing Planner on this branch,
+including optional automatic AI preparation and explicit batch approval.
 Do not promote new changes to `development`/`main` without a
 later instruction. This overrides the historical
 two-branch restriction below for this experiment only.

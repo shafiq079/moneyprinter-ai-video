@@ -487,3 +487,13 @@ cover selection remains outside its uploader. Durable encrypted drafts and sourc
 binding preserve review across reloads. Explicit publishing approval and audience/
 disclosure decisions remain. Ranking guarantees, live keyword metrics and
 unattended social posting are not implied. See AI_PUBLISHING.md.
+
+## Approved Content Library and Batch Publishing Planner (28 October 2026)
+
+The owner approved a central finished-video workflow following official platform
+workflow research. Originals/exports are grouped by task, editing is optional and
+one reviewed final feeds independently tracked account posts. Per-account defaults
+and posting slots support AI batch preparation, revision-bound review, explicit
+bulk approval, calendar/list tracking and same-ID delivery controls. Optional
+automatic AI preparation never authorizes publishing. See CONTENT_LIBRARY.md.
+Work remains on opencut-editor; recurring content and analytics remain future work.

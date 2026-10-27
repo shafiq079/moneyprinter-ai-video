@@ -286,7 +286,9 @@ def _freeze(task_id, relative, settings):
         output.unlink(missing_ok=True)
 
 
-def prepare(task_id, relative, cid, value, *, publishing_package=None):
+def prepare(
+    task_id, relative, cid, value, *, publishing_package=None, planner_reference=None
+):
     settings = options(value)
     record = accounts.credential_record(cid)
     page = FacebookPage(cid).verify_page(record["page_id"])
@@ -318,6 +320,7 @@ def prepare(task_id, relative, cid, value, *, publishing_package=None):
             "app": record["app"],
             "options": settings,
             "publishing_preparation": preparation,
+            "planner_reference": planner_reference,
             "video_id": None,
             "offset": 0,
             "events": [],

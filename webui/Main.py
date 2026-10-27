@@ -2661,7 +2661,9 @@ def _render_top_bar():
             width="stretch",
         ):
             _render_task_manager_entry()
-            st.link_button(tr("Social Dashboard"), "?view=social", icon=":material/video_library:")
+            st.link_button(tr("Content Library"), "?view=library", icon=":material/video_library:")
+            st.link_button(tr("Publishing"), "?view=publishing", icon=":material/schedule:")
+            st.link_button(tr("Accounts"), "?view=social", icon=":material/account_circle:")
             st.link_button("Facebook", "?view=social&platform=facebook", icon=":material/public:")
 
             st.button(
@@ -9608,6 +9610,10 @@ def _render_generation_controls(
 
 def _render_application():
     """按固定顺序渲染顶部栏、弹窗、生成表单和任务结果。"""
+    if st.query_params.get("view") in {"library", "publishing"}:
+        from webui.publishing_planner import render_library, render_publishing
+        (render_library if st.query_params.get("view") == "library" else render_publishing)(tr)
+        return
     if st.query_params.get("view") == "facebook-legacy":
         from webui.facebook_studio import render
 

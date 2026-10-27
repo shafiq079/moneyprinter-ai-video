@@ -607,6 +607,8 @@ def render(tr):
     if st.button(tr("Back To Generator"), key="social_back"):
         st.query_params.clear()
         st.rerun()
+    from webui.publishing_planner import navigation
+    navigation(tr)
     st.title(tr("Social Dashboard"))
     route = (
         st.query_params.get("view", "social")

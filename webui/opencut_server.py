@@ -100,6 +100,8 @@ def create_app(streamlit_port=None, public_port=None):
     async def lifespan(app):
         async with httpx.AsyncClient(timeout=None, trust_env=False) as client:
             app.state.proxy = client
+            from app.services import content_library
+            await asyncio.to_thread(content_library.startup)
             yield
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 

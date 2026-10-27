@@ -141,7 +141,9 @@ def normalize(data, platform):
     )
 
 
-def generate(task_id, relative, platform, *, language="auto", brief=""):
+def generate(
+    task_id, relative, platform, *, language="auto", brief="", app_config=None
+):
     key = _key(task_id, relative, platform)
     language = _text(language, 80, "language")
     brief = _text(brief, 12000, "brief", empty=True)
@@ -184,7 +186,10 @@ VIDEO_DATA:\n""" + json.dumps(
         with FileLock(_root() / (key + ".lock"), timeout=0):
             try:
                 data = llm.generate_json_response(
-                    prompt, timeout_seconds=90, max_retries=0
+                    prompt,
+                    timeout_seconds=90,
+                    max_retries=0,
+                    **({"app_config": app_config} if app_config is not None else {}),
                 )
             except Exception as exc:
                 raise ValueError(

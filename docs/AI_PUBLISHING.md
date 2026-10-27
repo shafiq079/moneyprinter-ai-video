@@ -121,3 +121,9 @@ Final validation: **199 focused tests and 10225 translation subtests passed**;
 had an intermittent WebSocket TestClient cleanup CancelledError. The baseline
 comparison and final full rerun passed without gateway/test changes. Ruff,
 compileall, frozen dependency sync, lock and whitespace checks passed.
+
+## Library and batch workflow
+
+Content Library and Publishing now connect final-version review to per-account
+AI preparation, posting defaults/slots and explicit batch approval. See
+[CONTENT_LIBRARY.md](CONTENT_LIBRARY.md). Individual composers remain available.

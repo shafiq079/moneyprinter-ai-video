@@ -3568,6 +3568,12 @@ def _run_pipeline(
     sm.state.update_task(
         task_id, state=const.TASK_STATE_COMPLETE, progress=100, **kwargs
     )
+    # Optional publishing preparation never approves or uploads a video.
+    try:
+        from app.services import content_library
+        content_library.completed(task_id)
+    except Exception as exc:
+        logger.warning("Optional publishing preparation deferred: {}", type(exc).__name__)
 
     if should_cross_post:
         scheduling_error = _schedule_cross_post(

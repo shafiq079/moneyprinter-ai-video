@@ -170,3 +170,9 @@ Primary implementation references:
 Create post now includes AI publishing copy, title alternatives and relevant
 hashtags using the configured LLM. See [AI_PUBLISHING.md](AI_PUBLISHING.md) for
 the exact workflow, platform-specific thumbnail support and review boundaries.
+
+## Library and batch workflow
+
+Content Library and Publishing now connect final-version review to per-account
+AI preparation, posting defaults/slots and explicit batch approval. See
+[CONTENT_LIBRARY.md](CONTENT_LIBRARY.md). Individual composers remain available.
