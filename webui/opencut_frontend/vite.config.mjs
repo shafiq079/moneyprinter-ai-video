@@ -11,6 +11,26 @@ export default defineConfig({
   resolve: {
     alias: [
       {
+        find: "@/components/editor/panels/properties/components/property-param-field",
+        replacement: path.join(root, "integration/property-field.tsx"),
+      },
+      {
+        find: /^@\/preview\/components$/,
+        replacement: path.join(root, "integration/preview.tsx"),
+      },
+      {
+        find: /^@\/components\/editor\/panels\/properties$/,
+        replacement: path.join(root, "integration/properties.tsx"),
+      },
+      {
+        find: "@/components/ui/font-picker",
+        replacement: path.join(root, "integration/font-picker.tsx"),
+      },
+      {
+        find: "@/fonts/google-fonts",
+        replacement: path.join(root, "integration/fonts.ts"),
+      },
+      {
         find: "next/navigation",
         replacement: path.join(root, "integration/navigation.ts"),
       },

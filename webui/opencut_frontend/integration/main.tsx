@@ -1,3 +1,4 @@
+import { ClipJobStatus } from "./clip-job-status";
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ThemeProvider } from "next-themes";
@@ -49,10 +50,10 @@ function App() {
               .catch((e) => toast.error(e.message));
           }}
         >
-          AI / original tools
+          Legacy tools
         </a>
         <span>
-          OpenCut · {status} ·{" "}
+          {loaded && <ClipJobStatus />} · OpenCut · {status} ·{" "}
           <a href="/opencut/OPENCUT_LICENSE" target="_blank" rel="noreferrer">
             MIT license
           </a>

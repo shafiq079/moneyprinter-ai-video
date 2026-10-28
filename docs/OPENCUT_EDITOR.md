@@ -2,9 +2,9 @@
 
 The owner explicitly approved the additional `opencut-editor` branch on
 26 October 2026. It starts at `development` commit
-`df626edd3022863723382d7fedf58882ae688629`. The owner subsequently requested promotion into `development` after confirming
-the forwarded UI worked. OpenCut is now available there; `main` remains unchanged.
-The pre-OpenCut editor is preserved in history at the baseline above.
+`df626edd3022863723382d7fedf58882ae688629`. The base OpenCut integration was subsequently promoted to `development` by
+owner request. The next combined clip-controls/font milestone is implemented on
+`opencut-editor`, as requested; `main` remains unchanged.
 
 ## What is integrated
 
@@ -18,7 +18,8 @@ system, media handling, preview, properties and native WebCodecs exporter.
 A small Vite host replaces Next routing/image/link wrappers and site-only
 feedback/changelog components. The public-site Next layout, analytics, accounts,
 Postgres, billing and hosted-service backend are not part of this integration.
-No OpenCut source files are patched. Source is fetched at setup and dependencies
+The pinned checkout is unmodified. Narrow Vite aliases extend native properties,
+font selection and the preview host; all other controls use upstream components. Source is fetched at setup and dependencies
 are locked in this repository. MIT and dependency notices accompany the build.
 
 MoneyPrinter continues to generate scenes, voice, captions and music with its
@@ -35,7 +36,7 @@ requirements. Then stop the running WebUI and run:
 
 ```sh
 git fetch origin
-git switch development
+git switch opencut-editor
 uv sync --frozen
 uv run python scripts/setup_opencut.py
 sh webui.sh
@@ -58,18 +59,14 @@ To return to the previous implementation:
 
 ```sh
 # Stop this WebUI first.
-git switch --detach df626edd3022863723382d7fedf58882ae688629
+git switch development
 uv sync --frozen
 sh webui.sh
 ```
 
-This rollback opens the earlier commit for running the previous UI. Return with
-`git switch development` before further development; do not commit in detached
-mode.
-
 Configuration and task assets are retained. OpenCut drafts/exports are separate
 from original generated files, so the old editor does not consume arbitrary
-OpenCut timeline changes. Returning to current `development` reopens its saved draft.
+OpenCut timeline changes. Returning to `opencut-editor` reopens its saved draft.
 
 ## Import and persistence contract
 
@@ -84,18 +81,65 @@ the previous editor. Stock/factual editor expansion remains later work.
 | Music/SFX arrangements | Independent audio placements with source trims, gain and mute. Existing fades are retained in prepared audio clips; original recordings remain intact. |
 | Legacy random/custom or saved generated BGM | Saved song imported locally and repeated as needed; no replacement provider request. |
 
-Caption fonts initially use Arial. Selected-word colors, outlines, animations,
-font metrics and custom compositor transitions do not have complete one-to-one
-mappings in this OpenCut revision. Review styling in OpenCut before exporting;
+New caption imports retain the selected installed MoneyPrinter font. The native
+Font Family field now opens a searchable picker with MoneyPrinter, system and
+available OpenCut fonts. MoneyPrinter fonts load from local files; TTC collections
+are converted to their first TTF face in a local cache, matching the Python
+compositor's collection-face choice. Selection waits for the actual font to load;
+font changes remain native undoable text edits and survive server saves/reloads.
+Existing OpenCut drafts retain their chosen font (including earlier Arial imports).
+Project archives still require the same fonts installed on the receiver.
+Selected-word colors, outlines, animations, font metrics and custom compositor
+transitions do not have complete one-to-one mappings in this OpenCut revision. Review styling in OpenCut before exporting;
 original caption/style data is preserved. OpenCut itself is beta and its native
 Transitions/Adjustment panels still contain upstream "coming soon" sections.
 Using its source does not make those upstream features complete.
 
-**AI / original tools** opens the preserved generation/version controls.
-OpenCut's arbitrary cuts, overlays, effects and text are saved in its own native
-project; they are not silently rewritten into MoneyPrinter's simpler scene
-manifest. Later AI regeneration does not overwrite an existing OpenCut draft.
-Use the native media import controls to incorporate replacement footage.
+## Native AI clip workflow
+
+Select a generated video clip on the timeline, then choose **AI Clip** in the
+native right inspector. **Describe this clip** edits its prompt. **Regenerate
+clip** uses that prompt and the current seed; **New variation** chooses another
+seed. **Advanced** holds the seed, with provider/mode/duration shown for context.
+Generation retains the saved scene's provider settings, negative prompt and
+original requested duration. Provider configuration/authentication remain the
+existing MoneyPrinter settings. Trimming, splitting, speed, effects, transforms,
+text styling and audio editing continue to use OpenCut's native controls.
+
+A generated result never silently replaces timeline footage. **Preview** shows
+candidate footage in the upper preview area. **Use this version** changes only
+the selected occurrence, keeping its position, duration, source start, speed,
+effects and animations. Shorter footage is blocked with required/available
+lengths. **Keep current** dismisses the review. **Versions** contains original
+MoneyPrinter versions plus generated/uploaded OpenCut candidates. An uploaded
+replacement is a bounded 100 MiB MP4, normalized to video-only H.264 and validated
+against the source scene's aspect/duration. Applying remains explicit.
+
+Stable scene identity travels with native split/duplicate operations; replacing
+one occurrence does not replace its siblings. Older drafts are linked by unique
+source media hashes, never by timeline position. Ambiguous matches are left
+unlinked. Arbitrary user-imported clips retain normal native controls.
+
+OpenCut candidates are independent of the original generation plan, manifest,
+active clips, narration, captions and completed renders. Generation does not
+recompose the full video. Final delivery still uses OpenCut **Export**. Native
+Undo restores an applied clip; unused versions remain available in history.
+Candidate media/history survive reload and project backups under `opencut/`.
+
+One bounded gateway queue executes candidates sequentially; a cross-process
+project lease prevents simultaneous clip operations. Local providers retain
+their existing per-GPU cross-process serialization. The gateway owns candidate
+jobs separately from Streamlit's in-memory generation queue. Status appears in
+the inspector and top bar while other clips remain editable. Cancellation is
+cooperative: an in-flight provider request finishes, then its result is discarded.
+Restarted jobs are shown as interrupted, never retried automatically. Native
+editing/import/export does not call a model; explicit Regenerate/New variation
+uses the configured provider and may consume its normal resources/quota.
+
+**Legacy tools** retains the earlier supporting workflow for compatibility.
+Native edits and clip candidates are not silently rewritten into MoneyPrinter's
+simpler generation manifest. Stock/factual scene imports remain outside this
+milestone.
 
 OpenCut autosave and **Save project** persist the native project plus immutable
 media blobs under `storage/tasks/<id>/opencut/`. Browser IndexedDB/OPFS are working
@@ -139,9 +183,13 @@ uv run --no-sync python scripts/verify_opencut.py
 ```
 
 The acceptance command creates and removes its own fake-provider fixture. It
-checks native caption editing, server save, reload, a fresh browser, independent
-tracks, native 1080×1920 export with audio, saving the export to the task, and
-Streamlit Task Manager through the gateway. Output evidence is under ignored
+checks local font selection/loading, clip generation/preview/apply/Undo, split
+occurrence isolation, caption editing, server save, reload, a fresh browser,
+native 1080×1920 export with audio, saving the export to the task, and Streamlit
+Task Manager through the gateway. Its disposable server substitutes the CPU
+fake provider; production provider dispatch is unchanged. VP9 MP4 fixtures avoid
+proprietary-codec requirements in CI Chromium. The CPU-only harness selects native
+WebGL fallback and CPU rasterization; the production renderer remains upstream. Output evidence is under ignored
 `storage/opencut-browser-check`. No live GPU model, TTS, paid music or publishing
 calls are made. CI builds the pinned source and runs this browser acceptance in
 addition to the existing Python/platform checks and legacy frontend build.

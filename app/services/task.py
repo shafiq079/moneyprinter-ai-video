@@ -3148,6 +3148,7 @@ def _run_pipeline(
     voxcpm_prompt_audio: bytes | None = None,
     voxcpm_prompt_text: str = "",
     resume_context: dict | None = None,
+    allow_auto_publish: bool = True,
 ):
     logger.info(f"start task: {task_id}, stop_at: {stop_at}")
     existing_task = sm.state.get_task(task_id)
@@ -3537,7 +3538,8 @@ def _run_pipeline(
     # 7. 先完成视频生成任务，再按需提交跨平台发布。第三方上传可能耗时
     # 数分钟，不应阻塞视频结果返回，也不能反向影响已经生成的成片。
     cross_post_enabled = (
-        upload_post.upload_post_service.is_configured()
+        allow_auto_publish
+        and upload_post.upload_post_service.is_configured()
         and upload_post.upload_post_service.auto_upload
     )
     platforms = (
@@ -3568,6 +3570,12 @@ def _run_pipeline(
     sm.state.update_task(
         task_id, state=const.TASK_STATE_COMPLETE, progress=100, **kwargs
     )
+    # Optional publishing preparation never approves or uploads a video.
+    try:
+        from app.services import content_library
+        content_library.completed(task_id)
+    except Exception as exc:
+        logger.warning("Optional publishing preparation deferred: {}", type(exc).__name__)
 
     if should_cross_post:
         scheduling_error = _schedule_cross_post(
@@ -3605,6 +3613,7 @@ def start(
     voxcpm_prompt_audio: bytes | None = None,
     voxcpm_prompt_text: str = "",
     resume_context: dict | None = None,
+    allow_auto_publish: bool = True,
 ):
     """
     执行任务流水线，并确保未预期异常也会转换成可查询的失败状态。
@@ -3624,6 +3633,7 @@ def start(
             voxcpm_prompt_audio=voxcpm_prompt_audio,
             voxcpm_prompt_text=voxcpm_prompt_text,
             resume_context=resume_context,
+            allow_auto_publish=allow_auto_publish,
         )
     except TaskCancellationRequested as exc:
         return _mark_task_cancelled(task_id, exc.stage)

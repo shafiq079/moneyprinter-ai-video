@@ -2,17 +2,343 @@
 
 Read this file first in every new AI or developer session. `docs/SRS.md` is the full product specification; `docs/MIGRATION_MAP.md` is the file-level porting decision. `docs/PRODUCT_VISION.md` preserves the owner's longer-term editable-project and publishing goals separately from implemented scope and unapproved technical proposals. `docs/CHATGPT_PROJECT_SETUP.md` contains the reusable ChatGPT Project handoff. Update this handoff with every accepted milestone. Local desktop Codex setup and two-machine sync instructions are in `AGENTS.md` and `docs/LOCAL_CODEX_SETUP.md`.
 
-## OpenCut promoted to development (26 October 2026)
+## Content Campaigns and Automated Production (29 October 2026)
 
-After confirming the forwarded UI worked, the owner explicitly requested
-promotion into `development`. It now includes OpenCut integration 0db7537 and
-WebSocket/restart fix 73ec257. Development is again the active implementation
-branch. Main remains unchanged. The opencut-editor branch is retained; earlier
-experiment-only branch instructions below are historical and superseded here.
-The previous custom-editor baseline remains available at df626ed in history,
-and AI/original tools remain accessible from the native editor. No new feature
-or renderer changes were made during promotion. Prior CPU/browser evidence is
-unchanged; platform CI was still running when this promotion was requested.
+The owner approved planning and implementing campaigns on opencut-editor.
+Campaigns (?view=campaigns) records a brief, 1–20 videos, language, supported
+creative generation template and destination accounts. Explicit AI planning
+produces distinct editable topics/scripts. Production is separately approved
+against the latest revision; script changes invalidate stale review. A campaign
+is not authorization to publish. Factual evidence review and provider-specific
+quote/reference-input flows remain in their individual workflows.
+
+Production enters the existing serialized WebUI manager, one campaign item at a
+time. Stable task IDs, item leases, encrypted state and completion receipts
+preserve work across reloads. Pausing stops new starts; active cancellation uses
+the cooperative task mechanism. Local AI uses saved same-task resume when valid;
+stock/full restarts are explicit new attempts retaining earlier files. Failed or
+unconfirmed provider operations never restart blindly. A decodable MP4 alone is
+not proof of pipeline success; an unconfirmed retained final needs operator review.
+
+The pipeline now accepts an internal allow_auto_publish flag, defaulting to the
+previous behavior. Campaign runs always pass False, disabling legacy automatic
+cross-posting even when globally enabled. No approved production can bypass the
+existing visual final review and separate publishing approval.
+
+Campaign-filtered Content Library links preserve optional editing and exact final
+selection. Ready campaign videos feed existing AI publishing preparation and
+account slot/default services. Missing destination pairs become unapproved batch
+drafts; existing plans/IDs are not replaced. Per-account states and prior attempt
+IDs are visible. Templates contain no tokens/provider credentials; campaign state
+is encrypted under ignored storage/social/campaigns. See docs/CAMPAIGNS.md for
+scope, design plan, recovery and the operator-run live acceptance checklist.
+
+Verification: a broad campaign/library/publishing/OpenCut/generation/archive run
+passed 274 tests, 3 existing skips and 10243 subtests. After final ownership and
+status reconciliation hardening, all 20 campaign/service/UI checks passed again.
+Coverage includes real pipeline suppression of legacy auto-upload despite its
+global setting, stale approvals, retained failed finals, completion receipts,
+queue ownership, pause/cancel, same-task local resume, new stock attempts,
+missing-destination batching and cold UI reload. Ruff, compileall, frozen sync,
+lock validation and whitespace checks passed. No live AI/provider/social calls
+or GPU inference were performed; operator live acceptance remains explicit.
+
+## Content Library and Batch Publishing Planner (28 October 2026)
+
+Following research of Buffer/Publer/Metricool/Hootsuite/Make workflows, the owner
+approved the full library/batch milestone on opencut-editor. Navigation exposes
+Create, Content Library (?view=library), Publishing (?view=publishing) and Accounts.
+One task card groups originals and OpenCut exports; editing is optional. The user
+reviews/selects one exact final version and can provide an edited-story summary.
+Readiness and batch approvals bind to source hashes and selection revisions.
+
+Saved per-account timezone/weekday slots, language, declarations, format and
+thumbnail defaults drive batch preparation. Five ready tasks and two accounts
+create ten independently tracked direct-service drafts. AI preparation fills
+platform-specific copy and optional real YouTube frame/text thumbnails. Batch
+review edits metadata/times/thumbnails, excludes drafts and explicitly approves
+only currently prepared rows. Changed final versions, settings or thumbnails
+require renewed review; already-approved posts keep their frozen source until
+explicitly managed/cancelled. Originals are usable without opening OpenCut.
+
+Next-slot allocation is serialized across account plans; custom starts space
+videos by a chosen interval. Shared planning bounds are 20 minutes–7 days, with
+DST gaps/folds and conflicting reservations skipped. Calendar/list filters show
+per-destination outcomes. Refresh/resume/reschedule/cancel call existing direct
+services on the same delivery ID; their remote safety semantics remain intact.
+
+Optional automatic AI copy preparation is off until explicitly enabled. A
+best-effort completed-generation hook and gateway startup recovery enqueue
+preparation without marking videos ready or approving/posting anything. The
+bounded background worker persists work and avoids blind retry loops. LLM config
+is captured after the existing task runtime lock; credential snapshots are never
+persisted. Batches use stable child references for crash recovery. Library state
+is encrypted under ignored storage/social/library; frozen media remains in the
+existing publishing assets directory. No frontend rebuild/new dependency needed.
+
+See docs/CONTENT_LIBRARY.md for exact workflow, scheduling, limits and recovery.
+Standalone composers and legacy publishing remain accessible. No live AI/social
+API authorization/upload, analytics, recurring reposts, unattended publishing or
+GPU/TTS generation is implied by this milestone. Development/main stay unchanged.
+
+Verification: 224 publishing/OpenCut tests and 10225 translation subtests passed;
+110 generation/WebUI-task/artifact/archive tests and 18 subtests passed, with
+3 existing skips. The final 29 dedicated library/planner checks passed, including
+five-video/two-account drafts, slot concurrency/DST, reload/edit/approval, summary
+overrides, native editor links, same-ID recovery, frozen approved snapshots,
+bounded status polling and a real CPU MP4/JPEG through mocked dual-platform
+delivery. Ruff, compileall, frozen sync, lock validation and whitespace passed.
+No live AI/social authorization or uploads, GPU inference or TTS calls were made.
+
+## AI publishing preparation (28 October 2026)
+
+The owner approved AI handling publishing copy instead of manual SEO entry.
+Social Dashboard Create post now has shared AI preparation for direct YouTube
+and Facebook. The existing configured LLM produces validated title alternatives,
+platform-specific descriptions, relevant hashtags, YouTube-only keyword tags,
+and thumbnail text/concepts from the saved script or an explicit updated summary.
+Generated copy fills the existing editable forms. The user still explicitly
+reviews audience/disclosures/visibility/timing and separately approves delivery.
+No new paid intermediary, app stack, dependency or OpenCut rebuild is introduced.
+
+Packages are encrypted under ignored storage/social/publishing-seo and bound to
+the platform, task/export, source and script fingerprints. Reload restores drafts
+without model calls; ordinary reruns preserve manual edits. Regeneration only
+replaces the saved package on success. Invalid/provider responses are explicit
+errors, not silent heuristic fallbacks. Model generation does not call TTS or
+video providers or post socially; existing legacy auto-upload is unchanged.
+
+YouTube can build an actual 1280×720 JPEG from a chosen video frame and editable
+AI overlay text, using installed fonts. The preview/hash is frozen with delivery
+approval. Same-ID thumbnail application precedes visibility/schedule changes;
+failed thumbnail acceptance remains pending for explicit resume, even for private
+uploads. Facebook uses description hashtags but its thumbnail concept is advisory
+because the uploader does not set a cover. No ranking guarantee, live keyword
+research, video understanding or AI-generated-image service is claimed.
+See docs/AI_PUBLISHING.md for workflow, storage, limits and recovery details.
+
+Verification: the final focused run passed 199 tests and 10225 translation
+subtests, including 25 new SEO/service/UI checks, direct/legacy publishing,
+audience/settings and OpenCut. An earlier run hit an intermittent existing
+WebSocket TestClient cleanup CancelledError; a baseline comparison and final
+complete rerun passed, without modifying gateway code or that test. Ruff,
+compileall, frozen sync, lock validation and whitespace checks passed. A real
+CPU video frame was decoded into the reviewed JPEG, and a mocked wire test
+verifies the corrected dedicated Google thumbnail media-upload URL/raw image
+body/content type. No real LLM/social API, GPU or TTS call was made.
+
+## Direct Facebook authorization and Page publishing (28 October 2026)
+
+The owner approved the direct Facebook milestone on `opencut-editor`. Social
+Dashboard now switches between YouTube and Facebook; `?view=facebook` routes to
+its direct Meta panels. The generator Facebook shortcut opens the same dashboard.
+Meta app setup, browser-bound Facebook OAuth, permission/Page discovery and
+explicit Page attachment replace Upload-Post in the default Facebook workflow.
+YouTube and its encrypted grants remain independent.
+
+Content loads Page videos/Reels, reviews title/description changes with fresh
+ownership/revision checks and exact-ID permanent deletion. Create post freezes a
+completed video or retained OpenCut export for separate public-post approval.
+WebM converts locally to reviewed MP4, without TTS/GPU/generation. Page video
+uploads use graph-video start/transfer/finish ranges; Reels use validated rupload
+URLs and separate finish. Same-ID recovery and ambiguous-operation blocking
+avoid silently creating replacement uploads. Calendar / Queue restores drafts,
+tracks Meta state, reschedules and explicitly deletes confirmed unpublished
+uploads when cancelling. Local projects are retained.
+
+Application bounds: 512 MiB, one hour Page video, conservative Reels 4–60 sec,
+9:16/minimum 540×960/24–60 fps, 1000 records, bounded dedicated queue and schedules
+15 minutes–7 days ahead. These are application policy rather than claimed Meta
+maximums. A late schedule blocks publication; only a matching actual Meta
+schedule is reported accepted. No private-first Facebook semantics or exactly-once
+network guarantee is promised. Interrupted Reel transfers/publication are never
+blindly resent. Unknown initialization cannot be falsely cancelled.
+
+Meta secrets/flows/jobs are encrypted in ignored storage/social/facebook using
+the existing social encryption key. Account-wide disconnect blocks pending work,
+revokes the grant, clears its Page connections/history, retains local media and
+leaves YouTube alone. An expired token's local removal never claims confirmed
+revocation. The existing gateway serves both callbacks without access-log secrets.
+English/Chinese labels and secondary-locale English fallback are maintained.
+Legacy Facebook is now ?view=facebook-legacy; legacy records and optional automatic
+cross-posting remain separate and are never migrated/replayed automatically.
+
+See docs/FACEBOOK_DIRECT.md for Meta app setup, permissions, API transports,
+security, recovery and operator acceptance. No live Meta authorization/upload,
+App Review approval, production eligibility or GPU validation is claimed.
+TikTok/Instagram, analytics and unattended generation remain future scope.
+
+Verification: 171 focused tests and 10225 translation subtests passed, including
+YouTube, legacy publishing/settings and OpenCut regressions. After final malformed
+start-response protection and actual Main-route checks, all 35 Facebook
+service/dashboard tests passed again. Ruff, compileall, frozen dependency sync,
+lock validation and whitespace checks passed. Real CPU MP4 decoding and WebM
+conversion were verified against mocked Meta transports. No real social account
+was authorized and no remote content was uploaded, edited, scheduled or deleted.
+
+## Direct YouTube authorization and Social Dashboard (27 October 2026)
+
+The owner clarified that social management must live inside MoneyPrinter, without
+an Upload-Post account. After official API/product research, the owner approved
+the complete direct YouTube milestone on `opencut-editor`. Development/main remain
+unchanged. The later direct Facebook milestone is documented above; TikTok/Instagram remain later.
+
+The generator opens Social Dashboard (`?view=social`; `?view=youtube` aliases it).
+Accounts provides encrypted Google Web-client setup, Connect YouTube, hosted
+Google consent and callback, verified channel identity, reconnect and revocation.
+The existing same-origin gateway owns short-lived browser-bound OAuth state/PKCE
+and callback routes. No Google password or Upload-Post key is required. One Google
+Web application is configured by the operator; channel owners authorize it.
+
+Content lists existing channel videos through the uploads playlist, edits
+metadata/visibility with current ownership/ETag checks, preserves private schedules,
+sets validated thumbnails and explicitly deletes videos only after exact-ID
+confirmation. Create post freezes a completed final/native export before separate
+review/approval. Calendar / Queue restores drafts and tracks resumable bytes,
+processing, scheduled/public/private completion, pauses and unconfirmed outcomes.
+Forms remain outside timed status fragments. English/Chinese labels are included.
+
+All uploads start private. Resumable URLs/offsets and returned video IDs persist
+before release changes. A restart reconciles Google's committed bytes; uncertain
+initialization/expired sessions never silently start another video. Scheduled
+public release uses YouTube's publishAt after upload; accepted schedules execute
+at YouTube even while MoneyPrinter is stopped. Passed times stay private until
+explicitly rescheduled. Remote cancellation rechecks removal of the schedule and
+keeps the video private; permanent deletion is separate. Limits remain 512 MiB,
+one hour, 1000 records and a bounded dedicated queue. Exactly-once publication is
+not claimed across network failures or external platform actions.
+
+Google settings, grants, OAuth transactions and jobs are encrypted in ignored
+storage/social/youtube; the key is an operator secret or local 0600 key file.
+No OAuth/session credentials enter task archives or logs. Disconnect revokes and
+clears selected local API-derived history, retains user-created video/project
+assets, invalidates pending callbacks and flags potentially shared Google grants
+for reconnection. This remains a trusted single-operator WebUI, not multi-user SaaS.
+Legacy Upload-Post records/interfaces remain separate at ?view=youtube-legacy and
+?view=facebook-legacy; they are never migrated or resent through Google. Generator,
+OpenCut, narration, scenes and old optional automatic cross-posting are preserved.
+
+See docs/YOUTUBE_DIRECT.md for Google setup, exact callbacks/forwarded ports,
+Testing-token lifetime, verification/audit uncertainty, quota and data boundaries.
+The pinned OAuth library is new: run uv sync --frozen before launching. No OpenCut
+rebuild is needed for this Python-only milestone. Real Google sign-in, private
+upload and scheduled-public acceptance require the operator's Google app/channel;
+CPU mocks do not establish project verification or live publishing eligibility.
+
+Verification: **139 focused CPU tests and 10225 translation subtests passed**,
+including old publishing/settings and OpenCut regressions. After the final storage
+worker hardening, all **30 direct-account/service/dashboard tests passed again**.
+The proof includes real OAuth URL/PKCE generation, real gateway cookie callbacks
+with mocked token exchange, encrypted credential/session persistence, interrupted
+byte ranges, missed schedules, lost publication responses, channel isolation,
+revocation, ETag/field preservation and decoded real MP4 upload orchestration to
+mocked Google transport. Actual Main routes and fresh-session review are covered
+by Streamlit AppTest. Ruff, compileall, frozen dependency sync, lock validation
+and whitespace checks passed. Live Google authorization/uploads/public schedules
+remain operator acceptance; no GPU, TTS or paid publishing calls were made.
+
+## Facebook Pages and Reels publishing (27 October 2026)
+
+The owner approved Facebook as the next publishing platform on `opencut-editor`.
+Facebook Studio (`?view=facebook`) adds Facebook-only hosted connection and
+platform-specific disconnect, profile-scoped Page discovery, explicit Page
+selection, Page video/Reel metadata and AI-label controls, frozen review,
+approval, scheduling and reload-safe history. TikTok/Instagram remain later.
+
+The existing YouTube durable delivery service now handles platform-tagged jobs;
+legacy jobs without a platform remain YouTube. Each studio filters its history,
+while one shared worker resumes approved deliveries for either platform.
+Duplicate protection includes platform and destination, permitting deliberate
+cross-platform publishing without same-Page duplicates. Uploads/results/history
+reconciliation stay platform-specific; unknown outcomes never blindly reupload.
+YouTube generation, editor and legacy optional cross-posting behavior remain.
+
+Facebook Page ID and connected account identity are checked at prepare, approval,
+dispatch and retry. The provider's Page pin overrides request Page ID: conflicting
+pins block, available choices respect pins, and the app never clears pins.
+External profile/pin changes during dispatch or after provider schedule acceptance
+remain outside local locking; use dedicated profiles. Only Pages are supported,
+not personal profiles/groups. Page posts are public and explicitly reviewed.
+Reels have provider API format preflight; Page videos retain existing application
+media limits. See `docs/FACEBOOK_PUBLISHING.md` for setup and exact boundaries.
+
+Verification: all **97 focused test cases passed across the final runs**, plus
+**10225 translation subtests**. The broad run had 95 passes and two existing
+settings-test timeouts; a fresh diagnostic run passed all seven settings tests
+without changes. Facebook coverage includes actual Main routing, separate
+review/approval and recovery, profile-scoped pin checks, cross-platform history
+and duplicate isolation, and a real 540×960/24 fps Reel frozen/decoded then
+submitted through mocked multipart scheduling/cancellation. Ruff, compileall,
+frozen dependency sync and whitespace checks passed. No live Meta sign-in,
+Facebook post/scheduled execution, GPU inference or TTS was performed.
+
+## YouTube-first connected accounts and reviewed publishing (27 October 2026)
+
+The owner approved moving account attachment and publishing automation into
+scope, then explicitly limited the first release to YouTube; TikTok/Instagram
+remain later. Work continues on `opencut-editor`, preserving development/main.
+
+Generator navigation now opens YouTube Studio (`?view=youtube`) outside the
+editor. The existing Upload-Post provider supplies hosted YouTube-only OAuth
+connection links, profile/channel lookup and reconnect/disconnect. Google tokens
+stay with the provider; local cached identity is bound to an API-key fingerprint.
+
+Compose selects a generated final or completed native MP4/WebM export and saves
+an immutable video snapshot with title/description/tags, visibility (private by
+default), explicit audience/content declarations and optional timezone-validated
+schedule. Review and approval are separate. Drafts/history survive restart.
+The bounded durable delivery queue uses cross-process locks, SHA/channel duplicate
+checks, provider idempotency and stable request IDs. Uncertain/interrupted HTTP
+operations reconcile status instead of re-uploading; provider-confirmed failures
+retry retained remote media. Accepted schedules live at Upload-Post. Generation,
+old optional auto-upload behavior, scene contracts and OpenCut are unchanged.
+See `docs/YOUTUBE_PUBLISHING.md`, including the boundary around externally changed
+provider profile destinations and the 24-hour provider idempotency window.
+
+Verification: **78 CPU tests and 10225 translation subtests passed**, covering
+the new provider/storage/UI contracts and existing publishing/audience/settings
+behavior. A real FFmpeg MP4 was decoded and frozen, its source removed, and the
+retained bytes submitted to a mocked scheduled-upload transport. The actual Main
+route, connection controls, separate approval, fresh-session draft recovery,
+unique review widgets and en/zh labels were exercised with Streamlit AppTest.
+Ruff, compilation, frozen dependency sync and whitespace checks passed. Real
+Google sign-in, live YouTube uploads/schedules, model inference and TTS were not
+performed; operator setup and explicit live actions remain necessary.
+
+## Combined OpenCut clip controls and font milestone (27 October 2026)
+
+The owner approved both changes together on `opencut-editor`. The base native
+OpenCut integration was previously promoted into development (`b1c9323`);
+this new milestone stays on the OpenCut branch until explicitly promoted.
+
+The native right inspector now includes AI Clip for linked generated footage:
+prompt editing, Regenerate, New variation, Advanced seed, candidate review,
+version history and uploaded replacement footage. Preview uses the upper monitor;
+Use this version replaces only the selected occurrence through the native Undo
+command system and preserves compatible timeline edits. Insufficient footage
+blocks explicitly. Stable scene IDs survive split/duplicate and server reload;
+old drafts link only unambiguous source hashes. Candidate generation is bounded,
+cancellable at provider boundaries and recoverable after interruption. It does
+not rewrite the original manifest/plan or recompose original final video.
+Candidate versions/media travel in existing project archives. See
+`docs/OPENCUT_EDITOR.md` for queue ownership, persistence and scope.
+
+The native Font Family field is now a searchable local/system/OpenCut picker.
+Installed MoneyPrinter fonts are loaded as actual browser FontFaces; TTC files
+are converted to their first face with pinned FontTools. New caption imports
+retain the saved font family. Existing drafts preserve their selected font.
+No other caption controls are duplicated. Local font loading, native preview,
+text edits, reload and export share the same family mapping.
+
+Verification: 18 focused OpenCut/archive CPU tests passed. Real Chromium checked
+local font loading/selection, candidate generation/preview/apply/Undo, selected
+split-occurrence isolation, reload/fresh-browser restoration and native 1080x1920
+WebM export with audible narration saved back to the task. There were no page
+errors in the completed run. The CPU browser harness uses VP9 fixtures and native
+WebGL fallback with CPU rasterization flags, avoiding software Dawn/external-image
+copy and GPU-memory failures observed during initial runs. Production rendering
+and provider dispatch remain unchanged. Ruff, pinned build, formatting and compile
+checks passed. Live model inference/TTS/paid music/publishing were not exercised.
 
 ## Codespaces WebSocket/restart correction
 
@@ -72,7 +398,7 @@ explicitly documented. This does not claim full CapCut feature parity.
 ## Canonical product and repository state
 
 - **Product base:** `harry0703/MoneyPrinterTurbo` `main`, commit `ad5496f1b729d1d7e361dd972015d26c08b0e052` (verified again on 26 September 2026). The local `upstream` remote points there. Vendor tag: `vendor/mpt-2026-09-26-ad5496f`.
-- **Branches:** `main` is the stable accepted product branch and now includes the completed CPU-tested AI-video and first factual-mode implementation; `development` is the active implementation branch and now includes the owner-approved OpenCut integration. The explicitly authorized `opencut-editor` branch is retained for comparison. Create no additional branches. Commit ordinary changes on `development`, promote accepted milestones to `main` with a normal merge commit, then fast-forward `development` to that merge.
+- **Branches:** `main` is the stable accepted product branch and now includes the completed CPU-tested AI-video and first factual-mode implementation; `development` is the sole active development branch and was fast-forwarded to the promotion merge before further work. Create no other branches. Commit ordinary changes on `development`, promote accepted milestones to `main` with a normal merge commit, then fast-forward `development` to that merge.
 - **Product remote:** `https://github.com/shafiq079/moneyprinter-ai-video`. This CPU hardening pass started at `development` commit `269d5c0202492608e2a1309c94afcf1650bea3fc`; the pinned original vendor commit remains `ad5496f1b729d1d7e361dd972015d26c08b0e052` and is preserved by the vendor tag. Use only the two product branches. `origin` points to this product repository and `upstream` points to `harry0703/MoneyPrinterTurbo`. Do not use the older `shafiq079/MoneyPrinterTurbo` fork for this product.
 - **Old prototype:** `shafiq079/content-factory` `main` at `a1760488aae68b8c1c1076a26720a14f4368088f` is read-only reference. Its Next.js UI, FastAPI project API, SQLite queue, timeline v7 and renderer are **not** the new application.
 - **Completed:** SRS conversion, upstream revalidation and migration decisions; M1 fake-provider foundation; M2/M3 Wan integration and operator surface; M4 Scene Director; LTX 2.5 Fast/DFR; Phase 5 scene iteration; render-only rerender, cancellation, cleanup, provenance/security hardening, true No-Voice local-AI rendering, portable local-AI output packages, per-GPU cross-process runtime serialization, persisted local-AI timing telemetry, local-AI final-output validation, structured local-AI observability, visual-only regeneration/audio-caption reuse regression coverage, final audio gain-control regression coverage, and recoverable final-validation failure classification. Real Wan/LTX inference and Phase 6 quality measurements require GPU hardware and remain deferred.

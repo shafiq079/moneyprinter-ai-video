@@ -7,15 +7,27 @@ documentation relevant to the task (`docs/LOCAL_AI_VIDEO.md` or
 `docs/FACTUAL_MODE.md`). Treat the repository
 and current remote history as the source of truth if a previous chat differs.
 
-## OpenCut promotion (owner approved 26 October 2026)
+## OpenCut branch exception (owner approved 26 October 2026)
 
-The owner requested promotion of `opencut-editor` into `development` after
-confirming that the Codespaces connection worked. OpenCut is now the editor on
-`development`; continue ordinary implementation there. Keep `main` unchanged
-unless explicitly asked to promote it. The authorized `opencut-editor` branch
-is retained for comparison. The previous custom editor is preserved in history
-at `df626edd3022863723382d7fedf58882ae688629` and through the original-tools view.
-Do not create additional branches or force-push.
+The owner explicitly requested a third branch, `opencut-editor`, to integrate
+real OpenCut while keeping `development` as the previous-editor fallback.
+The base integration was later promoted to `development` at the owner's request.
+The combined native clip-controls/font milestone is authorized on `opencut-editor`
+(27 October 2026). The owner subsequently approved the YouTube-first connected
+accounts/reviewed publishing milestone on this working line, followed by the
+Facebook Page/Reel publishing extension. The owner then approved replacing the
+default YouTube integration with direct Google OAuth and in-product account/
+content management on the same branch. On 28 October 2026 the owner approved
+the equivalent direct Meta Facebook Page/Reel integration on this branch.
+The owner then approved AI publishing copy and thumbnail preparation for both
+direct platforms on this same working line (28 October 2026). The owner also
+approved the Content Library and Batch Publishing Planner on this branch,
+including optional automatic AI preparation and explicit batch approval. On
+29 October 2026 the owner approved Content Campaigns and Automated Production
+on this working branch, with separate production and publishing approval.
+Do not promote new changes to `development`/`main` without a
+later instruction. This overrides the historical
+two-branch restriction below for this experiment only.
 
 ## Project rules
 

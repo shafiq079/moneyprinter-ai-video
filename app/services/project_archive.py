@@ -44,7 +44,7 @@ def _name(value):
 def _allowed(name):
     _name(name)
     if name.startswith('opencut/'):
-        return bool(re.fullmatch(r'opencut/(?:project\.json|media/[a-f0-9]{64}|exports/[a-f0-9]{32}\.(?:mp4|webm))', name))
+        return bool(re.fullmatch(r'opencut/(?:(?:project|clips)\.json|media/[a-f0-9]{64}|exports/[a-f0-9]{32}\.(?:mp4|webm))', name))
     p = PurePosixPath(name)
     if len(p.parts) == 1:
         return name in ROOT_FILES or bool(re.fullmatch(r'[A-Za-z0-9_-][A-Za-z0-9_. -]*\.(?:mp3|wav|m4a|ogg|flac)', name)) or bool(re.fullmatch(r'(custom-audio-[A-Za-z0-9_.-]+\.(?:mp3|wav|m4a|ogg|flac)|final-\d+\.mp4|[a-z0-9_-]+-bgm-\d+\.[a-z0-9]+)', name))
@@ -154,6 +154,9 @@ def _validate(task_id, audio_ref):
     for name in (al.DRAFT, al.ACTIVE):
         if al.file(task_id, name).exists():
             al.resolve_assets(task_id, al.load(task_id, gm.media_sha256(root / audio_ref), name))
+    if (root / 'opencut' / 'clips.json').exists():
+        from app.services import opencut_clips
+        opencut_clips.validate_catalog(root=root)
     saved_opencut = root / 'opencut' / 'project.json'
     if saved_opencut.is_file():
         from app.services import opencut

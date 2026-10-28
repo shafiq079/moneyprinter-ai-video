@@ -32,7 +32,7 @@ contracts, with no mandatory paid video-generation API.
 | Editable project | Keep independently editable scene clips, narration/audio, captions, prompts and metadata alongside the final MP4. A bad scene or a render-only change must not invalidate unrelated generated assets. | Dedicated editor, scene history, narration/caption editing, independent music/SFX and portable editable project archives are implemented for saved creative AI projects. Undo/redo and stock/factual editor expansion remain later. |
 | In-product editor | Provide a self-hosted, CapCut-like experience using open-source components. | Dedicated full-page Streamlit editor with an embedded offline React timeline. Scene, narration, caption and music/SFX edits plus project archive import/export are implemented. Advanced effects, undo/redo and stock/factual project support remain later. |
 | Scene timing | Let scene count/length follow narration and content instead of forcing every scene to the same fixed length. | Current planner uses measured audio duration, beat weights and a maximum provider-supported scene duration. Visual cut timing rebalances adjacent scenes at fixed total duration. Automatic uses the existing narration-aware planner within model limits; natural-length narration retiming is implemented. Verified semantic/word alignment remains deferred. |
-| Publishing | Complete video generation without an upload dependency. Initially defer upload automation and channel-growth tooling. | Existing optional Upload-Post integration offers YouTube, TikTok and Instagram; operator end-to-end publishing was not established in this development effort. Direct platform OAuth is not an approved replacement. |
+| Publishing | Generation remains independent. Owner approved YouTube first, then Facebook Pages/Reels with reviewed publishing/scheduling; TikTok/Instagram and channel agents remain later. | Social Dashboard now connects YouTube directly to Google and manages content, reviewed resumable uploads and YouTube-owned schedules. Facebook remains on legacy Upload-Post until its direct milestone. Live acceptance and app verification remain operator-owned. |
 | Factual content | Optional evidence/review mode must not burden creative generation. | User-supplied excerpts, safe one-page import, review-only workflow and structural claim checks exist. Automatic discovery/source authentication and real-model acceptance remain deferred. |
 | Deployment | Start with a working single-product workflow; add multi-user infrastructure or new frontend only when real needs justify it. | An embedded React timeline in the existing Streamlit product is now approved and implemented. Accounts, billing, distributed scheduling and a replacement frontend remain outside scope. |
 
@@ -429,12 +429,80 @@ and narration-generation tools as explicit supporting controls. Evaluate this
 branch with the owner before merging it into development/main or expanding the
 stock/factual import contract. OpenCut beta features are not assumed complete.
 
+## Native OpenCut clip iteration and MoneyPrinter fonts
 
-## OpenCut promotion accepted
+The combined milestone lives on `opencut-editor` by owner request. Clip iteration
+uses OpenCut's native inspector, preview and Undo rather than a parallel editor.
+Generation produces reviewable independent candidates; applying changes one
+selected occurrence, preserving the original generation project. Installed
+MoneyPrinter fonts extend the native Font Family field and initial caption import.
+See OPENCUT_EDITOR.md for the implemented contract and remaining import limits.
 
-On 26 October 2026, after confirming the Codespaces UI worked, the owner asked
-for the completed OpenCut integration and connection fix to be pushed into
-development. Development is the active branch again. Main stays unchanged;
-opencut-editor is retained and the prior custom editor is available at df626ed
-in history. Continue the next approved milestone on development. This supersedes
-the earlier experimental-branch-only restriction above.
+## Approved YouTube-first publishing milestone (27 October 2026)
+
+The owner moved publishing/account attachment into current scope and clarified
+that YouTube comes first; TikTok and Instagram remain later. YouTube Studio now
+extends the existing Upload-Post provider with channel profiles/connection links,
+verified destination identity, frozen-video review, explicit approval, immediate
+or scheduled delivery, status/history, cancellation and bounded safe retry.
+Generation/editing remain independent; this is not approval for unattended video
+generation, analytics, trend research, multi-user accounts or direct Google OAuth.
+See YOUTUBE_PUBLISHING.md for operator setup, approval/queue contracts, provider
+schedule boundaries and tests. Work stays on opencut-editor until promoted.
+
+## Approved Facebook publishing extension (27 October 2026)
+
+Facebook Studio adds account connection, explicit Page selection and Page video/
+Reel publishing through Upload-Post, sharing reviewed snapshots, durable queue,
+schedules, history and safe retries with YouTube. Personal profiles/groups,
+Stories, TikTok/Instagram, analytics and continuous generation agents remain
+outside this milestone. Provider pin precedence and external destination-change
+boundaries are explicit. See FACEBOOK_PUBLISHING.md. Work stays on opencut-editor.
+
+## Approved direct YouTube integration (27 October 2026)
+
+The owner rejected a mandatory intermediary account and approved direct Google
+OAuth plus an in-product Social Dashboard. YouTube account/content management,
+reviewed resumable uploads, direct scheduled publication, metadata/thumbnail
+changes and explicit deletion now use official Google APIs. Existing provider
+records stay separate; the later direct Facebook milestone is documented below.
+See YOUTUBE_DIRECT.md for operator configuration, security and acceptance gates.
+
+## Approved direct Facebook integration (28 October 2026)
+
+The owner approved direct Meta login and in-product Page management after direct
+YouTube. Social Dashboard now provides explicit Page attachment, reviewed Page
+video/Reel uploads, native Meta scheduling, content editing/deletion, recovery
+and revocation. Legacy provider records remain accessible separately. No
+personal profile/group/Instagram/TikTok support, analytics or unattended
+generation is implied. See FACEBOOK_DIRECT.md. Work remains on opencut-editor.
+
+## Approved AI publishing preparation (28 October 2026)
+
+The owner approved automating metadata writing for both direct platforms. Shared
+script-grounded AI preparation fills titles, descriptions, hashtags and YouTube
+tags, with alternate titles and editable thumbnail suggestions. YouTube adds a
+reviewable CPU frame/text thumbnail, frozen and uploaded before release. Facebook
+cover selection remains outside its uploader. Durable encrypted drafts and source
+binding preserve review across reloads. Explicit publishing approval and audience/
+disclosure decisions remain. Ranking guarantees, live keyword metrics and
+unattended social posting are not implied. See AI_PUBLISHING.md.
+
+## Approved Content Library and Batch Publishing Planner (28 October 2026)
+
+The owner approved a central finished-video workflow following official platform
+workflow research. Originals/exports are grouped by task, editing is optional and
+one reviewed final feeds independently tracked account posts. Per-account defaults
+and posting slots support AI batch preparation, revision-bound review, explicit
+bulk approval, calendar/list tracking and same-ID delivery controls. Optional
+automatic AI preparation never authorizes publishing. See CONTENT_LIBRARY.md.
+Work remains on opencut-editor; recurring content and analytics remain future work.
+
+## Approved campaigns and production (29 October 2026)
+
+The owner approved a reviewed multi-video campaign layer over the existing
+generation/library/publishing services. AI planning and production approval are
+separate from finished-video review and publishing approval. Creative stock and
+registered local AI sources share durable item tracking, explicit recovery and
+optional editing. No unreviewed public posting, live research claim or recurring
+unattended campaign creation is implied. See CAMPAIGNS.md.
