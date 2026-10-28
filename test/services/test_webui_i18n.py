@@ -613,6 +613,8 @@ ENGLISH_FALLBACK_KEYS = frozenset(
         "Scene Editor",
         "Automatic Clip Duration",
         "Automatic Clip Duration Help",
+        "Automatic Timing Estimated",
+        "Automatic Shared Footage",
         "Keep Natural Narration Duration",
         "Preview Revised Timeline",
         "Natural Timeline Help",

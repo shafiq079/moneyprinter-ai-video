@@ -2427,7 +2427,7 @@ def _apply_restored_params(params):
     )
     _set_stable_widget_value(
         f"video_clip_duration_select_{video_source}" if local_ai.is_public_source(video_source) else "video_clip_duration_select",
-        "auto" if params.get("local_ai_duration_mode", "manual") == "auto" and local_ai.is_public_source(video_source)
+        "auto" if params.get("local_ai_duration_mode", "manual") == "auto" and (local_ai.is_public_source(video_source) or video_source in {"pexels", "pixabay", "coverr"})
         else params.get("video_clip_duration", 3)
     )
     _set_stable_widget_value(
@@ -2976,6 +2976,10 @@ def _render_generation_task_snapshot(task_id, task):
                     index=warning.get("video_index", ""), count=warning.get("count", 0)
                 )
             )
+        elif isinstance(warning, Mapping) and warning.get("code") == "automatic_timing_estimated":
+            st.warning(tr("Automatic Timing Estimated"))
+        elif isinstance(warning, Mapping) and warning.get("code") == "automatic_variants_share_scene_footage":
+            st.info(tr("Automatic Shared Footage"))
         elif isinstance(warning, Mapping) and warning.get("code") == "edited_narration_scene_captions":
             st.warning(tr("Scene Captions Help"))
         elif isinstance(warning, Mapping) and warning.get("code") == "edited_narration_captions_omitted":
@@ -6534,6 +6538,8 @@ def _render_video_settings(panel, params):
             # 范围，既避免 2/3 秒被按 4 秒计费，也让 WebUI 与 CLI、服务层一致。
             if local_ai_capability is not None:
                 video_clip_durations = ["auto", *local_ai_capability.clip_durations]
+            elif params.video_source in {"pexels", "pixabay", "coverr"}:
+                video_clip_durations = ["auto", 2, 3, 4, 5, 6, 7, 8, 9, 10]
             elif params.video_source == "metaso_minimax":
                 video_clip_durations = list(
                     range(
@@ -6553,7 +6559,7 @@ def _render_video_settings(panel, params):
             selected_clip_duration = stable_selectbox(
                 tr("Clip Duration"),
                 options=video_clip_durations,
-                default_value="auto" if local_ai_capability is not None and config.ui.get("local_ai_duration_mode", "auto") == "auto" else _saved_ui_choice(
+                default_value="auto" if (local_ai_capability is not None or params.video_source in {"pexels", "pixabay", "coverr"}) and config.ui.get("local_ai_duration_mode" if local_ai_capability is not None else "stock_duration_mode", "auto" if local_ai_capability is not None else "manual") == "auto" else _saved_ui_choice(
                     "video_clip_duration",
                     video_clip_durations,
                     (
@@ -6565,16 +6571,16 @@ def _render_video_settings(panel, params):
                     ),
                 ),
                 key=f"video_clip_duration_select_{params.video_source}" if local_ai_capability is not None else "video_clip_duration_select",
-                help=tr("Automatic Clip Duration Help") if local_ai_capability is not None else tr("Clip Duration Help"),
+                help=tr("Automatic Clip Duration Help") if "auto" in video_clip_durations else tr("Clip Duration Help"),
                 format_func=lambda value, auto_label=tr("Automatic Clip Duration"): auto_label if value == "auto" else str(value),
             )
             params.local_ai_duration_mode = "auto" if selected_clip_duration == "auto" else "manual"
             params.video_clip_duration = (
-                max(local_ai_capability.clip_durations)
+                (max(local_ai_capability.clip_durations) if local_ai_capability is not None else 10)
                 if selected_clip_duration == "auto" else selected_clip_duration
             )
-            if local_ai_capability is not None:
-                _set_runtime_config("ui", "local_ai_duration_mode", params.local_ai_duration_mode)
+            if "auto" in video_clip_durations:
+                _set_runtime_config("ui", "local_ai_duration_mode" if local_ai_capability is not None else "stock_duration_mode", params.local_ai_duration_mode)
                 if params.local_ai_duration_mode == "auto":
                     st.caption(tr("Automatic Clip Duration Help"))
             _set_runtime_config(

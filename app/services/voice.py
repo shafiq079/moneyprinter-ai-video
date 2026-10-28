@@ -892,6 +892,7 @@ def _tts_with_pauses(
     with tempfile.TemporaryDirectory() as temp_dir:
         audio_chunk_files: list[str] = []
         combined_submaker = ensure_legacy_submaker_fields(SubMaker())
+        any_estimated_timing = False
         cumulative_samples = 0
 
         for idx, (seg_type, seg_val) in enumerate(segments):
@@ -979,6 +980,7 @@ def _tts_with_pauses(
                 # 字幕偏移直接依据实际样本数精确计算，不存在 MP3 帧累积漂移
                 current_offset_seconds = cumulative_samples / float(SAMPLE_RATE)
 
+                any_estimated_timing = any_estimated_timing or getattr(chunk_submaker, "timing_estimated", False)
                 # 1. 迁移 cues (edge_tts 7.x)
                 if hasattr(chunk_submaker, "cues") and chunk_submaker.cues:
                     offset_td = timedelta(seconds=current_offset_seconds)
@@ -1008,6 +1010,7 @@ def _tts_with_pauses(
             logger.error("failed to concatenate audio chunks with pauses")
             return None
 
+        combined_submaker.timing_estimated = any_estimated_timing
         combined_submaker.duration = cumulative_samples / float(SAMPLE_RATE)
         return combined_submaker
 
@@ -1131,6 +1134,7 @@ def populate_legacy_submaker_with_full_text(
         已填充兼容字幕数据的 SubMaker 对象
     """
     sub_maker = ensure_legacy_submaker_fields(sub_maker)
+    sub_maker.timing_estimated = True
 
     # 清空旧值，避免调用方重复复用对象时出现脏数据叠加。
     sub_maker.subs = []

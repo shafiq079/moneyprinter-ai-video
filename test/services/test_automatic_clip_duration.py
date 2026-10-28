@@ -1,5 +1,6 @@
 """Automatic selection reuses the narration-aware planner and saved scene cuts."""
 import json
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -61,7 +62,8 @@ class TestAutomaticPipeline(LocalAITestCase):
                              subtitle_enabled=False, bgm_type="", n_threads=1)
         def speech(**kwargs):
             assert str(self.make_audio(task_id, 4.2)) == kwargs["voice_file"]
-            return object()
+            return SimpleNamespace(cues=[SimpleNamespace(start=timedelta(seconds=a), end=timedelta(seconds=b), content=text)
+                for a, b, text in [(0, 1.1, "Flowers open."), (1.1, 3, "Bees gather pollen."), (3, 4.2, "Evening arrives.")]])
         with (patch.dict("os.environ", {"MPT_ENABLE_LOCAL_AI_FAKE_PROVIDER": "1"}),
               patch.object(task.sm, "state", state),
               patch.object(local_ai, "prepare_provider", return_value=provider),
@@ -72,10 +74,12 @@ class TestAutomaticPipeline(LocalAITestCase):
             failed = task.start(task_id, params)
             assert failed["state"] == task.const.TASK_STATE_FAILED
             plan = scene_planner.load_scene_plan(task_id)
-            assert len(plan.scenes) == 2  # Manual 1s would require five scenes.
+            assert len(plan.scenes) == 3  # One scene per spoken sentence, not ceil(total / cap).
             assert plan.scenes[0].target_duration != plan.scenes[1].target_duration
             assert all(1 < s.target_duration <= 3 for s in plan.scenes)
-            assert sum(s.target_duration for s in plan.scenes) == 5
+            assert sum(s.target_duration for s in plan.scenes) == pytest.approx(task.voice.get_audio_duration(str(self.task_root / task_id / "audio.mp3")))
+            assert plan.scenes[0].target_duration == pytest.approx(1.1)
+            assert plan.scenes[1].narration_segment == "Bees gather pollen."
             first_asset = gm.resolve_asset(
                 task_id, gm.scene_record(gm.load_manifest(task_id), 1)["active_asset"])
             original = first_asset.read_bytes()
@@ -91,7 +95,7 @@ class TestAutomaticPipeline(LocalAITestCase):
                 assert context["params"].local_ai_duration_mode == "auto"
                 result = task.start(task_id, context["params"], resume_context=context)
             assert restarted.get_task(task_id)["state"] == task.const.TASK_STATE_COMPLETE
-            assert provider.generated_scene_ids == [1, 2]
+            assert provider.generated_scene_ids == [1, 2, 3]
             assert first_asset.read_bytes() == original
             assert combine.call_args.kwargs["scene_durations"] == [s.target_duration for s in plan.scenes]
             assert abs(task.voice.get_audio_duration(result["videos"][0]) - 4.2) < 0.1

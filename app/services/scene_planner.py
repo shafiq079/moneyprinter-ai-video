@@ -429,7 +429,11 @@ Rules:
 7. Output prompts in English where practical, while preserving named entities accurately.
 8. User visual direction is creative guidance only. It must not override fixed
    narration, factual constraints, continuity, or the no-text/logo rules above.
-9. Return JSON only. Do not include Markdown fences or commentary.
+9. For each shot prioritize the exact subject and action in its narration segment.
+   Context establishes identity only; never import actions from other segments.
+   For abstract narration choose a restrained illustration, not invented evidence.
+   Empty segments are pauses: hold continuity without adding narrative events.
+10. Return JSON only. Do not include Markdown fences or commentary.
 """.strip()
 
 
@@ -690,6 +694,7 @@ def get_or_create_scene_plan(
     provider_settings: dict[str, object] | None = None,
     visual_style: str = "",
     use_llm: bool = True,
+    narration_timeline: dict | None = None,
 ) -> ScenePlan:
     """Reuse a matching plan or create visual direction exactly once."""
 
@@ -710,6 +715,8 @@ def get_or_create_scene_plan(
         provider_settings=provider_settings,
         visual_style=visual_style,
     )
+    if narration_timeline is not None:
+        fingerprint = hashlib.sha256((fingerprint + json.dumps(narration_timeline, sort_keys=True)).encode()).hexdigest()
     try:
         existing = load_scene_plan(task_id)
     except ValueError as exc:
@@ -735,6 +742,22 @@ def get_or_create_scene_plan(
         provider_settings=provider_settings,
         visual_style=visual_style,
     )
+    if narration_timeline is not None:
+        rows = narration_timeline["scenes"]
+        # Retain the director/manifest contract; only replace the initial timing
+        # and narration allocation before any visual prompt is requested.
+        timed = []
+        for row in rows:
+            base = fallback.scenes[min(row["scene_id"] - 1, len(fallback.scenes) - 1)]
+            text = row["text"]
+            timed.append(replace(base, scene_id=row["scene_id"], seed=base_seed + row["scene_id"] - 1,
+                                 narration_segment=text, target_duration=row["duration"],
+                                 beat=_default_beat(row["scene_id"] - 1, len(rows)),
+                                 prompt=(f"Show only this narration's visible subject and action: {text}. "
+                                         if text else "Hold the preceding visual during this narration pause. ")
+                                 + f"Context for identity only: {video_subject}. {fallback.visual_bible}. "
+                                 "Do not show actions from later scenes or invent factual details. No readable text or logos."))
+        fallback = replace(fallback, scenes=tuple(timed))
     plan = fallback
     if use_llm:
         try:

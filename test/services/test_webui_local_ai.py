@@ -221,3 +221,37 @@ def test_automatic_duration_selection_persists_and_manual_remains_available():
         assert not fresh.exception
         assert next(i for i in fresh.selectbox if str(i.key).startswith("video_clip_duration_select")).value == "auto"
         preflight.assert_not_called()
+
+
+def test_stock_automatic_is_explicit_persists_and_restores_without_model_calls():
+    with (
+        patch.object(config, "app", dict(config.app, llm_provider="openai", video_source="pexels")),
+        patch.object(config, "ui", {}),
+        patch.object(config, "try_save_config", return_value=True),
+        patch("app.services.voice.tts") as speech,
+        patch("app.services.llm.generate_json_response") as model,
+    ):
+        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=60)
+        app.session_state["ui_language"] = "en"
+        app.run()
+        assert not app.exception
+        duration = next(i for i in app.selectbox if str(i.key).startswith("video_clip_duration_select"))
+        assert duration.value == 3
+        assert "Automatic (recommended)" in duration.options
+        duration.set_value("auto").run()
+        assert not app.exception
+        assert config.ui["stock_duration_mode"] == "auto"
+        speed = next(i for i in app.slider if str(i.key).startswith("video_clip_speed_slider"))
+        assert speed.disabled and speed.value == 1
+        fresh = AppTest.from_file(str(WEBUI_MAIN), default_timeout=60)
+        fresh.session_state["ui_language"] = "en"
+        fresh.run()
+        assert not fresh.exception
+        assert next(i for i in fresh.selectbox if str(i.key).startswith("video_clip_duration_select")).value == "auto"
+        fresh.session_state["task_restore_payload"] = {"task_id": "fixed-stock", "params": {
+            "video_subject": "Flowers", "video_source": "pexels", "video_clip_duration": 4}}
+        fresh.run()
+        assert not fresh.exception
+        assert next(i for i in fresh.selectbox if str(i.key).startswith("video_clip_duration_select")).value == 4
+        speech.assert_not_called()
+        model.assert_not_called()

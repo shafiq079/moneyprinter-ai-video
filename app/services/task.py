@@ -20,7 +20,7 @@ from app.config import config
 from app.models import const
 from app.models.schema import VideoConcatMode, VideoParams
 from app.services import bgm as bgm_service
-from app.services import caption_edits
+from app.services import caption_edits, narration_plan
 from app.services import factual_content
 from app.services import generation_manifest, local_ai, narration_ranges, narration_mix, narration_timeline, scene_planner
 from app.services import (
@@ -857,6 +857,8 @@ def get_video_materials(
                 # The fake provider is a CPU/CI transport test. Keep it independent
                 # from configured LLM/network availability.
                 use_llm=provider.provider_id != local_ai.FAKE_SOURCE_ID,
+                narration_timeline=(narration_plan.load(task_id)
+                    if params.local_ai_duration_mode == "auto" and narration_plan.file(task_id).exists() else None),
             )
             scenes = list(scene_plan.scenes)
             sm.state.update_task(
@@ -1014,6 +1016,15 @@ def get_video_materials(
                     "loomloom_listing_version_id": request.listing_version_id,
                 },
             )
+            return None
+    elif params.local_ai_duration_mode == "auto" and params.video_source in narration_plan.STOCK_SOURCES:
+        try:
+            return narration_plan.stock_materials(task_id, params,
+                cancel_check=lambda: _raise_if_cancelled(task_id, "materials"))
+        except Exception as exc:
+            if is_cancellation_requested(task_id):
+                _raise_if_cancelled(task_id, "materials")
+            _mark_task_failed(task_id, "materials", f"automatic stock matching failed: {type(exc).__name__}: {exc}")
             return None
     else:
         logger.info(f"\n\n## downloading videos from {params.video_source}")
@@ -1184,6 +1195,12 @@ def generate_final_videos(
     final_video_paths = []
     combined_video_paths = []
     warnings = []
+    if params.local_ai_duration_mode == "auto" and narration_plan.file(task_id).exists():
+        saved_timing = narration_plan.load(task_id)
+        if saved_timing["timing_source"] == "estimated_text" or saved_timing["estimated_subdivision"]:
+            warnings.append({"code": "automatic_timing_estimated", "source": saved_timing["timing_source"]})
+        if params.video_source in narration_plan.STOCK_SOURCES and params.video_count > 1:
+            warnings.append({"code": "automatic_variants_share_scene_footage"})
     variable_timing = None
     caption_render_data = None
     original_audio_file = audio_file
@@ -1260,7 +1277,15 @@ def generate_final_videos(
             timing_options["scene_durations"] = [
                 durations[str(scene_id)] for scene_id in generation_manifest.scene_playback_order(manifest)
             ]
-    allocate_batch_materials = params.video_count > 1 and params.video_source in {
+    automatic_stock = params.local_ai_duration_mode == "auto" and params.video_source in narration_plan.STOCK_SOURCES
+    if automatic_stock:
+        timing = narration_plan.load(task_id)
+        if timing.get("audio_sha256") != narration_plan.audio_digest(audio_file):
+            raise ValueError("automatic stock narration has changed; regenerate the task")
+        if [row.get("asset") for row in timing["scenes"]] != list(downloaded_videos):
+            raise ValueError("automatic stock assets do not match narration plan")
+        timing_options["scene_durations"] = [row["duration"] for row in timing["scenes"]]
+    allocate_batch_materials = not automatic_stock and params.video_count > 1 and params.video_source in {
         "pexels", "pixabay", "coverr", "local"
     }
     source_usage = {}
@@ -1281,7 +1306,7 @@ def generate_final_videos(
         # Local AI clips are generated against an ordered scene plan. Shuffling them
         # would detach visuals from the narration beats they were created for.
         video_concat_mode = VideoConcatMode.sequential
-    elif params.match_materials_to_script:
+    elif params.match_materials_to_script or automatic_stock:
         video_concat_mode = VideoConcatMode.sequential
     elif params.video_count == 1:
         video_concat_mode = params.video_concat_mode
@@ -3172,6 +3197,13 @@ def _run_pipeline(
     except factual_content.FactualReviewBlocked as exc:
         return _mark_task_failed(task_id, "factual_review", str(exc))
 
+    if params.local_ai_duration_mode == "auto" and (
+        params.video_clip_speed != 1.0 or not (
+            local_ai.is_local_ai_source(params.video_source) or params.video_source in narration_plan.STOCK_SOURCES
+        )
+    ):
+        return _mark_task_failed(task_id, "preflight", "Automatic duration supports stock/local AI sources at normal playback speed only")
+
     prepared_local_ai_provider = None
     if (
         stop_at in {"materials", "video"}
@@ -3373,7 +3405,9 @@ def _run_pipeline(
     # spend an extra LLM call on stock-search keywords for that path.
     is_local_ai_source = local_ai.is_local_ai_source(params.video_source)
     video_terms = [] if is_local_ai_source else ""
-    if params.video_source != "local" and not is_local_ai_source:
+    if params.video_source != "local" and not is_local_ai_source and not (
+        params.local_ai_duration_mode == "auto" and params.video_source in narration_plan.STOCK_SOURCES and stop_at != "terms"
+    ):
         video_terms = generate_terms(task_id, params, video_script)
         if not video_terms:
             return _mark_task_failed(
@@ -3456,6 +3490,29 @@ def _run_pipeline(
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=40)
 
     _raise_if_cancelled(task_id, "subtitle")
+
+    # Automatic scene allocation consumes the same speech clock as captions.
+    # Historical Resume never replans saved narration/media recipes.
+    if params.local_ai_duration_mode == "auto" and resume_context is None and (
+        is_local_ai_source or params.video_source in narration_plan.STOCK_SOURCES
+    ):
+        try:
+            if params.subtitle_enabled and not subtitle_path:
+                raise ValueError("captions were requested but no caption timeline was produced; check caption/voice settings")
+            measured = float(voice.get_audio_duration(audio_file))
+            ceiling = (local_ai.scene_duration_limit(prepared_local_ai_provider, params.video_clip_duration, automatic=True)
+                       if is_local_ai_source else 10.0)
+            timing = narration_plan.prepare(task_id, video_script, audio_file, ceiling,
+                duration=measured, maker=(None if subtitle_path and config.app.get("subtitle_provider", "edge").strip().lower() == "whisper"
+                                         else sub_maker), captions=subtitle_path,
+                estimated=voice.is_no_voice(params.voice_name))
+            audio_duration = measured
+            task_artifacts.patch_script_data(task_id, narration_timing={
+                "source": timing["timing_source"], "estimated_subdivision": timing["estimated_subdivision"],
+                "scene_count": len(timing["scenes"]), "asset": "narration_plan.json"})
+            logger.info(f"Automatic narration timing: source={timing['timing_source']}, estimated_subdivision={timing['estimated_subdivision']}, scenes={len(timing['scenes'])}")
+        except (OSError, ValueError, TypeError) as exc:
+            return _mark_task_failed(task_id, "scene_planning", f"automatic narration planning failed: {exc}")
 
     # 5. Get video materials
     downloaded_videos = get_video_materials(

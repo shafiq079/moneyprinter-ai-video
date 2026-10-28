@@ -2,6 +2,52 @@
 
 Read this file first in every new AI or developer session. `docs/SRS.md` is the full product specification; `docs/MIGRATION_MAP.md` is the file-level porting decision. `docs/PRODUCT_VISION.md` preserves the owner's longer-term editable-project and publishing goals separately from implemented scope and unapproved technical proposals. `docs/CHATGPT_PROJECT_SETUP.md` contains the reusable ChatGPT Project handoff. Update this handoff with every accepted milestone. Local desktop Codex setup and two-machine sync instructions are in `AGENTS.md` and `docs/LOCAL_CODEX_SETUP.md`.
 
+## Narration-driven Automatic scene timing (29 October 2026)
+
+The owner promoted prior OpenCut/publishing/campaign work into development at
+3a938c21fd5ff2e18fcb1bbd10295daa5119e5a5, then authorized this focused milestone
+on opencut-editor. Development is the preserved baseline; main is unchanged.
+Visual recognition/footage inspection is explicitly excluded by the owner.
+
+Automatic now saves narration_plan.json from existing speech cues/legacy offsets
+or script-matching SRT. Full transcript coverage and monotonic bounded cues are
+checked. Missing/unusable timestamps, No Voice and synthetic provider timing are
+explicit estimates; interpolation inside coarse cues is separately flagged.
+Actual audio duration replaces whole-second rounding for new Automatic plans.
+Sentence boundaries and available word/clause boundaries determine variable shot
+count/length, within existing local-provider ceilings. Existing adapters still
+handle generation minimum/frame requirements. Saved local-AI Resume and manual
+fixed-cap generation retain their prior plans and behavior.
+
+The director receives those exact narration spans/durations with tighter subject,
+action, continuity and no-invented-detail instructions. Automatic is also an
+explicit choice for Pexels/Pixabay/Coverr (10-second application playback ceiling;
+stock still defaults to its prior numeric setting). Each scene gets 1–3 bounded
+queries, at most five candidate downloads per query, with decoded duration checks.
+Missing sufficient distinct footage blocks the identified scene; unrelated scene
+footage is never borrowed. Search relevance remains unverified by design.
+Automatic stock variants share scene footage, with a result notice. Remote paid
+video services retain existing fixed controls and confirmation semantics.
+
+Explicit scene durations feed the existing ordered composer without looping or
+speed changes. Captions retain their existing speech clock; requested captions
+that fail to produce a timeline block Automatic before material generation.
+Source/query provenance and timing-quality metadata are recorded; estimates are
+visible in result warnings. Narration plans are exposed in artifact packages/API
+and retained in local-AI portable archives. Historical archives remain supported.
+See docs/AUTOMATIC_SCENES.md for plan, scope, recovery and live acceptance.
+
+Verification: generation/material/voice/subtitle/archive regression passed 230
+checks with 3 existing skips; task/editor/OpenCut/campaign regression passed 180
+checks with 3 existing skips and 10266 subtests. Final timing/UI/i18n regression
+passed 45 checks and 10225 subtests; the final 20 narration-plan checks passed
+again after cue-coverage hardening. Actual CPU MP4 checks verify the planned
+1.1-second color cut, total audio coverage, and saved-plan local-AI resume.
+Caption timing, fixed-mode restoration, corruption rejection, bounded search
+alternatives and no-result blocking are covered. Ruff, compileall, frozen sync,
+lock and whitespace checks passed. No live TTS, model/stock API, GPU inference
+or social publishing was performed. Operator live acceptance remains deferred.
+
 ## Content Campaigns and Automated Production (29 October 2026)
 
 The owner approved planning and implementing campaigns on opencut-editor.

@@ -239,6 +239,9 @@ def build_output_package(
         "generation_manifest": generation_manifest,
         "scene_materials": scene_materials,
     }
+    timing = _task_relative_existing_file(task_id, root / "narration_plan.json")
+    if timing:
+        package["narration_plan"] = timing
     narration = _task_relative_existing_file(task_id, root / "narration_ranges.json")
     if narration:
         package["narration_ranges"] = narration

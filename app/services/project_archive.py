@@ -25,7 +25,7 @@ MAX_ARCHIVE = 512 * 1024 * 1024
 MAX_TOTAL = 2 * 1024 * 1024 * 1024
 MAX_FILES = 4096
 MAX_JSON = 2 * 1024 * 1024
-ROOT_FILES = {'script.json', 'scene_plan.json', 'audio.mp3', 'subtitle.srt',
+ROOT_FILES = {'narration_plan.json', 'script.json', 'scene_plan.json', 'audio.mp3', 'subtitle.srt',
               'narration_ranges.json', nm.NAME,
               ce.DRAFT, ce.ACTIVE, al.DRAFT, al.ACTIVE, 'audio_base_music.json'}
 FOLDERS = {'generated_ai', 'narration_previews', 'narration_replacements', 'narration_mixes', 'audio_assets',

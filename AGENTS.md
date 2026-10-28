@@ -25,6 +25,10 @@ approved the Content Library and Batch Publishing Planner on this branch,
 including optional automatic AI preparation and explicit batch approval. On
 29 October 2026 the owner approved Content Campaigns and Automated Production
 on this working branch, with separate production and publishing approval.
+On 29 October 2026 the owner promoted the completed work to `development`
+at 3a938c2 and approved narration-driven Automatic scene timing and tighter
+scene-specific visual instructions on `opencut-editor`. Visual recognition and
+automatic inspection of generated footage are explicitly outside this milestone.
 Do not promote new changes to `development`/`main` without a
 later instruction. This overrides the historical
 two-branch restriction below for this experiment only.
