@@ -497,3 +497,12 @@ and posting slots support AI batch preparation, revision-bound review, explicit
 bulk approval, calendar/list tracking and same-ID delivery controls. Optional
 automatic AI preparation never authorizes publishing. See CONTENT_LIBRARY.md.
 Work remains on opencut-editor; recurring content and analytics remain future work.
+
+## Approved campaigns and production (29 October 2026)
+
+The owner approved a reviewed multi-video campaign layer over the existing
+generation/library/publishing services. AI planning and production approval are
+separate from finished-video review and publishing approval. Creative stock and
+registered local AI sources share durable item tracking, explicit recovery and
+optional editing. No unreviewed public posting, live research claim or recurring
+unattended campaign creation is implied. See CAMPAIGNS.md.

@@ -165,3 +165,6 @@ Validation results: 224 publishing/OpenCut tests plus 10225 translation subtests
 passed; 110 generation/task/artifact/archive tests plus 18 subtests passed, with
 3 existing skips. The final dedicated library/planner run passed 29 tests. Ruff,
 compileall, frozen sync, lock validation and whitespace checks passed.
+
+Campaigns can now group and produce multiple videos, then open a campaign-filtered
+library and prepare missing destination drafts. See [CAMPAIGNS.md](CAMPAIGNS.md).

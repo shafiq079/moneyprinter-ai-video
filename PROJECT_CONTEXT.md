@@ -2,6 +2,47 @@
 
 Read this file first in every new AI or developer session. `docs/SRS.md` is the full product specification; `docs/MIGRATION_MAP.md` is the file-level porting decision. `docs/PRODUCT_VISION.md` preserves the owner's longer-term editable-project and publishing goals separately from implemented scope and unapproved technical proposals. `docs/CHATGPT_PROJECT_SETUP.md` contains the reusable ChatGPT Project handoff. Update this handoff with every accepted milestone. Local desktop Codex setup and two-machine sync instructions are in `AGENTS.md` and `docs/LOCAL_CODEX_SETUP.md`.
 
+## Content Campaigns and Automated Production (29 October 2026)
+
+The owner approved planning and implementing campaigns on opencut-editor.
+Campaigns (?view=campaigns) records a brief, 1–20 videos, language, supported
+creative generation template and destination accounts. Explicit AI planning
+produces distinct editable topics/scripts. Production is separately approved
+against the latest revision; script changes invalidate stale review. A campaign
+is not authorization to publish. Factual evidence review and provider-specific
+quote/reference-input flows remain in their individual workflows.
+
+Production enters the existing serialized WebUI manager, one campaign item at a
+time. Stable task IDs, item leases, encrypted state and completion receipts
+preserve work across reloads. Pausing stops new starts; active cancellation uses
+the cooperative task mechanism. Local AI uses saved same-task resume when valid;
+stock/full restarts are explicit new attempts retaining earlier files. Failed or
+unconfirmed provider operations never restart blindly. A decodable MP4 alone is
+not proof of pipeline success; an unconfirmed retained final needs operator review.
+
+The pipeline now accepts an internal allow_auto_publish flag, defaulting to the
+previous behavior. Campaign runs always pass False, disabling legacy automatic
+cross-posting even when globally enabled. No approved production can bypass the
+existing visual final review and separate publishing approval.
+
+Campaign-filtered Content Library links preserve optional editing and exact final
+selection. Ready campaign videos feed existing AI publishing preparation and
+account slot/default services. Missing destination pairs become unapproved batch
+drafts; existing plans/IDs are not replaced. Per-account states and prior attempt
+IDs are visible. Templates contain no tokens/provider credentials; campaign state
+is encrypted under ignored storage/social/campaigns. See docs/CAMPAIGNS.md for
+scope, design plan, recovery and the operator-run live acceptance checklist.
+
+Verification: a broad campaign/library/publishing/OpenCut/generation/archive run
+passed 274 tests, 3 existing skips and 10243 subtests. After final ownership and
+status reconciliation hardening, all 20 campaign/service/UI checks passed again.
+Coverage includes real pipeline suppression of legacy auto-upload despite its
+global setting, stale approvals, retained failed finals, completion receipts,
+queue ownership, pause/cancel, same-task local resume, new stock attempts,
+missing-destination batching and cold UI reload. Ruff, compileall, frozen sync,
+lock validation and whitespace checks passed. No live AI/provider/social calls
+or GPU inference were performed; operator live acceptance remains explicit.
+
 ## Content Library and Batch Publishing Planner (28 October 2026)
 
 Following research of Buffer/Publer/Metricool/Hootsuite/Make workflows, the owner

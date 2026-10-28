@@ -22,7 +22,9 @@ the equivalent direct Meta Facebook Page/Reel integration on this branch.
 The owner then approved AI publishing copy and thumbnail preparation for both
 direct platforms on this same working line (28 October 2026). The owner also
 approved the Content Library and Batch Publishing Planner on this branch,
-including optional automatic AI preparation and explicit batch approval.
+including optional automatic AI preparation and explicit batch approval. On
+29 October 2026 the owner approved Content Campaigns and Automated Production
+on this working branch, with separate production and publishing approval.
 Do not promote new changes to `development`/`main` without a
 later instruction. This overrides the historical
 two-branch restriction below for this experiment only.

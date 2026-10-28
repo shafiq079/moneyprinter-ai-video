@@ -18,6 +18,7 @@ from app.services import (
 def navigation(tr):
     with st.container(horizontal=True):
         st.link_button(tr("Create"), "?")
+        st.link_button(tr("Campaigns"), "?view=campaigns")
         st.link_button(tr("Content Library"), "?view=library")
         st.link_button(tr("Publishing"), "?view=publishing")
         st.link_button(tr("Accounts"), "?view=social")
@@ -42,6 +43,13 @@ def _render_library(tr):
     lib.recover()
     lib.discover_automatic()
     projects = lib.projects()
+    if st.query_params.get("campaign"):
+        from app.services import campaigns
+
+        task_ids = {
+            i["task_id"] for i in campaigns.get(st.query_params["campaign"])["items"]
+        }
+        projects = [p for p in projects if p["task_id"] in task_ids]
     if not projects:
         st.info(tr("Complete a video to add it to your library."))
         return
@@ -446,6 +454,10 @@ def _batch(tr):
         return
     wanted = st.query_params.get("batch")
     ids = [v["id"] for v in values]
+    if st.session_state.get("planner_requested_batch") != wanted:
+        st.session_state["planner_requested_batch"] = wanted
+        if wanted in ids:
+            st.session_state["planner_batch"] = wanted
     bid = st.selectbox(
         tr("Publishing batch"),
         ids,

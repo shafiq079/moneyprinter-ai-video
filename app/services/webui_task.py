@@ -64,6 +64,7 @@ def _run_generation(
     voxcpm_prompt_text: str = "",
     resume_context: dict | None = None,
     stop_at: str = "video",
+    allow_auto_publish: bool = True,
 ) -> dict:
     """
     在后台线程中执行现有视频流水线。
@@ -97,6 +98,7 @@ def _run_generation(
                 voxcpm_prompt_audio=voxcpm_prompt_audio,
                 voxcpm_prompt_text=voxcpm_prompt_text,
                 resume_context=resume_context,
+                **({"allow_auto_publish": False} if not allow_auto_publish else {}),
             )
     except Exception as exc:
         # tm.start 已负责把流水线异常转换成失败状态；这里额外保护日志 sink、

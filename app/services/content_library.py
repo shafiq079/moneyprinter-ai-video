@@ -974,6 +974,12 @@ def _processing(task_id):
 
 
 def startup():
+    from app.services import campaigns
+
+    try:
+        campaigns.recover()
+    except Exception as exc:
+        logger.warning("Campaign recovery deferred: {}", type(exc).__name__)
     for operation in (youtube.recover, facebook.recover, recover, discover_automatic):
         try:
             operation()
