@@ -32,6 +32,9 @@ automatic inspection of generated footage are explicitly outside this milestone.
 On 31 October 2026 the owner approved reuse of the full generator settings
 for campaigns, including shared defaults, per-video overrides and retained
 provider-specific upload/charge/quote requirements, on opencut-editor.
+On 1 November 2026 the owner approved pre-creation per-video campaign cards,
+AI script/keyword preparation and a clean separation from shared writing/production
+defaults on this same branch.
 Do not promote new changes to `development`/`main` without a
 later instruction. This overrides the historical
 two-branch restriction below for this experiment only.

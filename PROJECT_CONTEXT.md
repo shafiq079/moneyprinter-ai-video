@@ -2,6 +2,39 @@
 
 Read this file first in every new AI or developer session. `docs/SRS.md` is the full product specification; `docs/MIGRATION_MAP.md` is the file-level porting decision. `docs/PRODUCT_VISION.md` preserves the owner's longer-term editable-project and publishing goals separately from implemented scope and unapproved technical proposals. `docs/CHATGPT_PROJECT_SETUP.md` contains the reusable ChatGPT Project handoff. Update this handoff with every accepted milestone. Local desktop Codex setup and two-machine sync instructions are in `AGENTS.md` and `docs/LOCAL_CODEX_SETUP.md`.
 
+## Campaign content composer (1 November 2026)
+
+Owner approved pre-creation per-video cards on opencut-editor. Campaigns starts
+with one stable-ID card, supports up to twenty, and protects populated removals.
+Each card owns subject, narration and visual keywords. Explicit text-only AI fills
+empty fields for all/one card; confirmed replacement is separate. Responses must
+match requested IDs/count, valid limits and distinct content; malformed/failed AI
+returns no partial updates. Browser-session drafts survive shared-settings navigation;
+creation validates/saves all planned items atomically without AI, media or queue calls.
+
+Shared settings now render reused writing defaults (paragraph/instructions/content
+mode/evidence) and video/audio/subtitle panels. Subject/script/keyword generation
+controls appear only in cards or individual settings. Campaign language controls
+batch writing; individual language overrides remain supported. Main's normal script
+panel reuses extracted helpers and keeps its existing controls. Readable settings
+summaries replace raw parameter dumps; JSON is optional advanced detail.
+
+Keywords save per item, flow through effective parameters and freeze at approval.
+Legacy approved snapshots stay intact; unapproved items never inherit shared search
+terms. Automatic stock-query prompts treat per-video keywords as secondary guidance
+to scene narration. No timing/matching algorithm or media provider contract changed.
+Legacy empty campaigns retain explicit planning; populated dashboard campaigns no
+longer offer a bulk replan that could discard reviewed content. Production/publishing
+approvals, retained inputs, per-script quotes and same-task recovery remain separate.
+See docs/CAMPAIGN_COMPOSER.md and docs/CAMPAIGN_SETTINGS.md. Live AI/provider/GPU/social
+acceptance is operator-owned; only mocked/CPU verification is run for this milestone.
+
+Verification: final focused campaign/settings/UI run passed 35 tests, existing
+single-generator/LLM/voice-preview/narration-plan run passed 50, and worker/library/
+OpenCut/campaign/i18n regression run passed 97 with 10225 translation subtests.
+Ruff, compile checks, whitespace checks and frozen offline sync passed. No live
+AI, TTS, media provider, GPU or social publishing calls were made.
+
 ## Full campaign production settings (31 October 2026)
 
 Owner approved full generator control reuse on opencut-editor. Campaigns now

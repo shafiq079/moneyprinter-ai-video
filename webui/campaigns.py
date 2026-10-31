@@ -12,6 +12,7 @@ from app.services import (
     campaign_production as production,
 )
 from webui.publishing_planner import navigation
+from webui import campaign_composer as composer, production_summary
 
 
 def render(tr):
@@ -38,6 +39,7 @@ def render(tr):
 
 
 def _create(tr):
+    composer.sync()
     projects = library.projects()
     templates = ["default"] + [p["task_id"] for p in projects]
     chosen = st.selectbox(
@@ -79,7 +81,7 @@ def _create(tr):
         if "campaign_brief" in st.session_state:
             st.session_state["campaign_new_fields"] = {
                 "brief": st.session_state.get("campaign_brief", ""),
-                "count": st.session_state.get("campaign_count", 5),
+                "count": len(composer.rows()),
                 "language": st.session_state.get(
                     "campaign_language:" + chosen, "English"
                 ),
@@ -89,7 +91,7 @@ def _create(tr):
         st.query_params["view"] = "campaign-settings"
         st.rerun()
     with st.expander(tr("Production settings")):
-        st.json(defaults)
+        production_summary.render(defaults, tr)
     cached = st.session_state.get("campaign_new_fields", {})
     brief = st.text_area(
         tr("Campaign brief"),
@@ -100,13 +102,7 @@ def _create(tr):
             "Include the niche, audience, target video length, tone and topics to include or avoid."
         ),
     )
-    count = st.number_input(
-        tr("Number of campaign videos"),
-        min_value=1,
-        max_value=20,
-        value=cached.get("count", 5),
-        key="campaign_count",
-    )
+    composer.render_count(tr)
     language = st.text_input(
         tr("Campaign language"),
         value=cached.get("language", defaults.get("video_language") or "English"),
@@ -128,7 +124,7 @@ def _create(tr):
     )
     st.session_state["campaign_new_fields"] = {
         "brief": brief,
-        "count": count,
+        "count": len(composer.rows()),
         "language": language,
         "destinations": destinations,
     }
@@ -137,9 +133,13 @@ def _create(tr):
             "Planning never starts video generation. Source credentials and local AI compute must be configured before production."
         )
     )
-    if st.button(tr("Create campaign"), key="campaign_create"):
+    cards = composer.render(tr, brief, language, defaults)
+    complete = all(row["title"].strip() and row["script"].strip() for row in cards)
+    if st.button(tr("Create campaign"), key="campaign_create", disabled=not complete):
         settings = package or defaults
-        value = service.create(brief, int(count), language, settings, destinations)
+        value = service.create(
+            brief, len(cards), language, settings, destinations, items=cards
+        )
         st.query_params["campaign"] = value["id"]
         st.session_state["campaign_selected"] = value["id"]
         st.rerun()
@@ -186,7 +186,7 @@ def _dashboard(tr):
             st.rerun()
     st.caption(tr("Campaign language") + ": " + value["language"])
     with st.expander(tr("Production settings")):
-        st.json(value["template"])
+        production_summary.render(value["template"], tr)
     editable = not value["items"] or all(
         i["state"] == "planned" for i in value["items"]
     )
@@ -196,7 +196,7 @@ def _dashboard(tr):
         st.query_params.update(view="campaign-settings", campaign=cid)
         st.query_params.pop("item", None)
         st.rerun()
-    if not value["items"] or all(i["state"] == "planned" for i in value["items"]):
+    if not value["items"]:
         if st.button(tr("Plan topics and scripts with AI"), key="campaign_plan:" + cid):
             with st.spinner(tr("Planning campaign scripts...")):
                 service.plan(cid)
@@ -222,7 +222,7 @@ def _dashboard(tr):
             if item.get("production")
             else tr("Inherits shared settings")
         )
-        st.json(effective_params.model_dump(mode="json"))
+        production_summary.render(effective_params, tr)
         if package.get("quote", {}).get("summary"):
             st.json(package["quote"]["summary"])
     if item["state"] == "planned":
@@ -251,9 +251,19 @@ def _dashboard(tr):
                 max_chars=12000,
                 key="campaign_script:" + iid,
             )
+            keywords = st.text_area(
+                tr("Visual keywords"),
+                value=", ".join(
+                    service.content.keywords(
+                        item.get("keywords", effective_params.video_terms)
+                    )
+                ),
+                key="campaign_keywords:" + iid,
+                max_chars=5000,
+            )
             submit = st.form_submit_button(tr("Save campaign script"))
         if submit:
-            service.edit(cid, iid, title, script, value["revision"])
+            service.edit(cid, iid, title, script, value["revision"], keywords=keywords)
             st.rerun()
     else:
         st.write(item["title"])
@@ -270,7 +280,7 @@ def _dashboard(tr):
         with st.expander(tr("Review all video settings")):
             for i, params in zip(value["items"], effective_rows, strict=True):
                 st.write(i["title"])
-                st.json(params.model_dump(mode="json"))
+                production_summary.render(params, tr)
                 quote = service.effective(value, i)[0].get("quote", {})
                 if quote.get("summary"):
                     st.json(quote["summary"])

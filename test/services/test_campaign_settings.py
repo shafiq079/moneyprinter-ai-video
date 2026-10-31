@@ -192,6 +192,8 @@ def test_worker_applies_scoped_model_and_encoder_then_restores_operator_config(s
 
 def test_planning_receives_script_requirements_and_language(setup):
     v = f.make(setup, 1)
+    v["language"] = "ur"
+    c.save(v)
     c.set_settings(
         v["id"],
         {
@@ -233,6 +235,13 @@ def test_main_shared_settings_uses_real_controls_and_save_never_generates(setup)
         app.run()
         assert not app.exception
         assert len(app.tabs) >= 4
+        assert "Writing defaults" in [tab.label for tab in app.tabs]
+        assert not any(
+            w.key in {"video_subject", "video_script", "video_terms", "video_language"}
+            for w in app.text_area
+        )
+        assert not any(w.key == "video_language" for w in app.selectbox)
+        assert any(w.key == "video_script_prompt" for w in app.text_area)
         voice_widgets = [
             i for i in app.selectbox if str(i.key).startswith("speech_synthesis_select")
         ]
@@ -437,3 +446,56 @@ def test_replanning_cannot_silently_drop_individual_settings_or_quotes(setup):
             c.plan(v["id"])
         model.assert_not_called()
     assert c.get(v["id"]) == current
+
+
+def test_new_campaign_cards_survive_shared_settings_navigation(setup):
+    from webui import campaign_composer as composer
+
+    root = Path(__file__).resolve().parents[2]
+    with (
+        patch.object(config, "try_save_config", return_value=True),
+        patch.dict(config.app, {"pexels_api_keys": ["test-key"]}),
+        patch.object(c.worker, "submit_generation") as submit,
+        patch.object(
+            c.llm, "generate_json_response", side_effect=AssertionError("unexpected AI")
+        ),
+    ):
+        app = AppTest.from_file(str(root / "webui/Main.py"), default_timeout=60)
+        app.session_state["ui_language"] = "en"
+        app.query_params.update(view="campaigns")
+        app.run()
+        first = app.session_state[composer.STATE][0]
+        by_key(app.text_input, composer.key(first, "title")).set_value(
+            "Reviewed topic"
+        ).run()
+        by_key(app.text_area, composer.key(first, "script")).set_value(
+            "Reviewed narration"
+        ).run()
+        by_key(app.text_area, composer.key(first, "keywords")).set_value(
+            "garden, plant"
+        ).run()
+        by_key(app.button, "campaign_add_video").click().run()
+        ids = [r["id"] for r in app.session_state[composer.STATE]]
+        by_key(app.button, "campaign_configure_new").click().run()
+        assert not app.exception
+        assert not any(w.key == "video_subject" for w in app.text_area)
+        by_key(app.slider, "font_size_slider").set_value(82).run()
+        by_label(app.button, "Save campaign production settings").click().run()
+        assert not app.exception
+        assert [r["id"] for r in app.session_state[composer.STATE]] == ids
+        assert (
+            by_key(app.text_input, composer.key(first, "title")).value
+            == "Reviewed topic"
+        )
+        assert (
+            by_key(app.text_area, composer.key(first, "script")).value
+            == "Reviewed narration"
+        )
+        assert (
+            by_key(app.text_area, composer.key(first, "keywords")).value
+            == "garden, plant"
+        )
+        assert app.session_state["campaign_draft_package"]["params"]["font_size"] == 82
+        assert not c.all_campaigns()
+        submit.assert_not_called()
+        setup.campaign_queue.assert_not_called()

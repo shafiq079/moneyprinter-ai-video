@@ -22,25 +22,40 @@ def test_create_plan_edit_and_approve_are_separate(setup):
     by_key(app.text_area, "campaign_brief").set_value(
         "Five garden videos, each 30 seconds"
     )
-    by_key(app.number_input, "campaign_count").set_value(2)
-    by_label(app.button, "Create campaign").click().run()
-    assert not app.exception and len(c.all_campaigns()) == 1
-    value = c.all_campaigns()[0]
-    cid = value["id"]
-    assert not value["items"]
+    assert by_label(app.button, "Create campaign").disabled
+    by_key(app.number_input, "campaign_count").set_value(2).run()
+    from webui import campaign_composer as composer
+
+    rows = app.session_state[composer.STATE]
     with patch.object(
-        c.llm,
+        c.content.llm,
         "generate_json_response",
         return_value={
             "items": [
-                {"title": "Garden " + str(i), "script": "Narration " + str(i)}
-                for i in range(2)
+                {
+                    "id": row["id"],
+                    "title": "Garden " + str(i),
+                    "script": "Narration " + str(i),
+                    "keywords": ["garden " + str(i)],
+                }
+                for i, row in enumerate(rows)
             ]
         },
-    ):
-        by_key(app.button, "campaign_plan:" + cid).click().run()
-    assert not app.exception
-    value = c.get(cid)
+    ) as model:
+        by_key(app.button, "campaign_generate_all").click().run()
+        assert not app.exception
+        model.assert_called_once()
+        assert not c.all_campaigns()
+        setup.campaign_queue.assert_not_called()
+        by_label(app.button, "Create campaign").click().run()
+        assert model.call_count == 1
+    assert not app.exception and len(c.all_campaigns()) == 1
+    value = c.all_campaigns()[0]
+    cid = value["id"]
+    assert len(value["items"]) == 2
+    assert all(i["state"] == "planned" for i in value["items"])
+    assert value["items"][0]["keywords"] == ["garden 0"]
+    setup.campaign_queue.assert_not_called()
     item = value["items"][0]
     assert by_key(app.button, "campaign_approve:" + cid).disabled
     by_key(app.text_area, "campaign_script:" + item["id"]).set_value(
@@ -80,7 +95,17 @@ def test_main_campaign_route_and_labels(setup):
     app.query_params["view"] = "campaigns"
     app.run()
     assert not app.exception and "Campaigns" in [t.value for t in app.title]
-    tree = ast.parse((root / "webui/campaigns.py").read_text())
+    tree = ast.parse(
+        "\n".join(
+            (root / "webui" / name).read_text()
+            for name in (
+                "campaigns.py",
+                "campaign_composer.py",
+                "production_summary.py",
+                "campaign_settings.py",
+            )
+        )
+    )
     keys = {
         n.args[0].value
         for n in ast.walk(tree)

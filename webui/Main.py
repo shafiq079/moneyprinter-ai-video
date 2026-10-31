@@ -5922,8 +5922,138 @@ def _render_loomloom_script_generation(params):
     _render_loomloom_candidates()
 
 
-def _render_script_settings(panel, params):
-    """渲染文案设置并更新生成参数。"""
+def _render_content_preferences(params):
+    params.content_mode = stable_selectbox(
+        tr("Content Mode"),
+        options=["creative", "factual"],
+        default_value="creative",
+        key="content_mode_select",
+    )
+    if params.content_mode == "factual":
+        source_url = st.text_input(
+            tr("Source Page URL"),
+            key="factual_import_url",
+            help=tr("Source Page Import Help"),
+            placeholder="https://example.org/article",
+        )
+        if st.button(tr("Import Source Excerpt"), key="factual_import_button"):
+            try:
+                existing = [
+                    line.strip()
+                    for line in st.session_state.get(
+                        "factual_sources_input", ""
+                    ).splitlines()
+                    if line.strip()
+                ]
+                if len(existing) >= 6:
+                    raise ValueError("six sources already entered")
+                requested_url = FactualSource.public_citation_url(source_url)
+                if any(
+                    line.split("|", 1)[0].strip() == requested_url for line in existing
+                ):
+                    raise ValueError("source URL already entered")
+                imported = factual_source_import.import_source(requested_url)
+                existing.append(
+                    f"{imported.url} | {imported.title} | {imported.excerpt}"
+                )
+                st.session_state["factual_sources_input"] = "\n".join(existing)
+                st.session_state.pop("factual_import_error", None)
+                st.session_state["factual_import_ready"] = True
+            except ValueError as exc:
+                st.session_state["factual_import_error"] = (
+                    f"{tr('Source Page Import Failed')}: {exc}"
+                )
+                st.session_state.pop("factual_import_ready", None)
+        if st.session_state.get("factual_import_error"):
+            st.warning(st.session_state["factual_import_error"])
+        if st.session_state.get("factual_import_ready"):
+            st.info(tr("Review Imported Excerpt"))
+        raw_sources = st.text_area(
+            tr("Factual Sources"),
+            key="factual_sources_input",
+            height=140,
+            help=tr("Factual Sources Help"),
+            placeholder="https://example.org/article | Article title | An excerpt supporting a claim.",
+        )
+        try:
+            params.factual_sources = [
+                factual_content.parse_source_line(line)
+                for line in raw_sources.splitlines()
+                if line.strip()
+            ]
+            factual_content.validate_sources(params)
+            st.session_state.pop("factual_source_error", None)
+        except ValueError:
+            params.factual_sources = []
+            st.session_state["factual_source_error"] = tr("Factual Sources Invalid")
+            st.warning(st.session_state["factual_source_error"])
+    else:
+        params.factual_sources = []
+        st.session_state.pop("factual_source_error", None)
+
+
+def _render_writing_preferences(params):
+    params.paragraph_number = st.slider(
+        tr("Script Paragraph Number"),
+        min_value=llm.MIN_SCRIPT_PARAGRAPH_NUMBER,
+        max_value=llm.MAX_SCRIPT_PARAGRAPH_NUMBER,
+        key="paragraph_number_input",
+    )
+    _set_runtime_config("ui", "paragraph_number", params.paragraph_number)
+    params.video_script_prompt = st.text_area(
+        tr("Custom Script Requirements"),
+        height=100,
+        max_chars=llm.MAX_SCRIPT_PROMPT_LENGTH,
+        placeholder=tr("Custom Script Requirements Placeholder"),
+        key="video_script_prompt",
+    ).strip()
+    _set_runtime_config("ui", "video_script_prompt", params.video_script_prompt)
+
+    system_prompt = st.text_area(
+        tr("Custom System Prompt"),
+        height=240,
+        max_chars=llm.MAX_SCRIPT_SYSTEM_PROMPT_LENGTH,
+        key="custom_system_prompt",
+    ).strip()
+    # 默认内容由服务层统一维护。界面虽然直接展示默认提示词，但只有
+    # 用户实际修改后才随任务传递，避免历史任务固化旧版本默认规则。
+    params.custom_system_prompt = (
+        ""
+        if system_prompt == llm.DEFAULT_SCRIPT_SYSTEM_PROMPT.strip()
+        else system_prompt
+    )
+    _set_runtime_config("ui", "custom_system_prompt", params.custom_system_prompt)
+
+
+def _render_shared_script_defaults(panel, params):
+    with panel:
+        with st.container(border=True):
+            st.write(tr("Writing defaults"))
+            st.caption(
+                tr(
+                    "These instructions apply to every script. Subjects, scripts and keywords belong to the video cards."
+                )
+            )
+            st.button(
+                tr("Configure LLM"),
+                key="open_llm_settings_from_subject",
+                on_click=_open_settings_dialog,
+                args=("llm",),
+            )
+            _render_content_preferences(params)
+            _render_writing_preferences(params)
+            st.button(
+                tr("Restore Default System Prompt"),
+                key="restore_default_system_prompt",
+                on_click=reset_script_system_prompt,
+            )
+
+
+def _render_script_settings(panel, params, *, shared_defaults=False):
+    """Render shared writing defaults or the complete individual video controls."""
+    if shared_defaults:
+        _render_shared_script_defaults(panel, params)
+        return
     with panel:
         with st.container(border=True):
             st.write(tr("Video Script Settings"))
@@ -5957,76 +6087,7 @@ def _render_script_settings(panel, params):
                     label_visibility="collapsed",
                 ).strip()
 
-            params.content_mode = stable_selectbox(
-                tr("Content Mode"),
-                options=["creative", "factual"],
-                default_value="creative",
-                key="content_mode_select",
-            )
-            if params.content_mode == "factual":
-                source_url = st.text_input(
-                    tr("Source Page URL"),
-                    key="factual_import_url",
-                    help=tr("Source Page Import Help"),
-                    placeholder="https://example.org/article",
-                )
-                if st.button(tr("Import Source Excerpt"), key="factual_import_button"):
-                    try:
-                        existing = [
-                            line.strip()
-                            for line in st.session_state.get(
-                                "factual_sources_input", ""
-                            ).splitlines()
-                            if line.strip()
-                        ]
-                        if len(existing) >= 6:
-                            raise ValueError("six sources already entered")
-                        requested_url = FactualSource.public_citation_url(source_url)
-                        if any(
-                            line.split("|", 1)[0].strip() == requested_url
-                            for line in existing
-                        ):
-                            raise ValueError("source URL already entered")
-                        imported = factual_source_import.import_source(requested_url)
-                        existing.append(
-                            f"{imported.url} | {imported.title} | {imported.excerpt}"
-                        )
-                        st.session_state["factual_sources_input"] = "\n".join(existing)
-                        st.session_state.pop("factual_import_error", None)
-                        st.session_state["factual_import_ready"] = True
-                    except ValueError as exc:
-                        st.session_state["factual_import_error"] = (
-                            f"{tr('Source Page Import Failed')}: {exc}"
-                        )
-                        st.session_state.pop("factual_import_ready", None)
-                if st.session_state.get("factual_import_error"):
-                    st.warning(st.session_state["factual_import_error"])
-                if st.session_state.get("factual_import_ready"):
-                    st.info(tr("Review Imported Excerpt"))
-                raw_sources = st.text_area(
-                    tr("Factual Sources"),
-                    key="factual_sources_input",
-                    height=140,
-                    help=tr("Factual Sources Help"),
-                    placeholder="https://example.org/article | Article title | An excerpt supporting a claim.",
-                )
-                try:
-                    params.factual_sources = [
-                        factual_content.parse_source_line(line)
-                        for line in raw_sources.splitlines()
-                        if line.strip()
-                    ]
-                    factual_content.validate_sources(params)
-                    st.session_state.pop("factual_source_error", None)
-                except ValueError:
-                    params.factual_sources = []
-                    st.session_state["factual_source_error"] = tr(
-                        "Factual Sources Invalid"
-                    )
-                    st.warning(st.session_state["factual_source_error"])
-            else:
-                params.factual_sources = []
-                st.session_state.pop("factual_source_error", None)
+            _render_content_preferences(params)
 
             video_languages = [
                 (tr("Auto Detect"), ""),
@@ -6078,42 +6139,7 @@ def _render_script_settings(panel, params):
                         "app", "script_generation_backend", script_generation_backend
                     )
 
-                    params.paragraph_number = st.slider(
-                        tr("Script Paragraph Number"),
-                        min_value=llm.MIN_SCRIPT_PARAGRAPH_NUMBER,
-                        max_value=llm.MAX_SCRIPT_PARAGRAPH_NUMBER,
-                        key="paragraph_number_input",
-                    )
-                    _set_runtime_config(
-                        "ui", "paragraph_number", params.paragraph_number
-                    )
-                    params.video_script_prompt = st.text_area(
-                        tr("Custom Script Requirements"),
-                        height=100,
-                        max_chars=llm.MAX_SCRIPT_PROMPT_LENGTH,
-                        placeholder=tr("Custom Script Requirements Placeholder"),
-                        key="video_script_prompt",
-                    ).strip()
-                    _set_runtime_config(
-                        "ui", "video_script_prompt", params.video_script_prompt
-                    )
-
-                    system_prompt = st.text_area(
-                        tr("Custom System Prompt"),
-                        height=240,
-                        max_chars=llm.MAX_SCRIPT_SYSTEM_PROMPT_LENGTH,
-                        key="custom_system_prompt",
-                    ).strip()
-                    # 默认内容由服务层统一维护。界面虽然直接展示默认提示词，但只有
-                    # 用户实际修改后才随任务传递，避免历史任务固化旧版本默认规则。
-                    params.custom_system_prompt = (
-                        ""
-                        if system_prompt == llm.DEFAULT_SCRIPT_SYSTEM_PROMPT.strip()
-                        else system_prompt
-                    )
-                    _set_runtime_config(
-                        "ui", "custom_system_prompt", params.custom_system_prompt
-                    )
+                    _render_writing_preferences(params)
 
                     restore_prompt_col, preview_prompt_col = st.columns(2)
                     if restore_prompt_col.button(

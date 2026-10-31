@@ -181,7 +181,7 @@ def render(
     if not item:
         st.caption(
             tr(
-                "Shared topic and script fields are examples only. Campaign planning creates the individual scripts using your language and script instructions."
+                "Edit each video's subject, script and keywords on the campaign cards. Shared settings contain production and writing defaults only."
             )
         )
     if st.button(tr("Back to campaign"), key="campaign_settings_back"):
@@ -194,7 +194,7 @@ def render(
         )
     panels = st.tabs(
         [
-            tr("Video Script Settings"),
+            tr("Video Script Settings") if item else tr("Writing defaults"),
             tr("Video Settings"),
             tr("Audio Settings"),
             tr("Subtitle Settings"),
@@ -205,7 +205,10 @@ def render(
     params.custom_audio_file = None
     params.video_materials = None
     params.bgm_file = ""
-    script_panel(panels[0], params)
+    if item:
+        script_panel(panels[0], params)
+    else:
+        script_panel(panels[0], params, shared_defaults=True)
     videos = video_panel(panels[1], params)
     audio, music, mode = audio_panel(panels[2], params)
     subtitle_panel(panels[3], params)
@@ -222,8 +225,14 @@ def render(
     params.video_count = 1
 
     def save(staging_task, prepared, **kwargs):
-        if value and not prepared.video_language:
+        if value and item and not prepared.video_language:
             prepared.video_language = value["language"]
+        if item:
+            prepared.video_terms = service.content.keywords(prepared.video_terms)
+        else:
+            prepared.video_terms = None
+            prepared.video_script = ""
+            prepared.video_language = ""
         captured = production.capture(prepared, staging_task, **kwargs)
         for section, values in st.session_state.get(
             "campaign_runtime_draft", {}

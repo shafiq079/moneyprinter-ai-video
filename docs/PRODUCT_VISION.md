@@ -7,6 +7,16 @@ every idea below is implemented or that a particular editor stack was approved.
 The owner's latest explicit instruction and observed repository state take
 precedence. Update this document when a product decision is made.
 
+## Campaign content decision (1 November 2026)
+
+Campaign creation now begins with an editable card for each video. Subjects,
+complete narration and visual keywords are prepared/reviewed before saving a
+campaign. AI fills missing fields by default and can explicitly regenerate one
+or all cards. Shared settings contain writing defaults and production controls;
+there is no shared example script or global keyword field. Creation saves planned
+items only; production and publishing retain separate approvals. Draft cards remain
+session-scoped until creation. See docs/CAMPAIGN_COMPOSER.md.
+
 ## Original product goal
 
 Create original, high-quality, mostly free/open-source AI video for a chosen

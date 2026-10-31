@@ -302,9 +302,15 @@ def stock_materials(task_id, params, *, cancel_check=lambda: None):
         "Alternatives may simplify the action but must retain the subject; never replace with generic popular footage. "
         "Preserve named entities when essential. Do not invent people, locations, products, numbers or factual details. "
         "For abstract ideas use a conservative relevant illustration; for empty pause scenes preserve adjacent context. "
+        "Use the video's keyword guidance only where it fits that scene; scene narration has priority. "
         "No visual accuracy guarantee is possible from search alone.\n"
         + json.dumps(
-            {"context": params.video_subject, "scenes": requested}, ensure_ascii=False
+            {
+                "context": params.video_subject,
+                "scenes": requested,
+                "keyword_guidance": params.video_terms,
+            },
+            ensure_ascii=False,
         ),
         timeout_seconds=180,
         max_retries=0,

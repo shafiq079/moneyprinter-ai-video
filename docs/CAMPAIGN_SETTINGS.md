@@ -24,18 +24,24 @@ Approved 31 October 2026, opencut-editor only. Preserve development/main.
   approved settings, worker parameter delivery, missing/tampered uploads, quote
   binding, and existing single-video generation. Use CPU mocks, not paid calls.
 
+Updated 1 November 2026: per-video content now lives in pre-creation cards; see
+[CAMPAIGN_COMPOSER.md](CAMPAIGN_COMPOSER.md). This supersedes the original shared
+example-script workflow.
+
 ## Where to find it
 
 1. Campaigns → New campaign → **Configure shared production settings**.
-2. The full-page screen has **Script**, **Video**, **Audio**, and **Subtitle** tabs
-   using the same controls as Create. Voice selection is the real provider/voice
+2. The shared screen has **Writing defaults**, **Video**, **Audio**, and **Subtitle**
+   tabs reusing the same controls as Create. Individual settings retain the complete
+   script panel. Voice selection is the real provider/voice
    dropdown; source, fonts, colors, timing, matching, music and preview controls
    follow the normal generator. Configure shared operator credentials through
    the existing settings dialog if needed.
 3. Click **Save campaign production settings** to return. This only saves inputs;
    it does not plan scripts, call video providers or queue production. Voice
    previews and explicit script/quote/readiness actions remain deliberate actions.
-4. Create the campaign and plan scripts. Existing campaigns have **Edit shared
+4. Add video cards, generate or enter each subject/script/keywords, review them,
+   then create the campaign. Existing campaigns have **Edit shared
    production settings** while every item is still unapproved.
 5. Select a planned video → **Edit this video production settings**. Saving creates
    an independent override and saves its topic/script edits together. **Reset to
@@ -45,10 +51,11 @@ Approved 31 October 2026, opencut-editor only. Preserve development/main.
    Per-video settings lock after approval. Review/publishing remain separate.
 
 One campaign item creates one video. The generator's output-count control is
-fixed to one here; choose campaign count on the campaign page. Shared topic/script
-fields are examples; planning uses language, paragraph count and script instructions
-for distinct scripts. Use item settings to edit the actual script. Individual
-language selections override the campaign fallback language.
+fixed to one here; choose campaign count on the campaign page. Subjects, scripts
+and visual keywords belong to the cards, never shared settings.
+The campaign language drives batch content; writing defaults supply paragraph count,
+custom instructions and optional factual evidence. Individual language selections
+override the campaign language for production.
 
 ## Inputs and provider requirements
 
@@ -110,12 +117,11 @@ campaign to make them durable across a cold browser session.
 - Confirm a completed output can still open in OpenCut and enter Content Library
   without editing; publication remains separately reviewed.
 
-Campaign topic planning continues through the configured LLM. Alternate script
-creation helpers in the shared screen act on its example script; on an individual
-video they act on that video's script. Saved language/paragraph/instruction fields
-feed campaign planning. Replacing an AI campaign plan is blocked while independent
-video overrides exist, so settings and quotes cannot disappear silently; reset
-those overrides first or create another campaign.
+Campaign card generation uses the configured LLM explicitly, before campaign creation.
+It fills empty fields by default; replacement requires confirmation. Alternate script
+creation helpers remain available on individual video settings. Old empty campaigns
+retain their legacy planning action. Existing populated campaigns have no bulk
+replanning button that could discard reviewed cards or overrides.
 
 Campaign metadata is bounded below the existing encrypted-record limit. If an
 expanded approval snapshot is too large, the previous readable campaign is kept

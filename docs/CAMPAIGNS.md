@@ -8,8 +8,11 @@ keep generation, library and direct publishing as separate services.
 1. Create an encrypted campaign brief, language, 1–20 video count, generation
    template and intended destination accounts. No credentials or account tokens
    are embedded. Capture templates from existing tasks or normal video settings.
-2. Request AI topic/script planning explicitly. Return distinct, editable items
-   grounded in the brief, not claimed live research. No media calls during planning.
+2. Prepare one stable card per video before creation, with editable subject, script
+   and visual keywords. Explicit AI actions fill empty fields for all/one card;
+   replacement requires confirmation. Validate the complete list atomically before
+   creating the encrypted campaign. No media calls during planning. Legacy empty
+   campaigns retain their separate topic-planning action.
 3. Review all topics/scripts and template before separately approving production.
    Item/template changes increment a revision; stale approvals fail.
 4. Queue one item at a time through the existing serialized WebUI task manager.
@@ -46,9 +49,11 @@ guarantee or automatic public-post approval is introduced.
 ## Operator workflow
 
 Open Campaigns, choose **Configure shared production settings**, adjust the four
-normal generator panels, then save. Enter a brief/count and create the campaign.
+writing/video/audio/subtitle panels, then save. Enter a brief and add video cards.
+Generate all scripts/keywords with AI or type them manually; review each subject,
+script and keywords, then create the campaign. See [CAMPAIGN_COMPOSER.md](CAMPAIGN_COMPOSER.md).
 Existing campaigns offer **Edit shared production settings** before approval.
-Plan topics/scripts with AI. Select a video to edit its script or open **Edit this
+Select a video to edit its script/keywords or open **Edit this
 video production settings**. An override is independent; **Reset to shared settings**
 restores inheritance. Review every video's effective settings, any paid charges
 and individual quotes, then approve production once.
