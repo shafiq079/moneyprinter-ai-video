@@ -506,3 +506,13 @@ separate from finished-video review and publishing approval. Creative stock and
 registered local AI sources share durable item tracking, explicit recovery and
 optional editing. No unreviewed public posting, live research claim or recurring
 unattended campaign creation is implied. See CAMPAIGNS.md.
+
+
+## Full campaign controls accepted (31 October 2026)
+
+Campaign creation and per-video planned items now reuse the single generator's
+actual four panels through a full-page settings route. Shared defaults,
+independent overrides, reset-to-shared, retained inputs, explicit paid charge
+review and individual quote binding are implemented. Approval freezes each
+video's effective settings; actual production remains separate from publishing.
+No new editor or generation architecture was introduced. See CAMPAIGN_SETTINGS.md.

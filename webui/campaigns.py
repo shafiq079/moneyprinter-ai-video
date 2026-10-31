@@ -6,7 +6,11 @@ import streamlit as st
 from filelock import Timeout
 
 from app.models.schema import VideoParams
-from app.services import campaigns as service, content_library as library
+from app.services import (
+    campaigns as service,
+    content_library as library,
+    campaign_production as production,
+)
 from webui.publishing_planner import navigation
 
 
@@ -39,87 +43,102 @@ def _create(tr):
     chosen = st.selectbox(
         tr("Generation settings template"),
         templates,
-        format_func=lambda tid: (
-            tr("Choose video settings below")
-            if tid == "default"
-            else next(p["title"] + " · " + tid for p in projects if p["task_id"] == tid)
-        ),
+        index=templates.index(
+            st.session_state.get("campaign_template_choice", "default")
+        )
+        if st.session_state.get("campaign_template_choice", "default") in templates
+        else 0,
+        format_func={
+            "default": tr("Choose video settings below"),
+            **{p["task_id"]: p["title"] + " · " + p["task_id"] for p in projects},
+        }.get,
         key="campaign_template",
     )
+    if chosen != st.session_state.get("campaign_template_choice", "default"):
+        st.session_state.pop("campaign_draft_package", None)
+    st.session_state["campaign_template_choice"] = chosen
     defaults = VideoParams(
         video_subject="Campaign", voice_name="en-US-AriaNeural-Female"
     ).model_dump(mode="json")
     if chosen != "default":
         path = library.media.gm.resolve_asset(chosen, "script.json")
         data = json.loads(path.read_text())
-        defaults = service.template(data["params"])
-    with st.form("campaign_create"):
-        brief = st.text_area(
-            tr("Campaign brief"),
-            max_chars=4000,
-            key="campaign_brief",
-            help=tr(
-                "Include the niche, audience, target video length, tone and topics to include or avoid."
-            ),
+        try:
+            defaults = service.template(data["params"])
+        except ValueError as exc:
+            st.warning(str(exc))
+            st.caption(tr("Re-upload task inputs in shared production settings."))
+    package = st.session_state.get("campaign_draft_package")
+    if package:
+        defaults = package["params"]
+    if st.button(
+        tr("Configure shared production settings"), key="campaign_configure_new"
+    ):
+        if not package:
+            st.session_state["campaign_draft_package"] = {"params": defaults}
+        if "campaign_brief" in st.session_state:
+            st.session_state["campaign_new_fields"] = {
+                "brief": st.session_state.get("campaign_brief", ""),
+                "count": st.session_state.get("campaign_count", 5),
+                "language": st.session_state.get(
+                    "campaign_language:" + chosen, "English"
+                ),
+                "destinations": st.session_state.get("campaign_destinations", []),
+            }
+        st.query_params.clear()
+        st.query_params["view"] = "campaign-settings"
+        st.rerun()
+    with st.expander(tr("Production settings")):
+        st.json(defaults)
+    cached = st.session_state.get("campaign_new_fields", {})
+    brief = st.text_area(
+        tr("Campaign brief"),
+        value=cached.get("brief", ""),
+        max_chars=4000,
+        key="campaign_brief",
+        help=tr(
+            "Include the niche, audience, target video length, tone and topics to include or avoid."
+        ),
+    )
+    count = st.number_input(
+        tr("Number of campaign videos"),
+        min_value=1,
+        max_value=20,
+        value=cached.get("count", 5),
+        key="campaign_count",
+    )
+    language = st.text_input(
+        tr("Campaign language"),
+        value=cached.get("language", defaults.get("video_language") or "English"),
+        key="campaign_language:" + chosen,
+    )
+    targets = library.destinations()
+    destinations = st.multiselect(
+        tr("Intended publishing accounts"),
+        [d["key"] for d in targets],
+        default=[
+            k
+            for k in cached.get("destinations", [])
+            if k in {d["key"] for d in targets}
+        ],
+        format_func=lambda k: next(
+            d["platform"].title() + " · " + d["name"] for d in targets if d["key"] == k
+        ),
+        key="campaign_destinations",
+    )
+    st.session_state["campaign_new_fields"] = {
+        "brief": brief,
+        "count": count,
+        "language": language,
+        "destinations": destinations,
+    }
+    st.caption(
+        tr(
+            "Planning never starts video generation. Source credentials and local AI compute must be configured before production."
         )
-        count = st.number_input(
-            tr("Number of campaign videos"),
-            min_value=1,
-            max_value=20,
-            value=5,
-            key="campaign_count",
-        )
-        language = st.text_input(
-            tr("Campaign language"),
-            value=defaults.get("video_language") or "English",
-            key="campaign_language:" + chosen,
-        )
-        sources = ["pexels", "pixabay", "wan22_local", "ltx25_local"]
-        source = st.selectbox(
-            tr("Campaign video source"),
-            sources,
-            index=sources.index(defaults.get("video_source"))
-            if defaults.get("video_source") in sources
-            else 0,
-            key="campaign_source:" + chosen,
-        )
-        voice = st.text_input(
-            tr("Narration voice name"),
-            value=defaults.get("voice_name") or "en-US-AriaNeural-Female",
-            key="campaign_voice:" + chosen,
-        )
-        if chosen == "default":
-            defaults["match_materials_to_script"] = st.checkbox(
-                tr("Match video clips to narration automatically"),
-                value=True,
-                key="campaign_match",
-            )
-            defaults["subtitle_enabled"] = st.checkbox(
-                tr("Enable captions"), value=True, key="campaign_captions"
-            )
-        settings = defaults | {
-            "video_source": source,
-            "voice_name": voice,
-            "video_language": language,
-        }
-        targets = library.destinations()
-        destinations = st.multiselect(
-            tr("Intended publishing accounts"),
-            [d["key"] for d in targets],
-            format_func=lambda k: next(
-                d["platform"].title() + " · " + d["name"]
-                for d in targets
-                if d["key"] == k
-            ),
-            key="campaign_destinations",
-        )
-        st.caption(
-            tr(
-                "Planning never starts video generation. Source credentials and local AI compute must be configured before production."
-            )
-        )
-        create = st.form_submit_button(tr("Create campaign"))
-    if create:
+    )
+    if st.button(tr("Create campaign"), key="campaign_create"):
+        settings = package or defaults
         value = service.create(brief, int(count), language, settings, destinations)
         st.query_params["campaign"] = value["id"]
         st.session_state["campaign_selected"] = value["id"]
@@ -168,6 +187,15 @@ def _dashboard(tr):
     st.caption(tr("Campaign language") + ": " + value["language"])
     with st.expander(tr("Production settings")):
         st.json(value["template"])
+    editable = not value["items"] or all(
+        i["state"] == "planned" for i in value["items"]
+    )
+    if editable and st.button(
+        tr("Edit shared production settings"), key="campaign_settings:" + cid
+    ):
+        st.query_params.update(view="campaign-settings", campaign=cid)
+        st.query_params.pop("item", None)
+        st.rerun()
     if not value["items"] or all(i["state"] == "planned" for i in value["items"]):
         if st.button(tr("Plan topics and scripts with AI"), key="campaign_plan:" + cid):
             with st.spinner(tr("Planning campaign scripts...")):
@@ -187,7 +215,28 @@ def _dashboard(tr):
         key="campaign_item:" + cid,
     )
     item = next(i for i in value["items"] if i["id"] == iid)
+    package, effective_params = service.effective(value, item)
+    with st.expander(tr("Effective video production settings")):
+        st.caption(
+            tr("Per-video override")
+            if item.get("production")
+            else tr("Inherits shared settings")
+        )
+        st.json(effective_params.model_dump(mode="json"))
+        if package.get("quote", {}).get("summary"):
+            st.json(package["quote"]["summary"])
     if item["state"] == "planned":
+        if st.button(
+            tr("Edit this video production settings"),
+            key="campaign_item_settings:" + iid,
+        ):
+            st.query_params.update(view="campaign-settings", campaign=cid, item=iid)
+            st.rerun()
+        if item.get("production") and st.button(
+            tr("Reset to shared settings"), key="campaign_reset_settings:" + iid
+        ):
+            service.set_settings(cid, None, value["revision"], iid)
+            st.rerun()
         with st.form("campaign_edit:" + iid):
             title = st.text_input(
                 tr("Video topic"),
@@ -217,6 +266,23 @@ def _dashboard(tr):
             with st.expander(tr("Earlier generation attempts")):
                 st.json(item["attempts"])
     if all(i["state"] == "planned" for i in value["items"]):
+        effective_rows = [service.effective(value, i)[1] for i in value["items"]]
+        with st.expander(tr("Review all video settings")):
+            for i, params in zip(value["items"], effective_rows, strict=True):
+                st.write(i["title"])
+                st.json(params.model_dump(mode="json"))
+                quote = service.effective(value, i)[0].get("quote", {})
+                if quote.get("summary"):
+                    st.json(quote["summary"])
+        paid = any(production.requires_charge(params) for params in effective_rows)
+        charges_reviewed = (
+            st.checkbox(
+                tr("I approve paid provider charges for all listed campaign videos"),
+                key="campaign_charges:" + cid + ":" + str(value["revision"]),
+            )
+            if paid
+            else False
+        )
         reviewed = st.checkbox(
             tr(
                 "I reviewed every topic, script and generation setting and approve production"
@@ -225,11 +291,13 @@ def _dashboard(tr):
         )
         if st.button(
             tr("Approve campaign production"),
-            disabled=not reviewed,
+            disabled=not reviewed or (paid and not charges_reviewed),
             key="campaign_approve:" + cid,
             type="primary",
         ):
-            service.approve(cid, reviewed, value["revision"])
+            service.approve(
+                cid, reviewed, value["revision"], charges_reviewed=charges_reviewed
+            )
             st.rerun()
     else:
         if st.button(

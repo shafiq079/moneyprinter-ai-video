@@ -323,6 +323,15 @@ def _set_runtime_config(section_name, key, value):
     应用并保存。页面控件值仍由 Streamlit session_state 维护，因此暂存期间的
     rerun 不会把用户刚输入的内容重置为旧配置。
     """
+    if st.query_params.get("view") == "campaign-settings" and (
+        section_name == "ui" or (section_name == "app" and key in {"video_source", "script_generation_backend"})
+    ):
+        return True  # Campaign drafts must not overwrite the generator defaults.
+    if st.query_params.get("view") == "campaign-settings":
+        from app.services.campaign_production import allowed_option
+        if allowed_option(section_name, key):
+            st.session_state.setdefault("campaign_runtime_draft", {}).setdefault(section_name, {})[key] = value
+            return True
     config_section = _RUNTIME_CONFIG_SECTIONS[section_name]
     updated = config.update_config_nonblocking(config_section, key, value)
     if not updated:
@@ -332,6 +341,9 @@ def _set_runtime_config(section_name, key, value):
 
 def _delete_runtime_config(section_name, key):
     """删除 WebUI 配置项；后台任务占用配置时延后执行。"""
+    if st.query_params.get("view") == "campaign-settings" and section_name == "app" and key == "video_codec":
+        st.session_state.setdefault("campaign_runtime_draft", {}).setdefault("app", {})[key] = "libx264"
+        return True
     config_section = _RUNTIME_CONFIG_SECTIONS[section_name]
     deleted = config.delete_config_nonblocking(config_section, key)
     if not deleted:
@@ -6617,6 +6629,7 @@ def _render_video_settings(panel, params):
                     "video_count", video_count_options, 1
                 ),
                 key="video_count_select",
+                disabled=st.query_params.get("view") == "campaign-settings",
             )
             _set_runtime_config("ui", "video_count", params.video_count)
             if local_ai.is_public_source(params.video_source):
@@ -7036,6 +7049,8 @@ def _get_voxcpm_preview_validation_error(
 
 def _sync_voxcpm_reference_audio(uploaded_file) -> bytes | None:
     """Normalize a new upload once and keep only bounded WAV bytes in session."""
+    if uploaded_file is None and st.query_params.get("view") == "campaign-settings" and st.session_state.get("campaign_retained_reference"):
+        return st.session_state["campaign_retained_reference"]
     if uploaded_file is None:
         st.session_state.pop(VOXCPM_REFERENCE_AUDIO_SESSION_KEY, None)
         st.session_state.pop(VOXCPM_REFERENCE_AUDIO_ERROR_SESSION_KEY, None)
@@ -7098,6 +7113,8 @@ def _sync_voxcpm_reference_audio(uploaded_file) -> bytes | None:
 
 def _sync_voxcpm_prompt_audio(uploaded_file) -> bytes | None:
     """Normalize the optional delivery example without persisting its content."""
+    if uploaded_file is None and st.query_params.get("view") == "campaign-settings" and st.session_state.get("campaign_retained_prompt"):
+        return st.session_state["campaign_retained_prompt"]
     if uploaded_file is None:
         st.session_state.pop(VOXCPM_PROMPT_AUDIO_SESSION_KEY, None)
         st.session_state.pop(VOXCPM_PROMPT_AUDIO_ERROR_SESSION_KEY, None)
@@ -7222,6 +7239,7 @@ def _synthesize_voice_preview(
     voxcpm_reference_audio: bytes | None = None,
     voxcpm_prompt_audio: bytes | None = None,
     voxcpm_prompt_text: str = "",
+    runtime_options_snapshot: dict | None = None,
 ) -> dict | None:
     """生成一次试听并转为内存缓存，临时文件不会跨会话长期保留。"""
     if selected_tts_server == "chatterbox":
@@ -7252,7 +7270,9 @@ def _synthesize_voice_preview(
             if voxcpm_prompt_audio is not None:
                 tts_kwargs["voxcpm_prompt_audio"] = voxcpm_prompt_audio
                 tts_kwargs["voxcpm_prompt_text"] = voxcpm_prompt_text
-            sub_maker = voice.tts(**tts_kwargs)
+            from app.services.campaign_production import runtime_options
+            with runtime_options({"runtime": runtime_options_snapshot or {}}):
+                sub_maker = voice.tts(**tts_kwargs)
         if not sub_maker or not os.path.exists(audio_file):
             logger.error(f"{preview_type} voice preview did not produce an audio file")
             return None
@@ -7324,6 +7344,8 @@ def _render_voice_preview(params, friendly_names, selected_tts_server, voice_nam
 
     sample_content = _get_voice_preview_sample(voice_name)
     provider_signature = _get_voice_preview_provider_signature(selected_tts_server)
+    if st.query_params.get("view") == "campaign-settings":
+        provider_signature["campaign_runtime"] = st.session_state.get("campaign_runtime_draft", {})
     preview_validation_error = _get_voxcpm_preview_validation_error(
         selected_tts_server,
         voice_name,
@@ -7389,6 +7411,7 @@ def _render_voice_preview(params, friendly_names, selected_tts_server, voice_nam
             try:
                 with st.spinner(tr("Synthesizing Voice")):
                     preview_result = _synthesize_voice_preview(
+                        runtime_options_snapshot=(st.session_state.get("campaign_runtime_draft", {}) if st.query_params.get("view") == "campaign-settings" else None),
                         content=preview_content,
                         preview_type=preview_type,
                         selected_tts_server=selected_tts_server,
@@ -9070,7 +9093,8 @@ def _render_subtitle_settings(panel, params):
 
 
 def _render_generation_controls(
-    params, uploaded_files, uploaded_audio_file, uploaded_bgm_file, voice_mode
+    params, uploaded_files, uploaded_audio_file, uploaded_bgm_file, voice_mode,
+    *, on_prepared=None, shared_capture=False,
 ):
     """
     校验生成依赖、提交任务，并渲染日志与成片结果。
@@ -9103,13 +9127,15 @@ def _render_generation_controls(
         # 已经得到明确处理，清除标记，避免后续普通生成继续显示旧提示。
         st.session_state.pop("task_restore_upload_requirements", None)
 
-    _render_settings_transfer(params)
+    if on_prepared is None:
+        _render_settings_transfer(params)
 
     rerender_source_task_id = str(
         st.session_state.get("task_restore_source_task_id") or ""
     )
     rerender_available = bool(
-        rerender_source_task_id
+        on_prepared is None
+        and rerender_source_task_id
         and local_ai.is_public_source(params.video_source)
         and os.path.isfile(
             os.path.join(
@@ -9134,33 +9160,34 @@ def _render_generation_controls(
             help=tr("Rerender Existing AI Scenes Help"),
         )
         start_button = generate_col.button(
-            tr("Generate Video"),
+            tr("Save campaign production settings") if on_prepared else tr("Generate Video"),
             use_container_width=True,
             type="primary",
             key="generate_video_button",
-            on_click=_prepare_generation_task,
+            on_click=None if on_prepared else _prepare_generation_task,
         )
     else:
         start_button = st.button(
-            tr("Generate Video"),
+            tr("Save campaign production settings") if on_prepared else tr("Generate Video"),
             use_container_width=True,
             type="primary",
             key="generate_video_button",
-            on_click=_prepare_generation_task,
+            on_click=None if on_prepared else _prepare_generation_task,
         )
 
     review_button = False
-    if params.content_mode == "factual":
+    if params.content_mode == "factual" and on_prepared is None:
         review_button = st.button(
             tr("Review Script Only"),
             use_container_width=True,
             type="secondary",
             key="review_factual_script_button",
             help=tr("Review Script Only Help"),
-            on_click=_prepare_generation_task,
+            on_click=None if on_prepared else _prepare_generation_task,
         )
 
-    render_onboarding_tour()
+    if on_prepared is None:
+        render_onboarding_tour()
 
     if review_button:
         task_id = st.session_state.get("pending_generation_task_id") or str(uuid4())
@@ -9224,11 +9251,9 @@ def _render_generation_controls(
 
     if start_button:
         _save_runtime_config()
-        task_id = st.session_state.get("pending_generation_task_id") or str(uuid4())
-        _add_active_generation_task(
-            task_id,
-            subject=params.video_subject or params.video_script or task_id,
-        )
+        task_id = str(uuid4()) if on_prepared else st.session_state.get("pending_generation_task_id") or str(uuid4())
+        if on_prepared is None:
+            _add_active_generation_task(task_id, subject=params.video_subject or params.video_script or task_id)
         if not params.video_subject and not params.video_script:
             _remove_active_generation_task(task_id)
             st.error(tr("Video Script and Subject Cannot Both Be Empty"))
@@ -9320,7 +9345,7 @@ def _render_generation_controls(
             st.error(tr("Please Enter the WaveSpeed API Key"))
             st.stop()
 
-        if params.video_source == "wavespeed" and not st.session_state.get(
+        if params.video_source == "wavespeed" and not shared_capture and not st.session_state.get(
             "wavespeed_confirm_charge", False
         ):
             _remove_active_generation_task(task_id)
@@ -9336,7 +9361,7 @@ def _render_generation_controls(
             st.error(tr("Please Enter the Volcano Engine Ark API Key"))
             st.stop()
 
-        if params.video_source == "volcengine_seedance" and not st.session_state.get(
+        if params.video_source == "volcengine_seedance" and not shared_capture and not st.session_state.get(
             "volcengine_seedance_confirm_charge", False
         ):
             _remove_active_generation_task(task_id)
@@ -9350,7 +9375,7 @@ def _render_generation_controls(
             st.error(tr("Please Enter the OFox API Key"))
             st.stop()
 
-        if params.video_source == "ofox" and not st.session_state.get(
+        if params.video_source == "ofox" and not shared_capture and not st.session_state.get(
             "ofox_confirm_charge", False
         ):
             _remove_active_generation_task(task_id)
@@ -9366,7 +9391,7 @@ def _render_generation_controls(
             st.error(tr("Please Enter the Metaso MiniMax API Key"))
             st.stop()
 
-        if params.video_source == "metaso_minimax" and not st.session_state.get(
+        if params.video_source == "metaso_minimax" and not shared_capture and not st.session_state.get(
             "metaso_minimax_confirm_charge", False
         ):
             _remove_active_generation_task(task_id)
@@ -9380,7 +9405,7 @@ def _render_generation_controls(
             st.error(tr("Please Enter the MuAPI API Key"))
             st.stop()
 
-        if params.video_source == "muapi" and not st.session_state.get(
+        if params.video_source == "muapi" and not shared_capture and not st.session_state.get(
             "muapi_confirm_charge", False
         ):
             _remove_active_generation_task(task_id)
@@ -9395,7 +9420,7 @@ def _render_generation_controls(
             st.stop()
 
         loomloom_video_request = None
-        if params.video_source == "loomloom":
+        if params.video_source == "loomloom" and not shared_capture:
             current_batch, current_signature = _current_loomloom_video_quote_context(
                 params
             )
@@ -9558,6 +9583,15 @@ def _render_generation_controls(
                 if m.url:
                     params.video_materials.append(m)
 
+        if on_prepared is not None:
+            params.video_count = 1
+            on_prepared(task_id, params, request=loomloom_video_request,
+                reference=voxcpm_reference_audio, prompt_audio=voxcpm_prompt_audio,
+                prompt_text=voxcpm_prompt_text,
+                quote_summary=({key: getattr(st.session_state.get("loomloom_video_quote"), key, None)
+                    for key in ("currency", "task_count", "estimated_buyer_payable_amount")} if loomloom_video_request else None))
+            return True
+
         reusable_voice_preview = _get_reusable_full_voice_preview(
             params,
             voice_mode,
@@ -9611,12 +9645,30 @@ def _render_generation_controls(
         st.session_state.pop("task_restore_source_task_id", None)
         logger.info(f"WebUI generation task submitted: task_id={task_id}")
 
-    _render_current_generation_task()
+    if on_prepared is None:
+        _render_current_generation_task()
     return start_button
 
 
 def _render_application():
     """按固定顺序渲染顶部栏、弹窗、生成表单和任务结果。"""
+    if st.query_params.get("view") == "campaign-settings":
+        from webui.campaign_settings import render
+        try:
+            render(tr, apply_params=_apply_restored_params,
+                script_panel=_render_script_settings, video_panel=_render_video_settings,
+                audio_panel=_render_audio_settings, subtitle_panel=_render_subtitle_settings,
+                controls=_render_generation_controls, settings_dialog=_render_settings_dialog)
+        except (ValueError, OSError) as exc:
+            st.error(str(exc))
+        return
+    if not st.query_params.get("view") and st.session_state.get("campaign_generator_backup"):
+        _apply_restored_params(st.session_state.pop("campaign_generator_backup"))
+        for key, value in st.session_state.pop("campaign_generator_widget_backup", {}).items():
+            if value is None:
+                st.session_state.pop(key, None)
+            else:
+                st.session_state[key] = value
     if st.query_params.get("view") == "campaigns":
         from webui.campaigns import render
         render(tr)
@@ -9690,6 +9742,7 @@ def _render_application():
 
     _render_subtitle_settings(right_panel, params)
 
+    st.session_state["generator_last_params"] = params.model_dump(mode="json")
     generation_submitted = _render_generation_controls(
         params,
         uploaded_files,

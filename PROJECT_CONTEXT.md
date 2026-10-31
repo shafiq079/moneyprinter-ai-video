@@ -2,6 +2,58 @@
 
 Read this file first in every new AI or developer session. `docs/SRS.md` is the full product specification; `docs/MIGRATION_MAP.md` is the file-level porting decision. `docs/PRODUCT_VISION.md` preserves the owner's longer-term editable-project and publishing goals separately from implemented scope and unapproved technical proposals. `docs/CHATGPT_PROJECT_SETUP.md` contains the reusable ChatGPT Project handoff. Update this handoff with every accepted milestone. Local desktop Codex setup and two-machine sync instructions are in `AGENTS.md` and `docs/LOCAL_CODEX_SETUP.md`.
 
+## Full campaign production settings (31 October 2026)
+
+Owner approved full generator control reuse on opencut-editor. Campaigns now
+opens a dedicated ?view=campaign-settings route for new/shared settings and
+per-video overrides. Main supplies its actual script/video/audio/subtitle panel
+callbacks and its existing submission preparation/validation; there are no
+parallel source, voice or font dropdown implementations. The save callback
+captures prepared settings and never submits a generation task. One output per
+campaign item is enforced; the campaign count owns the number of videos.
+
+Every generator source is selectable, including Coverr, HF LTX, local uploads,
+remote paid video and generated images. Planned videos inherit shared settings
+or retain a complete independent override, resettable to shared. Shared/script/
+item changes increment the existing revision. All effective settings are visible
+before approval. Approval freezes per-item parameters and retained input bindings;
+approved settings are immutable. Paid sources require explicit campaign-wide
+charge review. LoomLoom shared settings defer quoting until individual scripts
+exist; every video needs a distinct script-bound quote, reconstructed with live
+operator credentials. New-attempt quoted retries cannot replay a previous quote.
+
+Uploads/reference audio are copied into ignored storage/social/campaign-inputs
+with hashes, bounded sizes and 0600 files. Retained narration is copied into each
+actual task, retaining normal task-path restrictions. Changed/missing inputs block
+approval/execution; no UploadedFile or raw reference bytes enter durable metadata.
+Background music retains existing whitelist resolution and checksum binding.
+Model/encoder rendering options are allowlisted; runtime overrides apply inside
+the existing worker lock and restore before its config flush. Credentials and
+endpoints remain shared operator settings, not campaign snapshots. Campaign
+settings/voice previews do not overwrite single-generator style defaults.
+
+Planning uses shared language, paragraph count, custom script requirements/style
+and supplied evidence. Optional factual items still execute the existing evidence
+gate per video. Saved legacy campaigns remain usable without new production fields.
+Local-AI same-task resume, cancellation, retained attempts, Content Library and
+separate publishing approval retain their existing contracts. No frontend build
+or dependency change. See docs/CAMPAIGN_SETTINGS.md for usage and acceptance.
+
+Verification: final generator/campaign/voice-preview/worker/library/OpenCut run
+passed 216 tests, 3 existing skips and 10243 subtests. Final focused settings/
+campaign/worker/i18n run passed 82 tests and 10225 subtests after quote-summary
+and plan-replacement guards. The 16 dedicated settings cases cover real Main
+panels, override/reset/cold restore, retained uploads and upload-to-TTS switching,
+scoped options and default restoration, frozen approvals, quote reconstruction
+without tokens, paid review, all-source inventory and oversized-record retention.
+Ruff, compileall, frozen sync, lock and whitespace checks passed. Some AppTest
+route transitions require a fresh test render because it retains stale widget
+nodes after a mid-render rerun; actual browser layout/navigation remains an
+operator acceptance item. No live TTS/provider/stock/AI/GPU/social operation was
+performed. Source-specific existing UI checks also passed except an initially
+found preview-helper UI dependency, which was removed and verified by the final
+full voice-preview run.
+
 ## Narration-driven Automatic scene timing (29 October 2026)
 
 The owner promoted prior OpenCut/publishing/campaign work into development at

@@ -275,10 +275,14 @@ def test_real_pipeline_guard_blocks_legacy_publishing_even_when_enabled(setup):
 
 
 def test_local_resume_uses_saved_context_and_same_task(setup):
-    v = approve(setup)
-    item = v["items"][0]
+    v = plan(setup)
     current = c.get(v["id"])
     current["template"]["video_source"] = "wan22_local"
+    c.save(current)
+    c.approve(v["id"], True, c.get(v["id"])["revision"])
+    v = c.get(v["id"])
+    item = v["items"][0]
+    current = c.get(v["id"])
     current["items"][0]["state"] = "attention"
     c.save(current)
     params = c.VideoParams.model_validate(

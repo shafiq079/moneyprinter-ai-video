@@ -33,25 +33,30 @@ keep generation, library and direct publishing as separate services.
     and an operator checklist for live acceptance. Never publish test content to
     a real account automatically.
 
-## Scope choices
+## Production settings (expanded 31 October 2026)
 
-Creative campaigns initially support Pexels, Pixabay and registered local AI
-providers. Factual scripts retain the individual evidence-review workflow; paid
-quote/confirmation providers, uploaded/reference audio and task-local material
-paths are not silently reused in a campaign template. Local AI still needs the
-operator's real compute; CPU tests do not validate model inference or quality.
-This milestone adds no recurring unattended campaign creation, trend scraper,
-analytics, ranking guarantee or automatic public-post approval.
+Campaigns now reuses the generator's complete script/video/audio/subtitle controls.
+See [CAMPAIGN_SETTINGS.md](CAMPAIGN_SETTINGS.md) for the implementation plan,
+input persistence, quote/charge rules and regression evidence. All generator
+sources are selectable; required credentials/compute still belong to the operator.
+Factual settings require supplied excerpts and retain the existing per-video task
+evidence gate. No recurring unattended creation, trend scraper, analytics, ranking
+guarantee or automatic public-post approval is introduced.
 
 ## Operator workflow
 
-Open Campaigns from navigation. Enter a brief and count; choose a generation
-source/voice/language or load a completed task's supported template. Plan with AI,
-edit the resulting topics/scripts and review production settings. Approve
-production once. Monitor progress, pause between items, cancel the active task,
-or explicitly retry a failed attempt. Open Content Library to review the actual
-videos and choose any edited exports as finals. Return to Campaigns and prepare
-publishing for ready items, then review/approve in Publishing.
+Open Campaigns, choose **Configure shared production settings**, adjust the four
+normal generator panels, then save. Enter a brief/count and create the campaign.
+Existing campaigns offer **Edit shared production settings** before approval.
+Plan topics/scripts with AI. Select a video to edit its script or open **Edit this
+video production settings**. An override is independent; **Reset to shared settings**
+restores inheritance. Review every video's effective settings, any paid charges
+and individual quotes, then approve production once.
+
+Monitor progress, pause between items, cancel the active task or explicitly retry
+a failed attempt. Open Content Library to review the actual videos and choose
+edited exports as finals if needed. Editing remains optional. Prepare publishing
+for ready items, then separately review/approve in Publishing.
 
 The application must run during planning, production and media transfer. Native
 Google/Meta schedules already accepted still follow the existing contracts.

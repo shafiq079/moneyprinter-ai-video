@@ -29,6 +29,9 @@ On 29 October 2026 the owner promoted the completed work to `development`
 at 3a938c2 and approved narration-driven Automatic scene timing and tighter
 scene-specific visual instructions on `opencut-editor`. Visual recognition and
 automatic inspection of generated footage are explicitly outside this milestone.
+On 31 October 2026 the owner approved reuse of the full generator settings
+for campaigns, including shared defaults, per-video overrides and retained
+provider-specific upload/charge/quote requirements, on opencut-editor.
 Do not promote new changes to `development`/`main` without a
 later instruction. This overrides the historical
 two-branch restriction below for this experiment only.

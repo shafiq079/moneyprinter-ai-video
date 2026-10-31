@@ -10,6 +10,7 @@ from app.models import const
 from app.models.schema import VideoParams
 from app.services import state as sm
 from app.services import task as tm
+from app.services import campaign_production as production
 from app.services.loomloom import LoomLoomConfirmedVideoRequest
 from app.services.local_ai.clip_import import validate_upload_bytes, validate_start_seconds
 from app.utils.logging_utils import format_log_record
@@ -65,6 +66,7 @@ def _run_generation(
     resume_context: dict | None = None,
     stop_at: str = "video",
     allow_auto_publish: bool = True,
+    production_package: dict | None = None,
 ) -> dict:
     """
     在后台线程中执行现有视频流水线。
@@ -87,7 +89,13 @@ def _run_generation(
 
         # 完整任务仍使用原来的配置锁，防止另一个 WebUI 会话在生成中途修改
         # Provider、密钥等进程级配置，造成同一条视频前后使用不同设置。
-        with config.runtime_config_lock():
+        with config.runtime_config_lock(), production.runtime_options(production_package or {}):
+            if production_package and resume_context is None:
+                prepared = production.worker_inputs(production_package, params, task_id)
+                loomloom_video_request = prepared.get("loomloom_video_request", loomloom_video_request)
+                voxcpm_reference_audio = prepared.get("voxcpm_reference_audio", voxcpm_reference_audio)
+                voxcpm_prompt_audio = prepared.get("voxcpm_prompt_audio", voxcpm_prompt_audio)
+                voxcpm_prompt_text = prepared.get("voxcpm_prompt_text", voxcpm_prompt_text)
             return tm.start(
                 task_id=task_id,
                 params=params,

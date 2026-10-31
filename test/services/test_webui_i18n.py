@@ -22,6 +22,26 @@ PROVIDER_TIPS_PREFIXES = (
 # 避免把完全相同的品牌名复制十份，也避免长说明后续只更新部分语言。
 ENGLISH_FALLBACK_KEYS = frozenset(
     {
+        'Back to campaign',
+        'Campaign production settings',
+        'Campaign video is unavailable.',
+        'Configure shared production settings',
+        'Edit shared production settings',
+        'Edit this video production settings',
+        'Effective video production settings',
+        'I approve paid provider charges for all listed campaign videos',
+        'Inherits shared settings',
+        'Per-video override',
+        'Production settings are locked after approval.',
+        'Re-upload task inputs in shared production settings.',
+        'Reset to shared settings',
+        'Review all video settings',
+        'Save campaign production settings',
+        'Saved uploads are retained. Upload a replacement to change them.',
+        'Shared settings apply to inherited videos. Per-video overrides remain independent. Campaign count controls the number of outputs.',
+        'Shared topic and script fields are examples only. Campaign planning creates the individual scripts using your language and script instructions.',
+        'These are the same controls as the single-video generator. Saving settings does not generate videos.',
+
         'Earlier generation attempts',
         'Accept retained final after review',
         # Campaign labels use English fallback in secondary locales.
