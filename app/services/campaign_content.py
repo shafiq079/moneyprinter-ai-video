@@ -150,12 +150,12 @@ CAMPAIGN_DATA:\n""" + json.dumps(
         snapshot = copy.deepcopy(config.app)
     request_options = {"raise_provider_errors": True}
     if len(targets) > 1:
-        request_options.update(stream_response=True, max_stream_seconds=180)
+        request_options.update(stream_response=True, max_stream_seconds=360)
     try:
         payload = llm.generate_json_response(
             prompt,
             app_config=snapshot,
-            timeout_seconds=90,
+            timeout_seconds=180,
             max_retries=0,
             **request_options,
         )
