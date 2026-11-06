@@ -1,9 +1,19 @@
 # Automatic narration-driven scenes
 
+For new Pexels/Pixabay/Coverr tasks, a numeric clip length with **Match visuals
+to script order** enabled now also uses narration timing. The numeric choice caps
+each shot's playback duration. A long narration beat is split into consecutive
+shots sharing that beat's searches; footage never loops back through previous
+keywords to fill time. Timed stock search requires the configured LLM, even with
+manual keywords (which are hints). A missing shot fails with the affected scene.
+The search does not verify actions in the footage. With matching off, numeric
+clip lengths still use the original stock workflow. Existing exports are unchanged.
+
 ## Approved implementation plan (29 October 2026)
 
 Work on opencut-editor; development at 3a938c2 is the preserved baseline.
-Improve Automatic only, retaining fixed-duration and historical saved-plan behavior.
+The original milestone targeted Automatic; the fixed-length matching follow-up
+is documented above. Historical saved plans retain their behavior.
 No visual recognition, model downloads, new speech service or paid retries.
 
 1. Persist a narration timeline from existing TTS cues or matching captions.
@@ -37,8 +47,9 @@ remains necessary for real voices, stock search quality and generated visuals.
 
 In video settings select **Clip Duration → Automatic (recommended)**. It applies
 for Wan/LTX/local-HF providers and Pexels/Pixabay/Coverr. Stock retains its previous
-numeric default until Automatic is selected. Numeric choices retain the old
-maximum-duration behavior; existing tasks retain their saved parameters.
+numeric default until Automatic is selected. With matching enabled, numeric
+stock choices retain the selected cap but follow narration timing. Multiple
+outputs from one timed stock task share its scene footage.
 The legacy API/CLI field remains `local_ai_duration_mode="auto"` for compatibility,
 including stock. Other remote paid services retain existing fixed controls.
 No OpenCut rebuild or new dependency is required.

@@ -890,13 +890,13 @@ def combine_videos(
             or not math.isfinite(d) or d <= 0 for d in scene_durations
         ):
             raise ValueError("invalid explicit scene durations")
-        if normalized_clip_speed != 1.0 or video_concat_mode != VideoConcatMode.sequential:
-            raise ValueError("scene timing requires sequential playback at normal speed")
+        if video_concat_mode != VideoConcatMode.sequential:
+            raise ValueError("scene timing requires sequential playback")
         if sum(scene_durations) + 1 / fps < audio_duration:
             raise ValueError("scene timing does not cover narration")
         scene_durations = _quantize_scene_durations(scene_durations)
         required_video_duration = audio_duration
-        logger.info("using explicit scene timing without source looping or speed changes")
+        logger.info("using explicit scene timing without source looping")
     output_dir = os.path.dirname(combined_video_path)
 
     aspect = VideoAspect(video_aspect)
@@ -913,8 +913,8 @@ def combine_videos(
         close_clip(clip)
         
         if scene_durations is not None:
-            requested = scene_durations[source_index]
-            if not _scene_duration_covered(requested, clip_duration, fps):
+            requested = scene_durations[source_index] * normalized_clip_speed
+            if not _scene_duration_covered(requested, clip_duration, fps / normalized_clip_speed):
                 raise ValueError("saved clip is too short for its playback duration; restore a longer version or reset scene timing")
             subclipped_items.append(SubClippedVideoClip(
                 file_path=video_path, start_time=0, end_time=min(requested, clip_duration),

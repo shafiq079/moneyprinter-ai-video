@@ -324,7 +324,7 @@
     "Clip Speed Help": "仅调整画面素材的播放速度，不影响配音、字幕和单个片段的最大输出时长。",
     "Number of Videos Generated Simultaneously": "同时生成视频数量",
     "Match Materials to Script Order": "按文案顺序匹配画面",
-    "Match Materials to Script Order Help": "按文案顺序生成关键词并匹配素材，使画面更贴近当前旁白。",
+    "Match Materials to Script Order Help": "对于 Pexels、Pixabay 和 Coverr，按旁白时间匹配素材，所选时长为单个镜头的上限。需要 AI 模型生成场景搜索词。其他来源仍按关键词顺序匹配。",
     "Audio Settings": "**音频设置**",
     "Voiceover Mode": "配音方式",
     "Automatic Voiceover": "自动配音",

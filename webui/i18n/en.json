@@ -324,7 +324,7 @@
     "Clip Speed Help": "Adjusts visual material playback only. Voiceover, subtitles, and the maximum output duration of each clip are unchanged.",
     "Number of Videos Generated Simultaneously": "Videos per Run",
     "Match Materials to Script Order": "Match Visuals to Script Order",
-    "Match Materials to Script Order Help": "Generate keywords and match materials in script order so visuals follow the current voiceover.",
+    "Match Materials to Script Order Help": "For Pexels, Pixabay and Coverr, follow narration timing and use the selected clip length as the maximum per shot. Requires an AI model to generate scene searches. Other sources keep keyword-order matching.",
     "Audio Settings": "**Audio Settings**",
     "Voiceover Mode": "Voiceover Mode",
     "Automatic Voiceover": "Auto",

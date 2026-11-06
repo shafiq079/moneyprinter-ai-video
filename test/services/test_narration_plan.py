@@ -258,6 +258,12 @@ from test.services.test_local_ai import LocalAITestCase  # noqa: E402
 
 class TestAutomaticStockPipeline(LocalAITestCase):
     def test_real_stock_render_uses_planned_cut_and_never_global_keywords(self):
+        self._check_timed_stock_render("auto")
+
+    def test_fixed_stock_matching_splits_a_beat_and_preserves_its_query(self):
+        self._check_timed_stock_render("manual")
+
+    def _check_timed_stock_render(self, mode):
         from app.models.schema import VideoAspect
         from app.services import video
         from moviepy import ColorClip
@@ -267,7 +273,11 @@ class TestAutomaticStockPipeline(LocalAITestCase):
         root = self.task_root / tid
         root.mkdir()
         paths = []
-        for color, name in [((255, 0, 0), "red"), ((0, 0, 255), "blue")]:
+        fixed = mode == "manual"
+        colors = [((255, 0, 0), "red"), ((0, 0, 255), "blue")]
+        if fixed:
+            colors.append(((0, 0, 255), "blue-continued"))
+        for color, name in colors:
             target = root / (name + ".mp4")
             clip = ColorClip((90, 160), color=color, duration=4)
             clip.write_videofile(
@@ -284,7 +294,16 @@ class TestAutomaticStockPipeline(LocalAITestCase):
             item = SimpleNamespace(
                 url=kwargs["search_term"], provider="pexels", source_info={}
             )
-            return [item]
+            return (
+                [
+                    item,
+                    SimpleNamespace(
+                        url=item.url + "-second", provider="pexels", source_info={}
+                    ),
+                ]
+                if fixed
+                else [item]
+            )
 
         with (
             patch.object(task.voice, "tts", side_effect=speech),
@@ -313,15 +332,22 @@ class TestAutomaticStockPipeline(LocalAITestCase):
                 video_subject="Travel",
                 video_script="City crowds. Quiet mountains.",
                 video_source="pexels",
-                local_ai_duration_mode="auto",
-                video_clip_duration=1,
+                local_ai_duration_mode=mode,
+                match_materials_to_script=fixed,
+                video_clip_duration=2 if fixed else 1,
+                video_clip_speed=1.5 if fixed else 1.0,
                 subtitle_enabled=False,
                 bgm_type="",
                 n_threads=1,
             )
             result = task.start(tid, params)
             assert result["videos"], result
-            assert combine.call_args.kwargs["scene_durations"][0] == 1.1
+            durations = combine.call_args.kwargs["scene_durations"]
+            if fixed:
+                assert durations == pytest.approx([1.1, 2, 0.1], abs=0.05)
+                assert durations[:2] == pytest.approx([1.1, 2])
+            else:
+                assert durations[0] == 1.1
             with video._open_video_clip_quietly(result["videos"][0]) as final:
                 before, after = (
                     numpy.mean(final.get_frame(0.7), axis=(0, 1)),
@@ -329,10 +355,16 @@ class TestAutomaticStockPipeline(LocalAITestCase):
                 )
                 assert before[0] > 200 and before[2] < 30
                 assert after[2] > 200 and after[0] < 30
+                if fixed:
+                    tail = numpy.mean(final.get_frame(3.15), axis=(0, 1))
+                    assert tail[2] > 200 and tail[0] < 30
                 assert abs(final.duration - 3.2) < 0.12
             timing = np.load(tid)
             assert timing["timing_source"] == "tts_cues"
             assert timing["scenes"][1]["queries"] == ["quiet mountains"]
+            if fixed:
+                assert timing["scenes"][2]["queries"] == ["quiet mountains"]
+                assert timing["scenes"][2]["beat_id"] == timing["scenes"][1]["beat_id"]
 
 
 def test_caption_and_scene_sentence_boundaries_share_tts_clock(tmp_path):
@@ -388,3 +420,21 @@ def test_corrupt_persisted_intervals_cannot_reach_renderer(tmp_path):
         scene_planner._atomic_write_json(np.file("t"), data)
         with pytest.raises(ValueError, match="intervals"):
             np.load("t")
+
+
+@pytest.mark.parametrize("cap", [4, 5, 6])
+def test_eight_second_beat_keeps_its_subject_until_next_beat(cap):
+    plan = np.build(
+        "Scrub with soap. Dry the glass.",
+        10,
+        10,
+        maker=maker([(0, 8, "Scrub with soap."), (8, 10, "Dry the glass.")]),
+    )
+    shots = np.split_beats(plan, cap)["scenes"]
+    assert [shot["duration"] for shot in shots] == [cap, 8 - cap, 2]
+    assert [shot["text"] for shot in shots] == [
+        "Scrub with soap.",
+        "Scrub with soap.",
+        "Dry the glass.",
+    ]
+    assert shots[2]["start"] == 8
