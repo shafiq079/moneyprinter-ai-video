@@ -95,7 +95,7 @@ def _render_library(tr):
                     index=choices.index(p["source"]) if p["source"] in choices else 0,
                     key="library_version:" + tid,
                 )
-                st.video(str(media.source_file(tid, chosen)))
+                st.video(str(media.source_file(tid, chosen)), width=180)
                 st.caption(
                     tr("Ready to publish")
                     if p["ready"] and chosen == p["source"]
