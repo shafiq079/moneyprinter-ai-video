@@ -6429,44 +6429,6 @@ def _render_video_settings(panel, params):
                     key="local_video_materials_uploader",
                 )
 
-            # 文案顺序匹配会从关键词生成到最终合成全程保持叙事顺序，因此开启时
-            # 顺序拼接是唯一符合实际执行逻辑的选项。同步控件值可避免界面仍显示
-            # “随机拼接”，同时保留用户原选择，关闭后自动恢复。
-            sync_script_order_concat_mode()
-            selected_concat_mode = stable_selectbox(
-                tr("Video Concat Mode"),
-                options=[value for _, value in video_concat_modes],
-                default_value=_saved_ui_choice(
-                    "video_concat_mode",
-                    [value for _, value in video_concat_modes],
-                    VideoConcatMode.random.value,
-                ),
-                key="video_concat_mode_select",
-                format_func=lambda value: dict(
-                    (v, label) for label, v in video_concat_modes
-                )[value],
-                disabled=bool(st.session_state.get("match_materials_to_script", False)),
-            )
-            params.video_concat_mode = VideoConcatMode(selected_concat_mode)
-
-            params.match_materials_to_script = st.checkbox(
-                tr("Match Materials to Script Order"),
-                help=tr("Match Materials to Script Order Help"),
-                key="match_materials_to_script",
-                on_change=sync_script_order_concat_mode,
-            )
-            _set_runtime_config(
-                "app",
-                "match_materials_to_script",
-                params.match_materials_to_script,
-            )
-            # 顺序匹配开启时，sequential 是派生出的强制值，不应覆盖用户在关闭
-            # 该功能时选择的拼接偏好；关闭后仍能恢复此前的 random/sequential。
-            if not params.match_materials_to_script:
-                _set_runtime_config(
-                    "ui", "video_concat_mode", params.video_concat_mode.value
-                )
-
             # 视频转场模式
             video_transition_modes = [
                 (tr("None"), VideoTransitionMode.none.value),
@@ -6624,6 +6586,47 @@ def _render_video_settings(panel, params):
             _set_runtime_config(
                 "ui", "video_clip_duration", params.video_clip_duration
             )
+            automatic_duration = params.local_ai_duration_mode == "auto"
+            # 文案顺序匹配会从关键词生成到最终合成全程保持叙事顺序，因此开启时
+            # 顺序拼接是唯一符合实际执行逻辑的选项。同步控件值可避免界面仍显示
+            # “随机拼接”，同时保留用户原选择，关闭后自动恢复。
+            sync_script_order_concat_mode()
+            selected_concat_mode = stable_selectbox(
+                tr("Video Concat Mode"),
+                options=[value for _, value in video_concat_modes],
+                default_value=_saved_ui_choice(
+                    "video_concat_mode",
+                    [value for _, value in video_concat_modes],
+                    VideoConcatMode.random.value,
+                ),
+                key="video_concat_mode_select",
+                format_func=lambda value: dict(
+                    (v, label) for label, v in video_concat_modes
+                )[value],
+                disabled=bool(st.session_state.get("match_materials_to_script", False)),
+            )
+            params.video_concat_mode = VideoConcatMode(selected_concat_mode)
+
+            script_order_selected = st.checkbox(
+                tr("Match Materials to Script Order"),
+                help=tr("Match Materials to Script Order Help"),
+                key="match_materials_to_script",
+                on_change=sync_script_order_concat_mode,
+                disabled=automatic_duration,
+            )
+            params.match_materials_to_script = script_order_selected and not automatic_duration
+            _set_runtime_config(
+                "app",
+                "match_materials_to_script",
+                script_order_selected,
+            )
+            # 顺序匹配开启时，sequential 是派生出的强制值，不应覆盖用户在关闭
+            # 该功能时选择的拼接偏好；关闭后仍能恢复此前的 random/sequential。
+            if not script_order_selected:
+                _set_runtime_config(
+                    "ui", "video_concat_mode", params.video_concat_mode.value
+                )
+
             clip_speed_key = localized_widget_key("video_clip_speed_slider")
             # session_state 可能来自旧任务、API 参数或旧版页面状态。控件创建前
             # 统一归一化，既保留合法选择，也确保 slider 始终收到 0.5～2.0

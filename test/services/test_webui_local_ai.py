@@ -238,7 +238,12 @@ def test_stock_automatic_is_explicit_persists_and_restores_without_model_calls()
         duration = next(i for i in app.selectbox if str(i.key).startswith("video_clip_duration_select"))
         assert duration.value == 3
         assert "Automatic (recommended)" in duration.options
-        duration.set_value("auto").run()
+        match = app.checkbox(key="match_materials_to_script")
+        assert not match.disabled
+        match.check().run()
+        app.selectbox(key=duration.key).set_value("auto").run()
+        assert app.checkbox(key=match.key).disabled
+        assert not app.session_state["generator_last_params"]["match_materials_to_script"]
         assert not app.exception
         assert config.ui["stock_duration_mode"] == "auto"
         speed = next(i for i in app.slider if str(i.key).startswith("video_clip_speed_slider"))
@@ -253,5 +258,9 @@ def test_stock_automatic_is_explicit_persists_and_restores_without_model_calls()
         fresh.run()
         assert not fresh.exception
         assert next(i for i in fresh.selectbox if str(i.key).startswith("video_clip_duration_select")).value == 4
+        app.selectbox(key=duration.key).set_value(5).run()
+        assert not app.checkbox(key=match.key).disabled
+        assert app.checkbox(key=match.key).value
+        assert app.session_state["generator_last_params"]["match_materials_to_script"]
         speech.assert_not_called()
         model.assert_not_called()
