@@ -8,6 +8,9 @@ import json
 import re
 import uuid
 
+from loguru import logger
+from openai import APIConnectionError, APIStatusError, APITimeoutError
+
 from app.config import config
 from app.services import llm
 
@@ -145,14 +148,39 @@ CAMPAIGN_DATA:\n""" + json.dumps(
     )
     with config.runtime_config_lock():
         snapshot = copy.deepcopy(config.app)
+    request_options = {"raise_provider_errors": True}
+    if len(targets) > 1:
+        request_options.update(stream_response=True, max_stream_seconds=180)
     try:
         payload = llm.generate_json_response(
-            prompt, app_config=snapshot, timeout_seconds=90, max_retries=0
+            prompt,
+            app_config=snapshot,
+            timeout_seconds=90,
+            max_retries=0,
+            **request_options,
         )
     except Exception as exc:
-        raise ValueError(
-            "AI content generation failed. Your existing video cards were retained."
-        ) from exc
+        status = exc.status_code if isinstance(exc, APIStatusError) else None
+        if status == 429:
+            reason = "The AI provider returned HTTP 429 (rate limit or quota)."
+        elif isinstance(exc, (APITimeoutError, TimeoutError)):
+            reason = "The AI request timed out. Try fewer video cards at once."
+        elif isinstance(exc, APIConnectionError):
+            reason = "Could not connect to the AI provider."
+        elif isinstance(exc, llm.InvalidJSONResponse):
+            reason = "The AI returned incomplete or invalid JSON. Try fewer video cards at once."
+        elif status is not None:
+            reason = f"The AI provider returned HTTP {status}."
+        else:
+            reason = "AI content generation failed."
+        # Provider bodies can echo credentials or user content.
+        logger.warning(
+            "Campaign AI request failed: cards={}, error_type={}, http_status={}",
+            len(targets),
+            type(exc).__name__,
+            status,
+        )
+        raise ValueError(f"{reason} Your existing video cards were retained.") from None
     rows = payload.get("items") if isinstance(payload, dict) else None
     if not isinstance(rows, list) or len(rows) != len(targets):
         raise ValueError(

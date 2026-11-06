@@ -197,3 +197,40 @@ def test_per_card_ai_never_mutates_previous_rendered_widgets():
     assert by_key(app.text_input, ui.key(first, "title")).value == "Manual"
     assert by_key(app.text_area, ui.key(first, "keywords")).value == "my, keywords"
     assert by_key(app.button, "campaign_card_regenerate:" + second["id"]).disabled
+
+
+@pytest.mark.parametrize(
+    ("error_kind", "expected"),
+    [("rate", "HTTP 429"), ("timeout", "timed out"), ("json", "invalid JSON")],
+)
+def test_bulk_request_explains_failures_without_leaking_provider_body(
+    error_kind, expected
+):
+    import httpx
+    from openai import APITimeoutError, RateLimitError
+
+    request = httpx.Request("POST", "https://example.invalid")
+    errors = {
+        "rate": RateLimitError(
+            "private provider body",
+            response=httpx.Response(429, request=request),
+            body=None,
+        ),
+        "timeout": APITimeoutError(request),
+        "json": content.llm.InvalidJSONResponse("private provider body"),
+    }
+    values = [row(), row(2)]
+    before = copy.deepcopy(values)
+    with (
+        patch.object(
+            content.llm, "generate_json_response", side_effect=errors[error_kind]
+        ) as model,
+        pytest.raises(ValueError, match=expected) as failure,
+    ):
+        content.generate("Garden", "English", {}, values)
+    model.assert_called_once()
+    assert model.call_args.kwargs["raise_provider_errors"] is True
+    assert model.call_args.kwargs["stream_response"] is True
+    assert model.call_args.kwargs["max_retries"] == 0
+    assert "private provider body" not in str(failure.value)
+    assert values == before

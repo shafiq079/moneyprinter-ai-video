@@ -306,12 +306,17 @@ def _extract_qwen_generation_text(response) -> str:
     return _normalize_text_response(text, "qwen")
 
 
+class InvalidJSONResponse(ValueError):
+    """The model did not return a usable JSON object."""
+
+
 def _generate_response(
     prompt: str,
     app_config=None,
     *,
     timeout_seconds: float | None = None,
     max_retries: int | None = None,
+    raise_provider_errors: bool = False,
     stream_response: bool = False,
     max_stream_seconds: float = 900.0,
 ) -> str:
@@ -719,6 +724,8 @@ def _generate_response(
             )
 
     except Exception as e:
+        if raise_provider_errors:
+            raise
         return f"Error: {_sanitize_error_message(e)}"
 
 
@@ -917,12 +924,13 @@ def generate_json_response(
     *,
     timeout_seconds: float | None = None,
     max_retries: int | None = None,
+    raise_provider_errors: bool = False,
     stream_response: bool = False,
     max_stream_seconds: float = 900.0,
 ) -> dict:
     """Generate one JSON object through the configured MoneyPrinter LLM provider."""
 
-    options = {}
+    options = {"raise_provider_errors": True} if raise_provider_errors else {}
     if timeout_seconds is not None:
         options["timeout_seconds"] = timeout_seconds
     if max_retries is not None:
@@ -932,7 +940,7 @@ def generate_json_response(
         options["max_stream_seconds"] = max_stream_seconds
     response = _generate_response(prompt=prompt, app_config=app_config, **options)
     if not response:
-        raise ValueError("LLM returned an empty JSON response")
+        raise InvalidJSONResponse("LLM returned an empty JSON response")
     if response.startswith("Error:"):
         raise ValueError(response.removeprefix("Error:").strip())
 
@@ -945,14 +953,14 @@ def generate_json_response(
         start = cleaned.find("{")
         end = cleaned.rfind("}")
         if start < 0 or end <= start:
-            raise ValueError("LLM did not return a JSON object") from None
+            raise InvalidJSONResponse("LLM did not return a JSON object") from None
         try:
             payload = json.loads(cleaned[start : end + 1])
         except json.JSONDecodeError as exc:
-            raise ValueError("LLM returned invalid JSON") from exc
+            raise InvalidJSONResponse("LLM returned invalid JSON") from exc
 
     if not isinstance(payload, dict):
-        raise ValueError("LLM JSON response must be an object")
+        raise InvalidJSONResponse("LLM JSON response must be an object")
     return payload
 
 
