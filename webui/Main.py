@@ -62,6 +62,7 @@ from app.services import (
     video,
     volcengine_seedance,
     voice,
+    voicestudio,
     webui_task,
 )
 from app.services import elevenlabs_music as elevenlabs_music_service
@@ -2347,6 +2348,8 @@ def _infer_tts_server_from_voice(voice_name):
         return "chatterbox"
     if voice.is_kokoro_voice(voice_name):
         return "kokoro"
+    if voice.is_voicestudio_voice(voice_name):
+        return "voicestudio"
     if voice.is_fish_audio_voice(voice_name):
         return "fish_audio"
     if voice.is_voxcpm_voice(voice_name):
@@ -6928,6 +6931,8 @@ def _get_voice_preview_sample(voice_name: str) -> str:
         vietnamese_chars = set("àáâãèéêìíòóôõùúýăđơưÀÁÂÃÈÉÊÌÍÒÓÔÕÙÚÝĂĐƠƯ")
         if any(char in vietnamese_chars for char in display):
             return "Xin chào, đây là đoạn âm thanh thử nghiệm giọng nói."
+    if voice_name.startswith(f"{voicestudio.PREFIX}kittentts:"):
+        return locales["en"]["Translation"]["Voice Example"]
     return tr("Voice Example")
 
 
@@ -7240,6 +7245,9 @@ def _get_voice_preview_provider_signature(tts_server: str) -> dict:
             "model_id": config.kokoro.get("model_id", ""),
             "credential": _credential_signature(config.kokoro.get("api_key", "")),
         }
+    if tts_server == "voicestudio":
+        base_url, token = voicestudio.connection()
+        return {"endpoint": _credential_signature(base_url), "credential": _credential_signature(token)}
     if tts_server == "voxcpm":
         return {
             "base_url": config.voxcpm.get("base_url", ""),
@@ -8102,6 +8110,11 @@ def _render_background_music_settings(params, elevenlabs_api_key_rendered=False)
     return uploaded_bgm_file
 
 
+@st.cache_data(ttl=15, show_spinner=False)
+def _load_voicestudio_presets(server_signature):
+    return voicestudio.get_voices()
+
+
 def _render_audio_settings(panel, params):
     """渲染音频设置并返回上传音频与当前配音模式。"""
     with panel:
@@ -8151,6 +8164,7 @@ def _render_audio_settings(panel, params):
                 ("elevenlabs", "ElevenLabs TTS"),
                 ("chatterbox", "Chatterbox TTS"),
                 ("kokoro", "Kokoro TTS"),
+                ("voicestudio", tr("Local Voices (VoiceStudio)")),
                 ("fish_audio", "Fish Audio TTS"),
                 ("voxcpm", "VoxCPM TTS"),
             ]
@@ -8193,6 +8207,7 @@ def _render_audio_settings(panel, params):
             filtered_voices = []
             saved_voice_name = config.ui.get("voice_name", "")
             elevenlabs_api_key_rendered = False
+            voicestudio_labels = {}
 
             if not tts_mode_enabled:
                 # 上传音频和无配音模式不加载远程音色，减少无意义的网络请求和界面噪音。
@@ -8226,6 +8241,22 @@ def _render_audio_settings(panel, params):
                 # 自托管 Kokoro 服务的音色：[kokoro] voices 为空时从服务端 /audio/voices 读取
                 _sync_kokoro_config_from_session_state()
                 filtered_voices = _get_kokoro_voice_options(saved_voice_name)
+            elif selected_tts_server == "voicestudio":
+                try:
+                    voicestudio_labels = _load_voicestudio_presets(
+                        _get_voice_preview_provider_signature("voicestudio")
+                    )
+                except (ValueError, requests.RequestException):
+                    st.warning(tr("Start the local VoiceStudio backend and check its connection."))
+                if (
+                    voicestudio_labels
+                    and voice.is_voicestudio_voice(saved_voice_name)
+                    and saved_voice_name != voicestudio.PREFIX
+                    and saved_voice_name not in voicestudio_labels
+                ):
+                    saved_preset = saved_voice_name.split(":", 2)[-1]
+                    voicestudio_labels[saved_voice_name] = f"{tr('Saved voice unavailable')} · {saved_preset}"
+                filtered_voices = list(voicestudio_labels)
             elif selected_tts_server == "fish_audio":
                 filtered_voices = voice.get_fish_audio_voices()
             elif selected_tts_server == "voxcpm":
@@ -8254,6 +8285,8 @@ def _render_audio_settings(panel, params):
                 if voice.is_chatterbox_voice(v) or voice.is_kokoro_voice(v):
                     name = v.split(":", 1)[1] if ":" in v else v
                     return name.replace("-Female", "").replace("-Male", "")
+                if voice.is_voicestudio_voice(v):
+                    return voicestudio_labels[v]
                 if voice.is_minimax_voice(v):
                     return minimax_voice_labels.get(v, v.split(":", 1)[1])
                 if voice.is_fish_audio_voice(v):
@@ -8340,6 +8373,12 @@ def _render_audio_settings(panel, params):
                     # 占位 sentinel 仅用于非自动模式的禁用展示，不覆盖用户上一次
                     # 真正选择的音色，切回自动配音后可以恢复原设置。
                     _set_runtime_config("ui", "voice_name", voice_name)
+            elif tts_mode_enabled and selected_tts_server == "voicestudio":
+                st.info(tr("Install and enable a TTS engine with presets in VoiceStudio."))
+                voice_name = (
+                    saved_voice_name if voice.is_voicestudio_voice(saved_voice_name)
+                    else voicestudio.PREFIX
+                )
             elif tts_mode_enabled:
                 # 如果没有声音可选，显示提示信息
                 st.warning(
@@ -9279,6 +9318,9 @@ def _render_generation_controls(
             st.toast(tr("Rerender Existing AI Scenes Queued"))
 
     if start_button:
+        if voice_mode == VOICE_MODE_TTS and params.voice_name == voicestudio.PREFIX:
+            st.error(tr("Install and enable a TTS engine with presets in VoiceStudio."))
+            st.stop()
         _save_runtime_config()
         task_id = str(uuid4()) if on_prepared else st.session_state.get("pending_generation_task_id") or str(uuid4())
         if on_prepared is None:

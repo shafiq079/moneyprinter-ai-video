@@ -2,6 +2,17 @@
 
 Read this file first in every new AI or developer session. `docs/SRS.md` is the full product specification; `docs/MIGRATION_MAP.md` is the file-level porting decision. `docs/PRODUCT_VISION.md` preserves the owner's longer-term editable-project and publishing goals separately from implemented scope and unapproved technical proposals. `docs/CHATGPT_PROJECT_SETUP.md` contains the reusable ChatGPT Project handoff. Update this handoff with every accepted milestone. Local desktop Codex setup and two-machine sync instructions are in `AGENTS.md` and `docs/LOCAL_CODEX_SETUP.md`.
 
+## Local Voices through VoiceStudio (11 November 2026)
+
+Audio Settings offers **Local Voices (VoiceStudio)** for self-hosted narration.
+The same voice choice is used by single-video generation, campaigns, previews
+and scene narration edits. MoneyPrinter reads installed, available engine
+presets from the local VoiceStudio backend. Each saved voice identifies the
+engine and preset. Speed is applied to the generated speech and the existing
+volume setting applies to preview and composition. Caption timing is estimated
+when the configured subtitle provider has no real timestamps. See
+[Local Voices setup](docs/LOCAL_VOICES.md).
+
 ## Campaign content composer (1 November 2026)
 
 Owner approved pre-creation per-video cards on opencut-editor. Campaigns starts
