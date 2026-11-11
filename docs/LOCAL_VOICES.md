@@ -32,20 +32,17 @@ by VoiceStudio's gallery API. The default gallery includes the Starter, World
 and Community packs, with names such as The Documentarian, Dutch Narrator,
 Thalia and Lucas. If the gallery manifest is unavailable, bundled featured
 archetypes can still appear. Selecting a voice saves its gallery ID in the
-project. Preview and generation ask VoiceStudio to create or reuse the
-corresponding profile, then send that profile ID to its speech endpoint.
-MoneyPrinter uses a gallery entry's sample text for the short preview when
-available. Full preview and video generation use your script.
+project. **Play Voice** plays the clip returned by VoiceStudio's gallery
+preview route, which can serve a published sample or render a local fallback.
+At default speed and volume, MoneyPrinter preserves the clip bytes. **Full
+Voiceover Preview** and video generation render your script using VoiceStudio's
+native OmniVoice route and the selected profile. That route uses the profile's
+reference, language and seed, and MoneyPrinter requests the gallery renderer's
+32-step Broadcast settings. Expect longer CPU renders for new text. Native
+renders are recorded in the connected VoiceStudio instance's history.
 
-For gallery synthesis on VoiceStudio 0.5.7, make **OmniVoice** the active
-engine. In the Codespace source setup, stop the VoiceStudio process and
-restart it from its existing checkout:
-
-```bash
-cd ~/mpt-voicestudio-source
-OMNIVOICE_TTS_BACKEND=omnivoice OMNIVOICE_DEVICE=cpu \
-  .venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 3900
-```
+Your existing Codespace VoiceStudio process can handle both gallery voices and
+engine presets. MoneyPrinter selects the appropriate engine per request.
 
 Review and accept the required model terms in VoiceStudio before the first
 render. For a headless instance, see its local `/docs` API reference. Use

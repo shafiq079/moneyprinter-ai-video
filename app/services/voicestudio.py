@@ -157,28 +157,20 @@ def get_voices() -> dict[str, str]:
     return {voice_id: option.label for voice_id, option in get_voice_catalog().items()}
 
 
-def _speech_voice(voice_id: str) -> tuple[str, str]:
-    catalog = _engine_catalog()
-    if not voice_id.startswith(GALLERY_PREFIX):
-        if voice_id not in _preset_voices(catalog):
-            raise ValueError("Selected VoiceStudio preset is unavailable")
-        engine, preset = voice_id.removeprefix(PREFIX).split(":", 1)
-        return engine, preset
-
-    # VoiceStudio 0.5.7 resolves the OmniVoice speech model through the active
-    # engine. Prevent a gallery profile from silently becoming a KittenTTS voice.
-    if catalog.get("active") != "omnivoice":
-        raise GalleryVoiceError(
-            "Select OmniVoice as the active VoiceStudio engine to use gallery voices."
-        )
+def _gallery_voice(voice_id: str) -> VoiceOption:
     option = _gallery_voices().get(voice_id)
     if option is None:
         raise GalleryVoiceError("The selected voice is unavailable in the VoiceStudio gallery.")
+    return option
+
+
+def _gallery_profile(voice_id: str) -> str:
+    option = _gallery_voice(voice_id)
     response = _request("POST", option.use_path, timeout=(3, 90)).json()
     profile_id = response.get("profile_id") if isinstance(response, dict) else None
     if not isinstance(profile_id, str) or not _GALLERY_ID.fullmatch(profile_id):
         raise GalleryVoiceError("VoiceStudio could not save the selected gallery voice.")
-    return "omnivoice", profile_id
+    return profile_id
 
 
 def _speech_chunks(text: str) -> Iterator[str]:
@@ -196,13 +188,7 @@ def _speech_chunks(text: str) -> Iterator[str]:
         yield remaining
 
 
-def synthesize(
-    text: str, voice_id: str, rate: float, output_file: str, *, volume: float = 1.0
-) -> float:
-    """Render all chunks and atomically publish the decoded MP3."""
-    if not any(character.isalnum() for character in text):
-        raise ValueError("VoiceStudio requires speakable text")
-    engine, selected_voice = _speech_voice(voice_id)
+def _rate_and_volume(rate: float, volume: float) -> tuple[float, float]:
     try:
         rate = float(rate)
     except (TypeError, ValueError):
@@ -212,10 +198,90 @@ def synthesize(
     volume = float(volume)
     if not math.isfinite(volume) or volume < 0:
         raise ValueError("Invalid VoiceStudio volume")
+    return rate, volume
 
+
+def _encode_mp3(source: Path, rate: float, volume: float, *, pcm: bool = False) -> Path:
+    rendered = source.with_name("rendered.mp3")
+    input_format = ["-f", "s16le", "-ar", "24000", "-ac", "1"] if pcm else []
+    subprocess.run(
+        [utils.get_ffmpeg_binary(), "-nostdin", "-loglevel", "error", *input_format,
+         "-i", str(source), "-af", f"atempo={rate},volume={volume}",
+         "-c:a", "libmp3lame", str(rendered)],
+        check=True, capture_output=True, timeout=120,
+    )
+    return rendered
+
+
+def _publish_audio(source: Path, destination: Path) -> float:
+    with AudioFileClip(str(source)) as clip:
+        duration = clip.duration
+    if not math.isfinite(duration) or duration <= 0:
+        raise ValueError("VoiceStudio produced no playable audio")
+    os.replace(source, destination)
+    return duration
+
+
+def _content_type(response: requests.Response) -> str:
+    return response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+
+
+def _write_audio(response: requests.Response, path: Path, *, wav_only: bool = False) -> Path:
+    mime = _content_type(response)
+    suffix = {"audio/wav": ".wav", "audio/x-wav": ".wav", "audio/mpeg": ".mp3"}.get(mime)
+    if not suffix or (wav_only and suffix != ".wav") or not response.content:
+        raise GalleryVoiceError("VoiceStudio returned invalid gallery audio.")
+    source = path.with_suffix(suffix)
+    source.write_bytes(response.content)
+    return source
+
+
+def preview_gallery(voice_id: str, rate: float, output_file: str, *, volume: float = 1.0) -> float:
+    """Play the VoiceStudio gallery sample without regenerating it."""
+    option = _gallery_voice(voice_id)
+    path = option.use_path.removesuffix("/use") + "/preview"
+    response = _request("GET", path, timeout=(3, 300))
+    rate, volume = _rate_and_volume(rate, volume)
     destination = Path(output_file)
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".voicestudio-", dir=destination.parent) as work:
+        source = _write_audio(response, Path(work) / "gallery")
+        # Preserve the exact gallery audio when playback controls are at defaults.
+        if rate != 1.0 or volume != 1.0:
+            source = _encode_mp3(source, rate, volume)
+        return _publish_audio(source, destination)
+
+
+def synthesize(
+    text: str, voice_id: str, rate: float, output_file: str, *, volume: float = 1.0
+) -> float:
+    """Render voiceover speech and atomically publish the decoded MP3."""
+    if not any(character.isalnum() for character in text):
+        raise ValueError("VoiceStudio requires speakable text")
+    rate, volume = _rate_and_volume(rate, volume)
+    destination = Path(output_file)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".voicestudio-", dir=destination.parent) as work:
+        if voice_id.startswith(GALLERY_PREFIX):
+            # The native route applies the profile language, reference and seed.
+            # Match VoiceStudio's gallery renderer and use its own long-text
+            # chunking instead of starting a new voice generation per chunk.
+            response = _request(
+                "POST", "/generate", timeout=(3, 900),
+                data={
+                    "text": text, "engine": "omnivoice", "profile_id": _gallery_profile(voice_id),
+                    "num_step": 32, "guidance_scale": 2.0, "effect_preset": "broadcast",
+                    "postprocess_output": "true",
+                },
+            )
+            if response.headers.get("X-OmniVoice-Dropped-Chunks", "0") != "0":
+                raise GalleryVoiceError("VoiceStudio could not speak part of the script.")
+            source = _write_audio(response, Path(work) / "speech", wav_only=True)
+            return _publish_audio(_encode_mp3(source, rate, volume), destination)
+
+        if voice_id not in _preset_voices(_engine_catalog()):
+            raise ValueError("Selected VoiceStudio preset is unavailable")
+        engine, preset = voice_id.removeprefix(PREFIX).split(":", 1)
         pcm = Path(work) / "speech.pcm"
         with pcm.open("wb") as audio:
             for chunk in _speech_chunks(text):
@@ -223,26 +289,12 @@ def synthesize(
                     continue
                 response = _request(
                     "POST", "/v1/audio/speech", timeout=(3, 300),
-                    json={"model": engine, "voice": selected_voice, "input": chunk,
+                    json={"model": engine, "voice": preset, "input": chunk,
                           "response_format": "pcm", "speed": 1.0},
                 )
-                mime = response.headers.get("Content-Type", "").split(";", 1)[0].strip()
                 data = response.content
-                if mime != "audio/pcm" or not data or len(data) % 2:
+                if _content_type(response) != "audio/pcm" or not data or len(data) % 2:
                     raise ValueError("VoiceStudio returned invalid speech audio")
                 audio.write(data)
 
-        # Apply tempo locally because some VoiceStudio engines ignore API speed.
-        rendered = Path(work) / "speech.mp3"
-        subprocess.run(
-            [utils.get_ffmpeg_binary(), "-nostdin", "-loglevel", "error",
-             "-f", "s16le", "-ar", "24000", "-ac", "1", "-i", str(pcm),
-             "-af", f"atempo={rate},volume={volume}", "-c:a", "libmp3lame", str(rendered)],
-            check=True, capture_output=True, timeout=120,
-        )
-        with AudioFileClip(str(rendered)) as clip:
-            duration = clip.duration
-        if not math.isfinite(duration) or duration <= 0:
-            raise ValueError("VoiceStudio produced no playable audio")
-        os.replace(rendered, destination)
-        return duration
+        return _publish_audio(_encode_mp3(pcm, rate, volume, pcm=True), destination)

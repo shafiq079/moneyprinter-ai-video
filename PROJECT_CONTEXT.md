@@ -6,9 +6,10 @@ Read this file first in every new AI or developer session. `docs/SRS.md` is the 
 
 Local Voices now includes VoiceStudio's named gallery entries alongside
 engine presets. Stable gallery IDs are saved in MoneyPrinter. VoiceStudio
-creates or reuses a profile when speech is requested, and the existing
-narration path uses that profile. For gallery voices, VoiceStudio 0.5.7 must
-have OmniVoice active and its required model terms accepted. See
+serves the original gallery sample when available for short previews. Script
+narration creates or reuses the selected profile and uses the native OmniVoice
+route with the gallery's 32-step Broadcast settings. OmniVoice's required
+model terms must be accepted before rendering. See
 [Local Voices setup](docs/LOCAL_VOICES.md).
 
 ## Local Voices through VoiceStudio (11 November 2026)

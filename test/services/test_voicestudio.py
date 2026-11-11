@@ -1,5 +1,7 @@
 """CPU checks for the local VoiceStudio provider and its Streamlit selector."""
+import io
 import math
+import wave
 from array import array
 from pathlib import Path
 from unittest.mock import Mock
@@ -38,7 +40,17 @@ CATALOG = {
 }
 
 
-def _mock_backend(monkeypatch, audio=b"", *, active="kittentts", gallery=(), offline=False):
+def _wav_sample():
+    audio = io.BytesIO()
+    with wave.open(audio, "wb") as output:
+        output.setparams((1, 2, 24000, 0, "NONE", "not compressed"))
+        output.writeframes(array("h", (
+            round(8000 * math.sin(i * math.tau * 440 / 24000)) for i in range(24000)
+        )).tobytes())
+    return audio.getvalue()
+
+
+def _mock_backend(monkeypatch, audio=b"", *, active="kittentts", gallery=(), offline=False, dropped=False):
     def request(method, url, **kwargs):
         response = requests.Response()
         response.status_code = 200
@@ -51,6 +63,11 @@ def _mock_backend(monkeypatch, audio=b"", *, active="kittentts", gallery=(), off
             response.json = lambda: {"items": list(gallery[offset:offset + limit]), "total": len(gallery)}
         elif method == "POST" and url.endswith("/use"):
             response.json = lambda: {"profile_id": "abcd1234"}
+        elif (method == "POST" and url.endswith("/generate")) or (method == "GET" and url.endswith("/preview")):
+            response.headers["Content-Type"] = "audio/wav"
+            if dropped:
+                response.headers["X-OmniVoice-Dropped-Chunks"] = "1"
+            response._content = audio
         else:
             assert url.endswith("/v1/audio/speech")
             response.headers["Content-Type"] = "audio/pcm"
@@ -123,7 +140,8 @@ def test_audio_panel_restores_the_provider_and_saved_voice(monkeypatch, online):
                                           voice_name=SUPERTONIC))
     monkeypatch.setattr(config, "save_config", Mock())
     monkeypatch.setattr(config, "try_save_config", Mock(return_value=True))
-    backend = _mock_backend(monkeypatch, gallery=GALLERY)
+    sample = _wav_sample()
+    backend = _mock_backend(monkeypatch, sample, gallery=GALLERY)
     if not online:
         backend.side_effect = requests.ConnectionError
     page = AppTest.from_file(str(Path(__file__).parents[2] / "webui/Main.py"), default_timeout=30)
@@ -151,6 +169,13 @@ def test_audio_panel_restores_the_provider_and_saved_voice(monkeypatch, online):
         assert any("OmniVoice" in str(item.value) for item in page.caption)
         assert not next(widget for widget in page.selectbox
                         if widget.key == "voice_rate_select_en").disabled
+        page.button(key="play_voice_button").click().run()
+        preview = page.session_state["voice_preview_audio"]
+        assert preview["audio_bytes"] == sample
+        assert preview["mime_type"] == "audio/wav"
+        assert preview["preview_type"] == "sample"
+        assert all(call.args[0] == "GET" for call in backend.call_args_list)
+        assert backend.call_args.args[1].endswith("/feat_01_the_documentarian/preview")
     else:
         assert any("Start the local VoiceStudio backend" in str(item.value) for item in page.warning)
 
@@ -171,9 +196,9 @@ def test_gallery_pages_and_preserves_native_language_samples(monkeypatch):
 
 @pytest.mark.parametrize("offline, prefix", [(False, "/community/items"), (True, "/archetypes")])
 def test_gallery_speech_resolves_profile_and_renders_audio(monkeypatch, tmp_path, offline, prefix):
-    pcm = array("h", (round(8000 * math.sin(i * math.tau * 440 / 24000))
-                      for i in range(24000))).tobytes()
-    backend = _mock_backend(monkeypatch, pcm, active="omnivoice", gallery=GALLERY[:1], offline=offline)
+    backend = _mock_backend(
+        monkeypatch, _wav_sample(), active="omnivoice", gallery=GALLERY[:1], offline=offline,
+    )
     output = tmp_path / "gallery.mp3"
 
     maker = voice.tts("A quiet valley.", DOCUMENTARIAN, 1.0, str(output))
@@ -182,13 +207,45 @@ def test_gallery_speech_resolves_profile_and_renders_audio(monkeypatch, tmp_path
     assert output.stat().st_size > 0
     materialize, speech = [call for call in backend.call_args_list if call.args[0] == "POST"]
     assert materialize.args[1].endswith(f"{prefix}/feat_01_the_documentarian/use")
-    assert speech.kwargs["json"]["model"] == "omnivoice"
-    assert speech.kwargs["json"]["voice"] == "abcd1234"
+    assert speech.args[1].endswith("/generate")
+    assert speech.kwargs["data"] == {
+        "text": "A quiet valley.",
+        "engine": "omnivoice",
+        "profile_id": "abcd1234",
+        "num_step": 32,
+        "guidance_scale": 2.0,
+        "effect_preset": "broadcast",
+        "postprocess_output": "true",
+    }
 
 
-def test_gallery_cannot_silently_speak_with_kittentts(monkeypatch, tmp_path):
-    backend = _mock_backend(monkeypatch, active="kittentts", gallery=GALLERY)
+def test_gallery_uses_explicit_omnivoice_even_when_kittentts_is_active(monkeypatch, tmp_path):
+    backend = _mock_backend(monkeypatch, _wav_sample(), active="kittentts", gallery=GALLERY)
     assert DOCUMENTARIAN in voicestudio.get_voices()
-    with pytest.raises(voicestudio.GalleryVoiceError, match="active VoiceStudio engine"):
-        voicestudio.synthesize("A quiet valley.", DOCUMENTARIAN, 1.0, str(tmp_path / "speech.mp3"))
-    assert all(call.args[0] == "GET" for call in backend.call_args_list)
+
+    voicestudio.synthesize("A quiet valley.", DOCUMENTARIAN, 1.0, str(tmp_path / "speech.mp3"))
+
+    assert backend.call_args.args[1].endswith("/generate")
+    assert backend.call_args.kwargs["data"]["engine"] == "omnivoice"
+
+
+def test_gallery_dropped_text_does_not_publish_partial_narration(monkeypatch, tmp_path):
+    _mock_backend(monkeypatch, _wav_sample(), active="omnivoice", gallery=GALLERY, dropped=True)
+    output = tmp_path / "existing.mp3"
+    output.write_bytes(b"previous narration")
+
+    with pytest.raises(voicestudio.GalleryVoiceError, match="could not speak part"):
+        voicestudio.synthesize("A quiet valley.", DOCUMENTARIAN, 1.0, str(output))
+
+    assert output.read_bytes() == b"previous narration"
+
+
+def test_gallery_sample_controls_still_apply_when_requested(monkeypatch, tmp_path):
+    sample = _wav_sample()
+    _mock_backend(monkeypatch, sample, gallery=GALLERY)
+    output = tmp_path / "sample.mp3"
+
+    duration = voicestudio.preview_gallery(DOCUMENTARIAN, 2.0, str(output), volume=0.8)
+
+    assert 0.4 < duration < 0.65
+    assert output.read_bytes() != sample

@@ -7284,6 +7284,11 @@ def _synthesize_voice_preview(
     if selected_tts_server == "kokoro":
         _sync_kokoro_config_from_session_state()
 
+    gallery_sample = (
+        selected_tts_server == "voicestudio"
+        and preview_type == "sample"
+        and voice_name.startswith(voicestudio.GALLERY_PREFIX)
+    )
     temp_dir = utils.storage_dir("temp", create=True)
     audio_file = os.path.join(temp_dir, f"tmp-voice-{str(uuid4())}.mp3")
     logger.info(
@@ -7309,8 +7314,14 @@ def _synthesize_voice_preview(
                 tts_kwargs["voxcpm_prompt_text"] = voxcpm_prompt_text
             from app.services.campaign_production import runtime_options
             with runtime_options({"runtime": runtime_options_snapshot or {}}):
-                sub_maker = voice.tts(**tts_kwargs)
-        if not sub_maker or not os.path.exists(audio_file):
+                if gallery_sample:
+                    duration = voicestudio.preview_gallery(
+                        voice_name, voice_rate, audio_file, volume=voice_volume
+                    )
+                    sub_maker = None
+                else:
+                    sub_maker = voice.tts(**tts_kwargs)
+        if (not gallery_sample and not sub_maker) or not os.path.exists(audio_file):
             logger.error(f"{preview_type} voice preview did not produce an audio file")
             return None
 
@@ -7320,7 +7331,8 @@ def _synthesize_voice_preview(
             logger.error(f"voice preview audio file is empty: {audio_file}")
             return None
 
-        duration = voice.get_audio_duration(audio_file)
+        if not gallery_sample:
+            duration = voice.get_audio_duration(audio_file)
         if (
             not isinstance(duration, (int, float))
             or not math.isfinite(duration)
