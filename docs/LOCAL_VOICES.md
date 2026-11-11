@@ -25,17 +25,44 @@ have set up a private connection between them. Follow VoiceStudio's
 [authentication guidance](https://github.com/debpalash/VoiceStudio/blob/main/docs/api-auth.md)
 when connecting across hosts.
 
+## VoiceStudio Gallery voices
+
+The voice selector combines runnable engine presets with the entries reported
+by VoiceStudio's gallery API. The default gallery includes the Starter, World
+and Community packs, with names such as The Documentarian, Dutch Narrator,
+Thalia and Lucas. If the gallery manifest is unavailable, bundled featured
+archetypes can still appear. Selecting a voice saves its gallery ID in the
+project. Preview and generation ask VoiceStudio to create or reuse the
+corresponding profile, then send that profile ID to its speech endpoint.
+MoneyPrinter uses a gallery entry's sample text for the short preview when
+available. Full preview and video generation use your script.
+
+For gallery synthesis on VoiceStudio 0.5.7, make **OmniVoice** the active
+engine. In the Codespace source setup, stop the VoiceStudio process and
+restart it from its existing checkout:
+
+```bash
+cd ~/mpt-voicestudio-source
+OMNIVOICE_TTS_BACKEND=omnivoice OMNIVOICE_DEVICE=cpu \
+  .venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 3900
+```
+
+Review and accept the required model terms in VoiceStudio before the first
+render. For a headless instance, see its local `/docs` API reference. Use
+`GET /models/licenses/details/{repo_id}` to review the disclosure and
+`POST /models/licenses/accept` with that disclosure's `fingerprint`,
+`repo_id`, and `accepted: true` if you agree. VoiceStudio's speech error
+lists the model IDs whose terms still need acceptance. The default OmniVoice
+weights are noncommercial, and community entries may require attribution or
+carry separate terms. The first generation may download multiple gigabytes.
+KittenTTS presets remain selectable with their own engine ID.
+
 ## Voice availability and timing
 
-The dropdown uses the backend's `GET /engines/tts` preset catalog. It shows
-every preset advertised by a runnable engine whose required model terms have
-been accepted. The engine and preset are saved together. Engines without
-advertised presets, gallery designs, cloned profiles, OpenAI aliases, and
-models absent from the connected backend have no preset entries. Check the
-specific weights and preset terms for your intended use, including monetized
-videos. Models download through VoiceStudio. MoneyPrinter uses the local
-speech endpoint and does not switch to another provider if a preset becomes
-unavailable.
+The list reflects the connected backend. Separate model downloads or
+acceptance may be required for synthesis. Unavailable selections fail without
+switching to a different voice. OpenAI compatibility aliases and arbitrary
+private voice profiles are outside the gallery list.
 
 MoneyPrinter applies speed locally and measures the rendered narration for
 video timing. VoiceStudio's speech endpoint returns audio without word

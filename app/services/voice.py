@@ -736,6 +736,9 @@ def _single_tts(
             duration = voicestudio.synthesize(
                 text, voice_name, voice_rate, voice_file, volume=voice_volume
             )
+        except voicestudio.GalleryVoiceError as exc:
+            logger.error("Local VoiceStudio synthesis failed: {}", exc)
+            return None
         except (OSError, ValueError, requests.RequestException, subprocess.SubprocessError) as exc:
             logger.error(f"Local VoiceStudio synthesis failed ({type(exc).__name__})")
             return None

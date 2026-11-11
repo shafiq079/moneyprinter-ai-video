@@ -7359,7 +7359,7 @@ def _synthesize_voice_preview(
             )
 
 
-def _render_voice_preview(params, friendly_names, selected_tts_server, voice_name):
+def _render_voice_preview(params, friendly_names, selected_tts_server, voice_name, *, sample_text=""):
     """渲染低成本短试听、完整文案时长估算和按需完整配音预览。"""
     if not friendly_names:
         return
@@ -7379,7 +7379,7 @@ def _render_voice_preview(params, friendly_names, selected_tts_server, voice_nam
     else:
         st.caption(tr("Voiceover Script Required"))
 
-    sample_content = _get_voice_preview_sample(voice_name)
+    sample_content = sample_text or _get_voice_preview_sample(voice_name)
     provider_signature = _get_voice_preview_provider_signature(selected_tts_server)
     if st.query_params.get("view") == "campaign-settings":
         provider_signature["campaign_runtime"] = st.session_state.get("campaign_runtime_draft", {})
@@ -8111,8 +8111,8 @@ def _render_background_music_settings(params, elevenlabs_api_key_rendered=False)
 
 
 @st.cache_data(ttl=15, show_spinner=False)
-def _load_voicestudio_presets(server_signature):
-    return voicestudio.get_voices()
+def _load_voicestudio_catalog(server_signature):
+    return voicestudio.get_voice_catalog()
 
 
 def _render_audio_settings(panel, params):
@@ -8208,6 +8208,7 @@ def _render_audio_settings(panel, params):
             saved_voice_name = config.ui.get("voice_name", "")
             elevenlabs_api_key_rendered = False
             voicestudio_labels = {}
+            voicestudio_catalog = {}
 
             if not tts_mode_enabled:
                 # 上传音频和无配音模式不加载远程音色，减少无意义的网络请求和界面噪音。
@@ -8243,9 +8244,10 @@ def _render_audio_settings(panel, params):
                 filtered_voices = _get_kokoro_voice_options(saved_voice_name)
             elif selected_tts_server == "voicestudio":
                 try:
-                    voicestudio_labels = _load_voicestudio_presets(
+                    voicestudio_catalog = _load_voicestudio_catalog(
                         _get_voice_preview_provider_signature("voicestudio")
                     )
+                    voicestudio_labels = {key: item.label for key, item in voicestudio_catalog.items()}
                 except (ValueError, requests.RequestException):
                     st.warning(tr("Start the local VoiceStudio backend and check its connection."))
                 if (
@@ -8802,11 +8804,15 @@ def _render_audio_settings(panel, params):
                 _set_runtime_config("ui", "voice_rate", params.voice_rate)
 
                 # 试听必须位于音量和语速控件之后，确保调用使用当前控件值。
+                selected_local_voice = voicestudio_catalog.get(voice_name)
+                if (voice_name or "").startswith(voicestudio.GALLERY_PREFIX):
+                    st.caption(get_tts_provider_tips("voicestudio_gallery"))
                 _render_voice_preview(
                     params,
                     friendly_names,
                     selected_tts_server,
                     voice_name,
+                    sample_text=selected_local_voice.sample if selected_local_voice else "",
                 )
             elif voice_mode == VOICE_MODE_UPLOAD:
                 custom_audio_file_types = sorted(

@@ -335,6 +335,7 @@
     "Start the local VoiceStudio backend and check its connection.": "请启动本地 VoiceStudio 后端并检查连接。",
     "Install and enable a TTS engine with presets in VoiceStudio.": "请在 VoiceStudio 中安装并启用提供预设音色的配音引擎。",
     "Saved voice unavailable": "已保存的音色不可用",
+    "tts_provider_tips.voicestudio_gallery": "音色库音色需要在 VoiceStudio 中将 OmniVoice 设为当前引擎。其默认模型权重仅供非商业使用。首次试听可能会下载模型。",
     "tts_provider_tips.voicestudio": "在 MoneyPrinter 主机或私有服务器上运行 VoiceStudio，并启用提供预设音色的引擎。配音在自有硬件上合成，无需付费 API。使用前请在 VoiceStudio 中查看各模型的使用条款。",
     "Voiceover Service": "配音服务",
     "Voiceover Voice": "配音声音（与文案语言保持一致）",

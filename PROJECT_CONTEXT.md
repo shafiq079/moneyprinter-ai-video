@@ -2,6 +2,15 @@
 
 Read this file first in every new AI or developer session. `docs/SRS.md` is the full product specification; `docs/MIGRATION_MAP.md` is the file-level porting decision. `docs/PRODUCT_VISION.md` preserves the owner's longer-term editable-project and publishing goals separately from implemented scope and unapproved technical proposals. `docs/CHATGPT_PROJECT_SETUP.md` contains the reusable ChatGPT Project handoff. Update this handoff with every accepted milestone. Local desktop Codex setup and two-machine sync instructions are in `AGENTS.md` and `docs/LOCAL_CODEX_SETUP.md`.
 
+## VoiceStudio Gallery narration (12 November 2026)
+
+Local Voices now includes VoiceStudio's named gallery entries alongside
+engine presets. Stable gallery IDs are saved in MoneyPrinter. VoiceStudio
+creates or reuses a profile when speech is requested, and the existing
+narration path uses that profile. For gallery voices, VoiceStudio 0.5.7 must
+have OmniVoice active and its required model terms accepted. See
+[Local Voices setup](docs/LOCAL_VOICES.md).
+
 ## Local Voices through VoiceStudio (11 November 2026)
 
 Audio Settings offers **Local Voices (VoiceStudio)** for self-hosted narration.

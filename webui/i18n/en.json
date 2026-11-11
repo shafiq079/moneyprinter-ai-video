@@ -335,6 +335,7 @@
     "Start the local VoiceStudio backend and check its connection.": "Start the local VoiceStudio backend and check its connection.",
     "Install and enable a TTS engine with presets in VoiceStudio.": "Install and enable a TTS engine with presets in VoiceStudio.",
     "Saved voice unavailable": "Saved voice unavailable",
+    "tts_provider_tips.voicestudio_gallery": "Gallery voices require OmniVoice as the active engine in VoiceStudio. Its default model weights are for noncommercial use. The first preview may download the model.",
     "tts_provider_tips.voicestudio": "Run VoiceStudio on the MoneyPrinter host or a private server and enable a TTS engine with presets. Synthesis uses your own hardware with no paid API. Review each model’s terms in VoiceStudio before using its voices.",
     "Voiceover Service": "Voiceover Service",
     "Voiceover Voice": "Voice (match script language)",
