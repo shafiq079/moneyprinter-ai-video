@@ -1,9 +1,11 @@
 """VoiceStudio's local voice catalog and speech API."""
+import hashlib
 import math
 import os
 import re
 import subprocess
 import tempfile
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +30,7 @@ class VoiceOption:
     label: str
     sample: str = ""
     use_path: str = ""
+    recorded: bool = False
 
 
 class GalleryVoiceError(ValueError):
@@ -138,6 +141,7 @@ def _gallery_voices() -> dict[str, VoiceOption]:
                         f"{name.strip()}{suffix} · VoiceStudio Gallery",
                         sample.strip()[:1000] if isinstance(sample, str) else "",
                         f"{path}/{item_id}/use",
+                        item.get("type") == "voice",
                     ),
                 )
         except (ValueError, requests.RequestException):
@@ -236,17 +240,81 @@ def _write_audio(response: requests.Response, path: Path, *, wav_only: bool = Fa
     return source
 
 
-def preview_gallery(voice_id: str, rate: float, output_file: str, *, volume: float = 1.0) -> float:
-    """Play the VoiceStudio gallery sample without regenerating it."""
+def _sample_location(voice_id: str) -> tuple[str, bool]:
+    item_id = voice_id.removeprefix(GALLERY_PREFIX)
+    if not voice_id.startswith(GALLERY_PREFIX) or not _GALLERY_ID.fullmatch(item_id):
+        raise GalleryVoiceError("Invalid VoiceStudio gallery voice.")
+    if item_id.startswith("feat_"):
+        return f"https://voicestudio.sh/audio/gallery/{item_id}.mp3", True
     option = _gallery_voice(voice_id)
-    path = option.use_path.removesuffix("/use") + "/preview"
-    response = _request("GET", path, timeout=(3, 300))
+    if option.recorded:
+        return option.use_path.removesuffix("/use") + "/preview", False
+    raise GalleryVoiceError(
+        "This voice has no published sample. Use Generate Full Voiceover Preview "
+        "to render your script with this voice."
+    )
+
+
+def _download_sample(location: str, public: bool) -> requests.Response:
+    try:
+        if not public:
+            return _request("GET", location, timeout=(3, 15))
+        # Official website clips are small MP3s. Never send local API credentials
+        # to the website, and never follow a redirect to another host.
+        with requests.get(location, timeout=(8, 15), allow_redirects=False, stream=True) as response:
+            if response.status_code != 200:
+                raise GalleryVoiceError("The published voice sample is currently unavailable.")
+            chunks = []
+            size = 0
+            started = time.monotonic()
+            for chunk in response.iter_content(65536):
+                size += len(chunk)
+                if size > 2 * 1024 * 1024 or time.monotonic() - started > 20:
+                    raise GalleryVoiceError("The voice sample download exceeded its limit.")
+                chunks.append(chunk)
+            response._content = b"".join(chunks)
+            return response
+    except requests.RequestException as exc:
+        raise GalleryVoiceError(
+            "The voice sample download timed out or failed. Try Play Voice again."
+        ) from exc
+
+
+def preview_gallery(voice_id: str, rate: float, output_file: str, *, volume: float = 1.0) -> float:
+    """Download a published sample, reusing the local cache on later plays."""
+    location, public = _sample_location(voice_id)
     rate, volume = _rate_and_volume(rate, volume)
+    cache_root = Path(utils.storage_dir("voicestudio-previews", create=True))
+    # Recorded clips can be private to a server; scope their cache to that
+    # connection. Published website clips are shared across local connections.
+    identity = location if public else repr((connection(), location))
+    digest = hashlib.sha256(identity.encode()).hexdigest()
     destination = Path(output_file)
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".voicestudio-", dir=destination.parent) as work:
-        source = _write_audio(response, Path(work) / "gallery")
-        # Preserve the exact gallery audio when playback controls are at defaults.
+        source = Path(work) / "sample.mp3"
+        cached = next(
+            (path for path in cache_root.glob(f"{digest}.*")
+             if path.suffix in {".mp3", ".wav"} and time.time() - path.stat().st_mtime < 86400),
+            None,
+        )
+        if cached is not None:
+            source = source.with_suffix(cached.suffix)
+            source.write_bytes(cached.read_bytes())
+        else:
+            response = _download_sample(location, public)
+            source = _write_audio(response, source)
+            with AudioFileClip(str(source)) as clip:
+                if not math.isfinite(clip.duration) or clip.duration <= 0:
+                    raise GalleryVoiceError("The downloaded voice sample is not playable.")
+            # Publish only complete, decoded audio to the shared cache.
+            with tempfile.NamedTemporaryFile(dir=cache_root, suffix=".part", delete=False) as temporary:
+                temporary.write(source.read_bytes())
+                pending = Path(temporary.name)
+            try:
+                os.replace(pending, cache_root / f"{digest}{source.suffix}")
+            finally:
+                pending.unlink(missing_ok=True)
         if rate != 1.0 or volume != 1.0:
             source = _encode_mp3(source, rate, volume)
         return _publish_audio(source, destination)

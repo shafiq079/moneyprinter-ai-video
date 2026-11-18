@@ -7458,7 +7458,16 @@ def _render_voice_preview(params, friendly_names, selected_tts_server, voice_nam
             or cached_preview.get("fingerprint") != requested_fingerprint
         ):
             try:
-                with st.spinner(tr("Synthesizing Voice")):
+                loading_gallery_sample = (
+                    selected_tts_server == "voicestudio"
+                    and preview_type == "sample"
+                    and voice_name.startswith(voicestudio.GALLERY_PREFIX)
+                )
+                status_text = (
+                    get_tts_provider_tips("voicestudio_sample_loading")
+                    if loading_gallery_sample else tr("Synthesizing Voice")
+                )
+                with st.spinner(status_text):
                     preview_result = _synthesize_voice_preview(
                         runtime_options_snapshot=(st.session_state.get("campaign_runtime_draft", {}) if st.query_params.get("view") == "campaign-settings" else None),
                         content=preview_content,

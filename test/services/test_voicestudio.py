@@ -13,6 +13,12 @@ from streamlit.testing.v1 import AppTest
 from app.config import config
 from app.services import voice, voicestudio
 
+
+@pytest.fixture(autouse=True)
+def preview_cache(monkeypatch, tmp_path):
+    monkeypatch.setattr(voicestudio.utils, "storage_dir", lambda *args, **kwargs: str(tmp_path))
+
+
 KITTEN = "voicestudio:kittentts:expr-voice-2-f"
 SUPERTONIC = "voicestudio:supertonic3:F3"
 DOCUMENTARIAN = "voicestudio:gallery:feat_01_the_documentarian"
@@ -51,6 +57,23 @@ def _wav_sample():
 
 
 def _mock_backend(monkeypatch, audio=b"", *, active="kittentts", gallery=(), offline=False, dropped=False):
+    def download(url, **kwargs):
+        if not url.startswith("https://voicestudio.sh/audio/gallery/"):
+            response = requests.Response()
+            response.status_code = 503
+            return response
+        response = Mock()
+        response.status_code = 200
+        response.headers = {"Content-Type": "audio/wav"}
+        response.iter_content = lambda size: iter([audio])
+        response.content = audio
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        return response
+
+    download_mock = Mock(side_effect=download)
+    monkeypatch.setattr(voicestudio.requests, "get", download_mock)
+
     def request(method, url, **kwargs):
         response = requests.Response()
         response.status_code = 200
@@ -175,7 +198,11 @@ def test_audio_panel_restores_the_provider_and_saved_voice(monkeypatch, online):
         assert preview["mime_type"] == "audio/wav"
         assert preview["preview_type"] == "sample"
         assert all(call.args[0] == "GET" for call in backend.call_args_list)
-        assert backend.call_args.args[1].endswith("/feat_01_the_documentarian/preview")
+        assert not any(call.args[1].endswith("/preview") for call in backend.call_args_list)
+        sample_requests = [call for call in voicestudio.requests.get.call_args_list
+                           if call.args[0].startswith("https://voicestudio.sh/")]
+        assert len(sample_requests) == 1
+        assert sample_requests[0].args[0].endswith("/feat_01_the_documentarian.mp3")
     else:
         assert any("Start the local VoiceStudio backend" in str(item.value) for item in page.warning)
 
@@ -249,3 +276,71 @@ def test_gallery_sample_controls_still_apply_when_requested(monkeypatch, tmp_pat
 
     assert 0.4 < duration < 0.65
     assert output.read_bytes() != sample
+
+
+def test_published_sample_is_cached_without_backend_synthesis(monkeypatch, tmp_path):
+    sample = _wav_sample()
+    backend = _mock_backend(monkeypatch, sample)
+    output = tmp_path / "preview.mp3"
+
+    for _ in range(2):
+        voicestudio.preview_gallery(DOCUMENTARIAN, 1.0, str(output))
+        assert output.read_bytes() == sample
+
+    backend.assert_not_called()
+    voicestudio.requests.get.assert_called_once()
+    assert "Authorization" not in voicestudio.requests.get.call_args.kwargs.get("headers", {})
+    assert voicestudio.requests.get.call_args.kwargs["allow_redirects"] is False
+
+
+@pytest.mark.parametrize("failure", ["timeout", "redirect", "too_large"])
+def test_sample_download_failure_preserves_output_and_never_renders(monkeypatch, tmp_path, failure):
+    backend = _mock_backend(monkeypatch, _wav_sample())
+    download = voicestudio.requests.get
+    if failure == "timeout":
+        download.side_effect = requests.ReadTimeout
+    elif failure == "redirect":
+        response = download.side_effect("https://voicestudio.sh/audio/gallery/voice.mp3")
+        response.status_code = 302
+        download.side_effect = None
+        download.return_value = response
+    else:
+        response = download.side_effect("https://voicestudio.sh/audio/gallery/voice.mp3")
+        response.iter_content = lambda size: iter([b"x" * (2 * 1024 * 1024 + 1)])
+        download.side_effect = None
+        download.return_value = response
+    output = tmp_path / "preview.mp3"
+    output.write_bytes(b"existing preview")
+
+    with pytest.raises(voicestudio.GalleryVoiceError):
+        voicestudio.preview_gallery(DOCUMENTARIAN, 1.0, str(output))
+
+    assert output.read_bytes() == b"existing preview"
+    backend.assert_not_called()
+
+
+def test_voice_without_published_sample_does_not_start_cpu_render(monkeypatch, tmp_path):
+    backend = _mock_backend(monkeypatch, gallery=GALLERY)
+
+    with pytest.raises(voicestudio.GalleryVoiceError, match="no published sample"):
+        voicestudio.preview_gallery("voicestudio:gallery:world_dutch_narrator", 1.0, str(tmp_path / "preview.mp3"))
+
+    assert all(call.args[0] == "GET" and not call.args[1].endswith("/preview")
+               for call in backend.call_args_list)
+    voicestudio.requests.get.assert_not_called()
+
+
+def test_recorded_voice_preview_uses_bounded_download(monkeypatch, tmp_path):
+    sample = _wav_sample()
+    backend = _mock_backend(monkeypatch, sample, gallery=[
+        dict(GALLERY[2], type="voice"),
+    ])
+    output = tmp_path / "preview.mp3"
+
+    voicestudio.preview_gallery("voicestudio:gallery:community_pt_br_thalia", 1.0, str(output))
+
+    assert output.read_bytes() == sample
+    assert backend.call_args.args[0] == "GET"
+    assert backend.call_args.args[1].endswith("/community_pt_br_thalia/preview")
+    assert backend.call_args.kwargs["timeout"] == (3, 15)
+    assert all(call.args[0] == "GET" for call in backend.call_args_list)

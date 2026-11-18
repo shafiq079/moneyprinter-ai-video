@@ -335,6 +335,7 @@
     "Start the local VoiceStudio backend and check its connection.": "Start the local VoiceStudio backend and check its connection.",
     "Install and enable a TTS engine with presets in VoiceStudio.": "Install and enable a TTS engine with presets in VoiceStudio.",
     "Saved voice unavailable": "Saved voice unavailable",
+    "tts_provider_tips.voicestudio_sample_loading": "Loading the published voice sample…",
     "tts_provider_tips.voicestudio_gallery": "Play Voice uses VoiceStudio’s gallery sample. Your script is rendered with the OmniVoice engine and the selected profile. The default OmniVoice weights are for noncommercial use.",
     "tts_provider_tips.voicestudio": "Run VoiceStudio on the MoneyPrinter host or a private server and enable a TTS engine with presets. Synthesis uses your own hardware with no paid API. Review each model’s terms in VoiceStudio before using its voices.",
     "Voiceover Service": "Voiceover Service",

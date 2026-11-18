@@ -32,9 +32,14 @@ by VoiceStudio's gallery API. The default gallery includes the Starter, World
 and Community packs, with names such as The Documentarian, Dutch Narrator,
 Thalia and Lucas. If the gallery manifest is unavailable, bundled featured
 archetypes can still appear. Selecting a voice saves its gallery ID in the
-project. **Play Voice** plays the clip returned by VoiceStudio's gallery
-preview route, which can serve a published sample or render a local fallback.
-At default speed and volume, MoneyPrinter preserves the clip bytes. **Full
+project. **Play Voice** downloads the official website's published clips
+for featured voices. These small files are cached for 24 hours in
+`storage/voicestudio-previews/`. Recorded community voices use their existing
+reference clip through VoiceStudio. At default speed and volume, MoneyPrinter
+preserves the clip bytes. Sample playback never requests local synthesis.
+A voice with no published sample, such as the World Voices entries, reports
+that limitation immediately. Use Full Voiceover Preview to render your text
+with those voices. **Full
 Voiceover Preview** and video generation render your script using VoiceStudio's
 native OmniVoice route and the selected profile. That route uses the profile's
 reference, language and seed, and MoneyPrinter requests the gallery renderer's

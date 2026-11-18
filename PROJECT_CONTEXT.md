@@ -6,7 +6,11 @@ Read this file first in every new AI or developer session. `docs/SRS.md` is the 
 
 Local Voices now includes VoiceStudio's named gallery entries alongside
 engine presets. Stable gallery IDs are saved in MoneyPrinter. VoiceStudio
-serves the original gallery sample when available for short previews. Script
+supplies gallery profiles for speech. Short featured previews download the
+official website MP3 and cache it locally for 24 hours. Recorded voice previews
+download the reference clip. Voices without a published sample report that
+limitation before rendering. Sample playback never falls back to CPU synthesis.
+Script
 narration creates or reuses the selected profile and uses the native OmniVoice
 route with the gallery's 32-step Broadcast settings. OmniVoice's required
 model terms must be accepted before rendering. See
