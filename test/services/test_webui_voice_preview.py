@@ -298,6 +298,30 @@ def test_invalid_reference_upload_blocks_voxcpm_preview_only():
     )
 
 
+def test_retired_voiceover_service_falls_back_to_edge_on_open():
+    test_ui = dict(
+        config.ui,
+        voice_mode="tts",
+        tts_server="voicestudio",
+        voice_name="voicestudio:gallery:feat_01_the_documentarian",
+    )
+    with (
+        patch.object(config, "ui", test_ui),
+        patch.object(config, "save_config"),
+        patch.object(voice, "tts") as synthesize,
+    ):
+        app = AppTest.from_file(str(WEBUI_MAIN), default_timeout=30)
+        app.session_state["ui_language"] = "en"
+        app.run()
+
+    assert not app.exception
+    service = app.selectbox(key="tts_server_select_en")
+    assert service.value == "azure-tts-v1"
+    assert "Local Voices (VoiceStudio)" not in service.options
+    assert app.selectbox(key="speech_synthesis_select_azure-tts-v1_en").value.startswith("en-")
+    synthesize.assert_not_called()
+
+
 def test_full_voiceover_preview_is_disabled_until_script_exists():
     """完整预览必须由用户主动触发，文案为空时不能误调用商业 TTS。"""
     test_ui = dict(

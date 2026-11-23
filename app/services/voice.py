@@ -30,7 +30,6 @@ from moviepy.audio.io.AudioFileClip import AudioFileClip
 from openai import OpenAI
 
 from app.config import config
-from app.services import voicestudio
 from app.utils import utils
 
 _DEFAULT_EDGE_TTS_TIMEOUT_SECONDS = 30.0
@@ -371,8 +370,6 @@ def get_all_azure_voices(filter_locals=None) -> list[str]:
 
 
 def parse_voice_name(name: str):
-    if is_voicestudio_voice(name):
-        return name
     # zh-CN-XiaoyiNeural-Female
     # zh-CN-YunxiNeural-Male
     # zh-CN-XiaoxiaoMultilingualNeural-V2-Female
@@ -381,10 +378,8 @@ def parse_voice_name(name: str):
 
 
 def is_azure_v2_voice(voice_name: str):
-    if is_voicestudio_voice(voice_name):
-        return False
     voice_name = parse_voice_name(voice_name)
-    if voice_name.endswith("-V2"):
+    if ":" not in voice_name and voice_name.endswith("-V2"):
         return voice_name.replace("-V2", "").strip()
     return ""
 
@@ -439,10 +434,6 @@ def is_kokoro_voice(voice_name: str) -> bool:
     return (voice_name or "").startswith("kokoro:")
 
 
-def is_voicestudio_voice(voice_name: str | None) -> bool:
-    return (voice_name or "").startswith(voicestudio.PREFIX)
-
-
 def is_fish_audio_voice(voice_name: str) -> bool:
     return (voice_name or "").startswith("fish_audio:")
 
@@ -477,29 +468,7 @@ def is_azure_v1_voice(voice_name: str | None) -> bool:
     if not voice_name:
         return False
     name = str(voice_name).strip()
-    if is_no_voice(name):
-        return False
-    if is_azure_v2_voice(name):
-        return False
-    if is_siliconflow_voice(name):
-        return False
-    if is_gemini_voice(name):
-        return False
-    if is_mimo_voice(name):
-        return False
-    if is_minimax_voice(name):
-        return False
-    if is_elevenlabs_voice(name):
-        return False
-    if is_chatterbox_voice(name):
-        return False
-    if is_kokoro_voice(name) or is_voicestudio_voice(name):
-        return False
-    if is_fish_audio_voice(name):
-        return False
-    if is_voxcpm_voice(name):
-        return False
-    return True
+    return ":" not in name and not is_no_voice(name) and not is_azure_v2_voice(name)
 
 
 def estimate_no_voice_duration(text: str) -> float:
@@ -731,18 +700,6 @@ def _single_tts(
         else:
             logger.error(f"Invalid kokoro voice name format: {voice_name}")
             return None
-    elif is_voicestudio_voice(voice_name):
-        try:
-            duration = voicestudio.synthesize(
-                text, voice_name, voice_rate, voice_file, volume=voice_volume
-            )
-        except voicestudio.GalleryVoiceError as exc:
-            logger.error("Local VoiceStudio synthesis failed: {}", exc)
-            return None
-        except (OSError, ValueError, requests.RequestException, subprocess.SubprocessError) as exc:
-            logger.error(f"Local VoiceStudio synthesis failed ({type(exc).__name__})")
-            return None
-        return populate_legacy_submaker_with_full_text(SubMaker(), text, duration)
     elif is_fish_audio_voice(voice_name):
         parts = voice_name.split(":")
         reference_id = parts[1] if len(parts) >= 2 else "default"
@@ -765,6 +722,9 @@ def _single_tts(
                 prompt_text=voxcpm_prompt_text,
             )
         logger.error(f"Invalid VoxCPM voice name format: {voice_name}")
+        return None
+    if ":" in voice_name:
+        logger.error("The selected voice is unavailable. Choose a supported voice and try again.")
         return None
     return azure_tts_v1(text, voice_name, voice_rate, voice_file)
 

@@ -2,30 +2,12 @@
 
 Read this file first in every new AI or developer session. `docs/SRS.md` is the full product specification; `docs/MIGRATION_MAP.md` is the file-level porting decision. `docs/PRODUCT_VISION.md` preserves the owner's longer-term editable-project and publishing goals separately from implemented scope and unapproved technical proposals. `docs/CHATGPT_PROJECT_SETUP.md` contains the reusable ChatGPT Project handoff. Update this handoff with every accepted milestone. Local desktop Codex setup and two-machine sync instructions are in `AGENTS.md` and `docs/LOCAL_CODEX_SETUP.md`.
 
-## VoiceStudio Gallery narration (12 November 2026)
+## VoiceStudio removal (24 November 2026)
 
-Local Voices now includes VoiceStudio's named gallery entries alongside
-engine presets. Stable gallery IDs are saved in MoneyPrinter. VoiceStudio
-supplies gallery profiles for speech. Short featured previews download the
-official website MP3 and cache it locally for 24 hours. Recorded voice previews
-download the reference clip. Voices without a published sample report that
-limitation before rendering. Sample playback never falls back to CPU synthesis.
-Script
-narration creates or reuses the selected profile and uses the native OmniVoice
-route with the gallery's 32-step Broadcast settings. OmniVoice's required
-model terms must be accepted before rendering. See
-[Local Voices setup](docs/LOCAL_VOICES.md).
-
-## Local Voices through VoiceStudio (11 November 2026)
-
-Audio Settings offers **Local Voices (VoiceStudio)** for self-hosted narration.
-The same voice choice is used by single-video generation, campaigns, previews
-and scene narration edits. MoneyPrinter reads installed, available engine
-presets from the local VoiceStudio backend. Each saved voice identifies the
-engine and preset. Speed is applied to the generated speech and the existing
-volume setting applies to preview and composition. Caption timing is estimated
-when the configured subtitle provider has no real timestamps. See
-[Local Voices setup](docs/LOCAL_VOICES.md).
+VoiceStudio presets, gallery voices and setup were removed from development.
+Existing MoneyPrinter narration providers are available in Audio Settings.
+For saved campaigns or projects that used VoiceStudio, select a supported
+voice before generating new narration. Previously generated audio stays usable.
 
 ## Campaign content composer (1 November 2026)
 

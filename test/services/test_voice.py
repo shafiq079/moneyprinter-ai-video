@@ -2050,6 +2050,21 @@ class TestElevenLabsVoice(unittest.TestCase):
                 self.assertNotIn("[pause", called_text)
                 self.assertIn("Part 1. Part 2.", called_text)
 
+    def test_retired_voice_never_routes_to_azure(self):
+        cases = (
+            ("voicestudio:gallery:feat_01_the_documentarian", "A quiet valley."),
+            ("voicestudio:kittentts:Voice-Female-V2", "A quiet [pause: 1s] valley."),
+        )
+        with (
+            patch.object(vs, "azure_tts_v1") as azure_v1,
+            patch.object(vs, "azure_tts_v2") as azure_v2,
+        ):
+            for voice_name, text in cases:
+                with self.subTest(voice_name=voice_name):
+                    self.assertIsNone(vs.tts(text, voice_name, 1.0, "unused.mp3"))
+        azure_v1.assert_not_called()
+        azure_v2.assert_not_called()
+
     def test_real_multi_segment_concatenation_no_drift(self):
         """真实音频多段拼接测试：12个1s音频与11个0.5s停顿，验证字幕偏移与真实解码样本完全一致，无累积漂移。"""
         import wave
