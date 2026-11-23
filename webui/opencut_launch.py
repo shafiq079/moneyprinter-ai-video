@@ -18,7 +18,8 @@ def render_launch(task_id, tr):
     if os.environ.get('MPT_OPENCUT') != '1':
         st.info('Start this branch with sh webui.sh (or webui.bat) to enable OpenCut on the same WebUI address.')
     else:
-        st.link_button('Open in OpenCut', launch_url(task_id), type='primary')
+        from webui.workspace_nav import anchor
+        anchor('Open in OpenCut', launch_url(task_id))
     st.caption('OpenCut edits are saved separately. Your generated scenes and the previous editor project stay available.')
     if st.button('Previous editor / generation tools'):
         st.query_params['legacy'] = '1'

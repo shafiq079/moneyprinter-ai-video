@@ -15,13 +15,7 @@ from app.services import (
 )
 
 
-def navigation(tr):
-    with st.container(horizontal=True):
-        st.link_button(tr("Create"), "?")
-        st.link_button(tr("Campaigns"), "?view=campaigns")
-        st.link_button(tr("Content Library"), "?view=library")
-        st.link_button(tr("Publishing"), "?view=publishing")
-        st.link_button(tr("Accounts"), "?view=social")
+from webui.workspace_nav import anchor, button as navigate, navigation, route
 
 
 def _error(exc):
@@ -137,9 +131,7 @@ def _render_library(tr):
                     batch_id = next(
                         r["batch_id"] for r in deliveries if r["task_id"] == tid
                     )
-                    st.link_button(
-                        tr("Manage publishing"), "?view=publishing&batch=" + batch_id
-                    )
+                    navigate(tr("Manage publishing"), "library_batch:" + tid, "publishing", batch=batch_id)
                     st.caption(
                         tr(
                             "Changing the final version does not replace already-approved posts. Manage or cancel those deliveries in Publishing."
@@ -170,9 +162,9 @@ def _render_library(tr):
                 if os.environ.get("MPT_OPENCUT") == "1":
                     from webui.opencut_launch import launch_url
 
-                    st.link_button(tr("Edit in OpenCut"), launch_url(tid))
+                    anchor(tr("Edit in OpenCut"), launch_url(tid))
                 else:
-                    st.link_button(tr("Edit in OpenCut"), "?editor=" + tid)
+                    navigate(tr("Edit in OpenCut"), "library_editor:" + tid, editor=tid)
     st.subheader(tr("Prepare selected videos"))
     ready = [p for p in projects if p["ready"]]
     if st.button(
@@ -206,13 +198,13 @@ def _render_library(tr):
         ),
         key="library_batch_accounts",
     )
+    immediate = any(k.split(":", 1)[0] in lib.IMMEDIATE_ONLY for k in keys)
+    times = [tr("Publish after approval")] if immediate else [
+        tr("Next available slots"), tr("Choose start time"), tr("Publish after approval"),
+    ]
     mode = st.radio(
         tr("Batch timing"),
-        [
-            tr("Next available slots"),
-            tr("Choose start time"),
-            tr("Publish after approval"),
-        ],
+        times,
         key="library_batch_mode",
         horizontal=True,
     )
@@ -250,7 +242,7 @@ def _render_library(tr):
                 _convert(exact) if exact else None,
                 int(spacing),
             )
-            st.query_params.update(view="publishing", batch=batch["id"])
+            route("publishing", batch=batch["id"])
             st.rerun()
         except (ValueError, OSError) as exc:
             _error(exc)
@@ -281,7 +273,8 @@ def _presets(tr):
     st.subheader(tr("Account posting defaults"))
     targets = lib.destinations()
     if not targets:
-        st.info(tr("Connect YouTube or Facebook in Accounts first."))
+        st.info("Connect a destination in Accounts first.")
+        navigate(tr("Accounts"), "presets_connect_accounts", "social")
         return
     key = st.selectbox(
         tr("Account to configure"),
@@ -295,15 +288,18 @@ def _presets(tr):
     saved = lib.catalog()["presets"].get(key, {})
     defaults = saved.get("defaults", {})
     with st.form("planner_preset:" + key):
+        immediate = target["platform"] in lib.IMMEDIATE_ONLY
         zone = st.text_input(
             tr("Timezone (IANA)"),
             value=saved.get("timezone", "Asia/Karachi"),
             key="preset_zone:" + key,
+            disabled=immediate,
         )
         times = st.text_input(
             tr("Posting times (HH:MM, comma separated)"),
             value=", ".join(saved.get("times", ["12:00", "19:00"])),
             key="preset_times:" + key,
+            disabled=immediate,
         )
         names = [
             "Monday",
@@ -320,6 +316,7 @@ def _presets(tr):
             default=saved.get("days", list(range(7))),
             format_func=lambda d: tr(names[d]),
             key="preset_days:" + key,
+            disabled=immediate,
         )
         language = st.text_input(
             tr("Publishing language"),
@@ -381,7 +378,7 @@ def _presets(tr):
                     "Scheduled YouTube posts use public release, even if the immediate-upload default is private. Review the exact settings in each batch."
                 )
             )
-        else:
+        elif target["platform"] == "facebook":
             media_type = st.selectbox(
                 tr("Facebook format"),
                 ["VIDEO", "REELS"],
@@ -394,6 +391,11 @@ def _presets(tr):
                 key="preset_synthetic:" + key,
             )
             values = dict(media_type=media_type, synthetic=synthetic)
+            thumbnail = False
+        else:
+            st.caption("Instagram delivers after approval. TikTok sends a draft to your creator inbox.")
+            values = {"synthetic": st.checkbox("Disclose AI-generated content", value=defaults.get("synthetic", True),
+                                                key="preset_synthetic:" + key)} if target["platform"] == "instagram" else {}
             thumbnail = False
         reviewed = st.checkbox(
             tr("I reviewed these reusable publishing defaults"),
@@ -532,10 +534,13 @@ def _batch(tr):
         svc = lib.service(item["destination"]["platform"])
         try:
             child = svc.get(item["delivery_id"])
-            st.video(str(media.snapshot_file(child)))
+            st.video(str(media.snapshot_file(child)), width=240)
             if child.get("thumbnail"):
                 st.image(str(seo.thumbnail_file(child["thumbnail"])), width=400)
-            st.json(child["options"])
+            with st.expander("Delivery details"):
+                st.json(child["options"])
+            if item["destination"]["platform"] == "tiktok":
+                st.info("Approval sends the video to TikTok's inbox. Add the caption and finish publishing in TikTok.")
             if child["state"] == "draft" and item["state"] in {"review", "blocked"}:
                 _edit(tr, bid, item)
                 if item["destination"]["platform"] == "youtube":
@@ -647,10 +652,8 @@ def _edit(tr, bid, item):
     with st.expander(tr("Edit this publishing draft")):
         timing = st.radio(
             tr("Delivery time"),
-            [
-                tr("Keep planned time"),
-                tr("Choose a new time"),
-                tr("Publish after approval"),
+            [tr("Publish after approval")] if platform in lib.IMMEDIATE_ONLY else [
+                tr("Keep planned time"), tr("Choose a new time"), tr("Publish after approval"),
             ],
             key="planner_edit_mode:" + iid,
         )
@@ -661,7 +664,7 @@ def _edit(tr, bid, item):
                 edited, _ = _fields(
                     tr, "planner_fields:" + iid + ":", opts, schedule=False
                 )
-            else:
+            elif platform == "facebook":
                 edited = opts | dict(
                     title=st.text_input(
                         tr("Facebook title"),
@@ -687,6 +690,14 @@ def _edit(tr, bid, item):
                     value=opts["synthetic"],
                     key="planner_synthetic:" + iid,
                 )
+            else:
+                edited = opts | dict(description=st.text_area(
+                    "Caption", value=opts["description"], max_chars=2200, key="planner_description:" + iid
+                ))
+                if platform == "instagram":
+                    edited["synthetic"] = st.checkbox(
+                        "Disclose AI-generated content", value=opts["synthetic"], key="planner_synthetic:" + iid
+                    )
             when = (
                 _time(tr, "planner_edit_time:" + iid)
                 if timing == tr("Choose a new time")
@@ -737,7 +748,12 @@ def _delivery(tr, bid, item, child):
         tr("I reviewed this existing delivery and the action below"),
         key="planner_delivery_check:" + item["id"],
     )
-    if child["state"] in {"paused", "blocked", "release_pending", "ready", "unknown"}:
+    platform = item["destination"]["platform"]
+    immediate = platform in lib.IMMEDIATE_ONLY
+    resumable = {"blocked"} if platform == "instagram" else {"paused", "blocked"} if platform == "tiktok" else {
+        "paused", "blocked", "release_pending", "ready", "unknown",
+    }
+    if child["state"] in resumable:
         if st.button(
             tr("Resume existing delivery"),
             disabled=not checked,
@@ -748,12 +764,14 @@ def _delivery(tr, bid, item, child):
                 st.rerun()
             except (ValueError, OSError) as exc:
                 _error(exc)
-    if child["state"] in lib.service(item["destination"]["platform"]).ACTIVE:
+    active = {"queued"} if immediate else lib.service(platform).ACTIVE
+    if child["state"] in active and not immediate:
         st.caption(
             tr(
                 "YouTube cancellation keeps the upload private. Facebook cancellation deletes only a confirmed unpublished upload."
             )
         )
+    if child["state"] in active:
         if st.button(
             tr("Cancel existing delivery"),
             disabled=not checked,
@@ -764,7 +782,7 @@ def _delivery(tr, bid, item, child):
                 st.rerun()
             except (ValueError, OSError) as exc:
                 _error(exc)
-    if child.get("video_id") and child["state"] in {
+    if not immediate and child.get("video_id") and child["state"] in {
         "scheduled",
         "release_pending",
         "ready",
@@ -843,15 +861,18 @@ def _calendar(tr):
             date = first + timedelta(days=day)
             with col, st.container(border=True):
                 st.caption(date.strftime("%a %d %b"))
-                for r in display:
+                for index, r in enumerate(display):
                     if r["UTC"].startswith(date.isoformat()):
-                        st.link_button(
+                        navigate(
                             r["UTC"][11:16]
                             + " · "
                             + r["Platform"]
                             + " · "
                             + r["Video"][:35],
-                            "?view=publishing&batch=" + r["Batch"],
+                            f"calendar_batch:{index}",
+                            "publishing",
+                            full_rerun=True,
+                            batch=r["Batch"],
                         )
                         st.caption(r["State"])
     st.dataframe(

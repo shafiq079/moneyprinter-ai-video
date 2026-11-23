@@ -265,8 +265,7 @@ def render(
 
 def back(cid):
     st.session_state.pop("campaign_settings_identity", None)
-    st.query_params.clear()
-    st.query_params["view"] = "campaigns"
-    if cid:
-        st.query_params["campaign"] = cid
+    from webui.workspace_nav import route
+
+    route("campaigns", **({"campaign": cid} if cid else {"new": "1"}))
     st.rerun()

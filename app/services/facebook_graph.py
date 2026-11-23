@@ -46,7 +46,7 @@ class Graph:
 
     def request(self, method, path, *, video_upload=False, **kwargs):
         if not re.fullmatch(
-            r"(?:me|[0-9]{1,64})(?:/(?:accounts|permissions|videos|video_reels))?", path
+            r"(?:me|[0-9]{1,64})(?:/(?:accounts|permissions|videos|video_reels|media|media_publish))?", path
         ):
             raise ValueError("Invalid Meta API operation.")
         if video_upload and (method != "POST" or not path.endswith("/videos")):
@@ -92,12 +92,14 @@ class Graph:
             )
         return data
 
-    def pages(self):
+    def pages(self, *, instagram=False):
         pages = []
         cursor = None
         seen = set()
         for _ in range(10):
             params = {"fields": "id,name,access_token,tasks", "limit": 100}
+            if instagram:
+                params["fields"] += ",instagram_business_account{id,username}"
             if cursor:
                 params["after"] = cursor
             data = self.request("GET", "me/accounts", params=params)
@@ -127,6 +129,12 @@ class Graph:
                         "can_publish": publish,
                     }
                 )
+                linked = row.get("instagram_business_account")
+                if instagram and isinstance(linked, dict) and linked.get("id"):
+                    pages[-1]["instagram"] = {
+                        "id": numeric_id(str(linked["id"])),
+                        "name": str(linked.get("username") or linked["id"])[:200],
+                    }
             paging = data.get("paging") or {}
             cursor = (
                 (paging.get("cursors") or {}).get("after")

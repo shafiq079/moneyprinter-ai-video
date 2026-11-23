@@ -19,6 +19,7 @@ from app.utils import utils
 
 CALLBACK = "/social/facebook/oauth/callback"
 SCOPES = {"pages_show_list", "pages_read_engagement", "pages_manage_posts"}
+INSTAGRAM_SCOPES = {"instagram_basic", "instagram_content_publish"}
 
 
 def directory():
@@ -137,8 +138,10 @@ def suggested_callback():
     return crypto.suggested_callback().removesuffix(crypto.CALLBACK) + CALLBACK
 
 
-def connect_ticket():
+def connect_ticket(*, instagram=False):
     value = validate(settings())
+    if instagram and not value.get("config_id"):
+        raise ValueError("Configure Facebook Login for Business with Instagram publishing permissions first.")
     ticket = secrets.token_urlsafe(32)
     with lock():
         data = vault()
@@ -151,6 +154,7 @@ def connect_ticket():
             "kind": "ticket",
             "expires": time.time() + 600,
             "app": fingerprint(value),
+            "instagram": instagram,
         }
         save(data)
     return (
@@ -183,12 +187,16 @@ def begin(ticket):
             "app": fingerprint(value),
             "browser": hashlib.sha256(browser.encode()).hexdigest(),
             "epoch": data["epoch"],
+            "instagram": record.get("instagram", False),
         }
         save(data)
     params = (
         {"config_id": value["config_id"]}
         if value.get("config_id")
-        else {"scope": sorted(SCOPES), "auth_type": "rerequest"}
+        else {
+            "scope": sorted(SCOPES | (INSTAGRAM_SCOPES if record.get("instagram") else set())),
+            "auth_type": "rerequest",
+        }
     )
     url = WebApplicationClient(value["app_id"]).prepare_request_uri(
         "https://www.facebook.com/" + value["version"] + "/dialog/oauth",
@@ -238,6 +246,16 @@ def _permissions(graph):
         raise ValueError(
             "Facebook Page permissions were not all granted. Reconnect and approve Page listing, reading and publishing access."
         )
+    return granted
+
+
+def _pages(graph, *, instagram=False):
+    granted = _permissions(graph)
+    if INSTAGRAM_SCOPES <= granted:
+        return graph.pages(instagram=True)
+    if instagram:
+        raise ValueError("Grant Instagram account and content publishing permissions in Meta.")
+    return graph.pages()
 
 
 def finish(state, browser, code=None, error=None):
@@ -270,10 +288,9 @@ def finish(state, browser, code=None, error=None):
         {"grant_type": "fb_exchange_token", "fb_exchange_token": token["access_token"]},
     )
     graph = Graph(token["access_token"], value)
-    _permissions(graph)
+    pages = _pages(graph, instagram=record.get("instagram", False))
     user = graph.request("GET", "me", params={"fields": "id"})
     user_id = numeric_id(str(user.get("id", "")))
-    pages = graph.pages()
     with lock():
         data = vault()
         if data["epoch"] != record["epoch"] or fingerprint(value) != fingerprint():
@@ -292,7 +309,7 @@ def finish(state, browser, code=None, error=None):
         }
         _update_connections(data, gid)
         save(data)
-    return gid
+    return "instagram:" + gid if record.get("instagram") else gid
 
 
 def _update_connections(data, gid):
@@ -324,8 +341,7 @@ def refresh_pages(gid):
         raise ValueError("Reconnect this Facebook account before refreshing its Pages.")
     graph = Graph(grant["token"], settings())
     try:
-        _permissions(graph)
-        pages = graph.pages()
+        pages = _pages(graph)
     except MetaError as exc:
         if exc.code == 190:
             with lock():
@@ -440,12 +456,97 @@ def credential_record(cid):
     return c | {"token": page["token"]}
 
 
+def instagram_available():
+    return [
+        {"grant_id": grant["id"], "page_id": page["page_id"], **page["instagram"]}
+        for grant in vault()["grants"].values()
+        if grant["app"] == fingerprint()
+        and not grant.get("reauth_required")
+        and grant["expires_at"] > time.time()
+        for page in grant["pages"]
+        if page["can_publish"] and page.get("instagram")
+    ]
+
+
+def attach_instagram(gid, page_id, identity):
+    refresh_pages(gid)
+    with lock():
+        data = vault()
+        linked = next(
+            (item for item in instagram_available() if
+             (item["grant_id"], item["page_id"], item["id"]) == (gid, page_id, identity)),
+            None,
+        )
+        if not linked:
+            raise ValueError("The intended Instagram account is no longer linked to this Page.")
+        connections = data.setdefault("instagram_connections", {})
+        cid = next((c["id"] for c in connections.values() if c["identity"] == identity),
+                   secrets.token_hex(16))
+        connections[cid] = linked | {"id": cid, "identity": identity}
+        save(data)
+    return cid
+
+
+def instagram_connections():
+    available = {
+        (c["grant_id"], c["page_id"], c["id"]): c["name"]
+        for c in instagram_available()
+    }
+    result = []
+    for connection in vault().get("instagram_connections", {}).values():
+        key = (connection["grant_id"], connection["page_id"], connection["identity"])
+        result.append(connection | {"name": available.get(key, connection["name"]),
+                                    "reauth_required": key not in available or connection.get("detached", False)})
+    return result
+
+
+def instagram_credentials(cid, *, verify=False):
+    data = vault()
+    c = data.get("instagram_connections", {}).get(cid)
+    if not c or c.get("detached"):
+        raise ValueError("Connect and attach the intended Instagram account first.")
+    gid = c["grant_id"]
+    if verify:
+        refresh_pages(gid)
+        data = vault()
+        if data.get("instagram_connections", {}).get(cid) != c:
+            raise ValueError("Instagram account changed. Review the destination again.")
+    grant = data["grants"].get(gid, {})
+    if (grant.get("app") != fingerprint() or grant.get("reauth_required")
+            or grant.get("expires_at", 0) <= time.time()):
+        raise ValueError("Reconnect Meta to restore Instagram publishing access.")
+    for page in grant["pages"]:
+        if (page["page_id"] == c["page_id"] and page["can_publish"]
+                and page.get("instagram", {}).get("id") == c["identity"]):
+            return c | {"token": page["token"], "app": grant["app"]}
+    raise ValueError("Instagram publishing access or its Facebook Page link changed.")
+
+
+def detach_instagram(cid):
+    from app.services import short_video_direct, youtube_studio as legacy
+
+    with FileLock(legacy.root() / "catalog.lock"), lock():
+        data = vault()
+        connection = data.get("instagram_connections", {}).get(cid)
+        if not connection:
+            raise ValueError("Instagram account is already detached.")
+        short_video_direct.instagram.assert_disconnectable({cid})
+        connection["detached"] = True
+        save(data)
+
+
 def disconnect(gid):
     from app.services import facebook_direct as studio, youtube_studio as legacy
+    from app.services import short_video_direct
 
     with FileLock(legacy.root() / "catalog.lock"):
         data = vault()
         cids = {c["id"] for c in data["connections"].values() if c["grant_id"] == gid}
+        ig_ids = {
+            c["id"] for c in data.get("instagram_connections", {}).values()
+            if c["grant_id"] == gid
+        }
+        short_video_direct.instagram.assert_disconnectable(ig_ids)
         if any(
             j["connection_id"] in cids and j["state"] in studio.ACTIVE
             for j in studio.jobs()
@@ -475,6 +576,10 @@ def disconnect(gid):
             data["connections"] = {
                 k: c for k, c in data["connections"].items() if c["grant_id"] != gid
             }
+            data["instagram_connections"] = {
+                k: c for k, c in data.get("instagram_connections", {}).items()
+                if c["grant_id"] != gid
+            }
             data["flows"] = {}
             data["epoch"] += 1
             save(data)
@@ -482,6 +587,7 @@ def disconnect(gid):
             if job["connection_id"] in cids:
                 with studio.lease(job["id"]):
                     studio._path(job["id"]).unlink(missing_ok=True)
+        short_video_direct.instagram.remove_history(ig_ids)
     return revoked
 
 

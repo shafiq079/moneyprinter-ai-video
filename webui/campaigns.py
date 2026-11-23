@@ -11,7 +11,7 @@ from app.services import (
     content_library as library,
     campaign_production as production,
 )
-from webui.publishing_planner import navigation
+from webui.workspace_nav import button as navigate, navigation, route
 from webui import campaign_composer as composer, production_summary
 
 
@@ -25,11 +25,16 @@ def render(tr):
     )
     try:
         service.recover()
-        tabs = st.tabs([tr("Campaign dashboard"), tr("New campaign")])
-        with tabs[1]:
-            _create(tr)
-        with tabs[0]:
-            _dashboard(tr)
+        values = service.all_campaigns()
+        if st.query_params.get("new") == "1" or not values:
+            with st.container(border=True):
+                st.subheader(tr("New campaign"))
+                if values:
+                    navigate(tr("Campaign dashboard"), "campaign_back_to_list", "campaigns")
+                _create(tr)
+        else:
+            navigate(tr("New campaign"), "campaign_open_composer", "campaigns", primary=True, new="1")
+            _dashboard(tr, values)
     except (ValueError, OSError) as exc:
         st.error(
             tr("Campaign is busy. Refresh shortly.")
@@ -40,6 +45,15 @@ def render(tr):
 
 def _create(tr):
     composer.sync()
+    cached = st.session_state.get("campaign_new_fields", {})
+    brief = st.text_area(
+        tr("Campaign brief"),
+        value=cached.get("brief", ""),
+        max_chars=4000,
+        key="campaign_brief",
+        help=tr("Include the niche, audience, target video length, tone and topics to include or avoid."),
+    )
+    composer.render_count(tr)
     projects = library.projects()
     templates = ["default"] + [p["task_id"] for p in projects]
     chosen = st.selectbox(
@@ -92,17 +106,6 @@ def _create(tr):
         st.rerun()
     with st.expander(tr("Production settings")):
         production_summary.render(defaults, tr)
-    cached = st.session_state.get("campaign_new_fields", {})
-    brief = st.text_area(
-        tr("Campaign brief"),
-        value=cached.get("brief", ""),
-        max_chars=4000,
-        key="campaign_brief",
-        help=tr(
-            "Include the niche, audience, target video length, tone and topics to include or avoid."
-        ),
-    )
-    composer.render_count(tr)
     language = st.text_input(
         tr("Campaign language"),
         value=cached.get("language", defaults.get("video_language") or "English"),
@@ -135,21 +138,17 @@ def _create(tr):
     )
     cards = composer.render(tr, brief, language, defaults)
     complete = all(row["title"].strip() and row["script"].strip() for row in cards)
-    if st.button(tr("Create campaign"), key="campaign_create", disabled=not complete):
+    if st.button(tr("Create campaign"), key="campaign_create", type="primary", disabled=not complete):
         settings = package or defaults
         value = service.create(
             brief, len(cards), language, settings, destinations, items=cards
         )
-        st.query_params["campaign"] = value["id"]
+        route("campaigns", campaign=value["id"])
         st.session_state["campaign_selected"] = value["id"]
         st.rerun()
 
 
-def _dashboard(tr):
-    values = service.all_campaigns()
-    if not values:
-        st.info(tr("Create a campaign to begin."))
-        return
+def _dashboard(tr, values):
     ids = [v["id"] for v in values]
     wanted = st.query_params.get("campaign")
     if st.session_state.get("campaign_route") != wanted:
@@ -353,14 +352,13 @@ def _dashboard(tr):
             ):
                 service.retry(cid, iid, checked, mode)
                 st.rerun()
-        st.link_button(
-            tr("Review campaign videos in Content Library"),
-            "?view=library&campaign=" + cid,
-        )
-        st.link_button(tr("Inspect generation tasks"), "?view=tasks")
+        with st.container(horizontal=True):
+            navigate(tr("Review campaign videos in Content Library"), "campaign_library:" + cid, "library", campaign=cid)
+            navigate(tr("Inspect generation tasks"), "campaign_tasks:" + cid, "tasks")
         timing = st.radio(
             tr("Campaign publishing timing"),
-            ["slots", "now"],
+            ["now"] if any(k.split(":", 1)[0] in library.IMMEDIATE_ONLY for k in value["destinations"])
+            else ["slots", "now"],
             format_func=lambda v: (
                 tr("Next available slots")
                 if v == "slots"
@@ -378,13 +376,10 @@ def _dashboard(tr):
             key="campaign_publish:" + cid,
         ):
             batch = service.prepare_publishing(cid, timing)
-            st.query_params.update(view="publishing", batch=batch["id"])
+            route("publishing", batch=batch["id"])
             st.rerun()
         for bid in value["batches"]:
-            st.link_button(
-                tr("Open campaign publishing batch") + " · " + bid[:8],
-                "?view=publishing&batch=" + bid,
-            )
+            navigate(tr("Open campaign publishing batch") + " · " + bid[:8], "campaign_batch:" + bid, "publishing", batch=bid)
 
 
 @st.fragment(run_every=5)

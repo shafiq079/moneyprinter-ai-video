@@ -5,6 +5,8 @@ from zoneinfo import ZoneInfo
 
 import streamlit as st
 
+from webui.workspace_nav import anchor, button as navigate
+
 from app.config import config
 from app.services import (
     youtube_accounts as accounts,
@@ -86,15 +88,11 @@ def _accounts(tr):
             st.session_state["social_connect_url"] = accounts.connect_ticket()
         except ValueError as exc:
             _error(exc)
+    if st.query_params.get("youtube_connected") == "1":
+        st.session_state.pop("social_connect_url", None)
+        st.query_params.pop("youtube_connected", None)
     if st.session_state.get("social_connect_url"):
-        st.link_button(
-            tr("Continue with Google"), st.session_state["social_connect_url"]
-        )
-        st.caption(
-            tr(
-                "Google opens in a new tab. Authorize the intended channel, then return and refresh accounts."
-            )
-        )
+        anchor(tr("Continue with Google"), st.session_state["social_connect_url"])
     if st.button(tr("Refresh accounts"), key="social_accounts_refresh"):
         st.session_state.pop("social_connect_url", None)
         st.rerun()
@@ -607,7 +605,7 @@ def render(tr):
     if st.button(tr("Back To Generator"), key="social_back"):
         st.query_params.clear()
         st.rerun()
-    from webui.publishing_planner import navigation
+    from webui.workspace_nav import navigation
     navigation(tr)
     st.title(tr("Social Dashboard"))
     route = (
@@ -615,25 +613,22 @@ def render(tr):
         + ":"
         + st.query_params.get("platform", "")
     )
+    platforms = {"youtube": "YouTube", "facebook": "Facebook", "instagram": "Instagram", "tiktok": "TikTok"}
     if st.session_state.get("social_platform_route") != route:
         st.session_state["social_platform_route"] = route
-        st.session_state["social_platform"] = (
-            "Facebook"
-            if route.startswith("facebook:")
-            or st.query_params.get("platform") == "facebook"
-            else "YouTube"
-        )
+        route_platform = st.query_params.get("platform") or route.split(":", 1)[0]
+        st.session_state["social_platform"] = platforms.get(route_platform, "YouTube")
     platform = st.radio(
         tr("Social platform"),
-        ["YouTube", "Facebook"],
+        list(platforms.values()),
         horizontal=True,
         key="social_platform",
     )
-    st.caption(
-        tr(
-            "YouTube connects directly to Google; Facebook Pages connect directly to Meta. Upload-Post is only used by legacy publishing."
-        )
-    )
+    if platform in {"Instagram", "TikTok"}:
+        from webui.short_video_dashboard import render as render_short_video
+
+        render_short_video(platform.lower(), tr)
+        return
     if config.app.get("upload_post_auto_upload"):
         st.warning(
             tr(
@@ -674,7 +669,7 @@ def render(tr):
                     "Existing Upload-Post records remain separate. They are never converted or resent through Google automatically."
                 )
             )
-            st.link_button(tr("Legacy YouTube publishing"), "?view=youtube-legacy")
-            st.link_button(tr("Legacy Facebook publishing"), "?view=facebook-legacy")
+            navigate(tr("Legacy YouTube publishing"), "legacy:youtube", "youtube-legacy")
+            navigate(tr("Legacy Facebook publishing"), "legacy:facebook", "facebook-legacy")
     except ValueError as exc:
         _error(exc)

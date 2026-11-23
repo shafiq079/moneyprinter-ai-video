@@ -2134,7 +2134,9 @@ def _render_task_table(filtered_tasks, key_prefix):
                     scenes_label = tr("Edit Video")
                     if os.environ.get('MPT_OPENCUT') == '1' and has_scene_plan and not is_processing:
                         from webui.opencut_launch import launch_url
-                        st.link_button(scenes_label, launch_url(task_id), icon=":material/movie_edit:", use_container_width=True)
+                        from webui.workspace_nav import anchor
+
+                        anchor(scenes_label, launch_url(task_id))
                     elif st.button(
                         scenes_label,
                         key=f"edit_task_{key_prefix}_{task_id}",
@@ -2647,6 +2649,8 @@ def _render_pending_version_check():
 
 def _render_top_bar():
     """渲染品牌、任务管理、设置和语言切换组成的页面顶部栏。"""
+    from webui.workspace_nav import navigation
+
     # 顶部栏分为品牌区和操作区两个独立区域。窄屏下由 Streamlit
     # 将两个区域整体换行，操作区内部再根据剩余宽度自动换行。
     with st.container(key="top_bar"):
@@ -2673,11 +2677,6 @@ def _render_top_bar():
             width="stretch",
         ):
             _render_task_manager_entry()
-            st.link_button(tr("Campaigns"), "?view=campaigns", icon=":material/campaign:")
-            st.link_button(tr("Content Library"), "?view=library", icon=":material/video_library:")
-            st.link_button(tr("Publishing"), "?view=publishing", icon=":material/schedule:")
-            st.link_button(tr("Accounts"), "?view=social", icon=":material/account_circle:")
-            st.link_button("Facebook", "?view=social&platform=facebook", icon=":material/public:")
 
             st.button(
                 tr("Settings"),
@@ -2724,6 +2723,7 @@ def _render_top_bar():
                             st.session_state[content_key] = st.session_state[content_key]
                     # 切换语言后强制刷新，避免 selectbox 继续展示旧语言文案。
                     st.rerun()
+    navigation(tr)
 
 
 support_locales = [
@@ -9730,11 +9730,18 @@ def _render_application():
             render_launch(editor_task, tr)
         return
     if st.query_params.get("view") == "tasks":
+        from webui.workspace_nav import navigation
+
+        navigation(tr)
         if st.button(tr("Back To Generator"), key="tasks_back_to_generator"):
             st.query_params.clear()
             st.rerun()
         _render_task_manager_page()
         return
+    if st.session_state.pop("restore_generator_after_navigation", False):
+        params = st.session_state.get("generator_last_params")
+        if params:
+            _apply_restored_params(params)
     _render_top_bar()
 
     if st.session_state.get("settings_dialog_open", False):

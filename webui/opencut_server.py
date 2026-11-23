@@ -114,8 +114,9 @@ def create_app(streamlit_port=None, public_port=None):
     # callback parameters are proxied into Streamlit or returned in redirects.
     from webui.youtube_oauth import install_routes
     install_routes(app)
-    from app.services import facebook_accounts
+    from app.services import facebook_accounts, tiktok_accounts
     install_routes(app, facebook_accounts, "facebook")
+    install_routes(app, tiktok_accounts, "tiktok")
 
     @app.get('/opencut/api/session')
     async def session(task_id=Depends(authenticated)):

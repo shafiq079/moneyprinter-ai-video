@@ -17,15 +17,14 @@ HEADERS = {
 
 
 def _cookie(state, platform="youtube"):
-    return ("mpt_fb_" if platform == "facebook" else "mpt_yt_") + hashlib.sha256(
-        state.encode()
-    ).hexdigest()[:16]
+    prefix = {"youtube": "mpt_yt_", "facebook": "mpt_fb_", "tiktok": "mpt_tt_"}[platform]
+    return prefix + hashlib.sha256(state.encode()).hexdigest()[:16]
 
 
 def install_routes(app, provider=accounts, platform="youtube"):
-    if platform not in {"youtube", "facebook"}:
+    if platform not in {"youtube", "facebook", "tiktok"}:
         raise ValueError("Unsupported OAuth platform")
-    brand = "Facebook" if platform == "facebook" else "YouTube"
+    brand = {"youtube": "YouTube", "facebook": "Facebook", "tiktok": "TikTok"}[platform]
 
     @app.get("/social/" + platform + "/oauth/start")
     async def start(request: Request):
@@ -57,19 +56,22 @@ def install_routes(app, provider=accounts, platform="youtube"):
     async def callback(request: Request):
         state = request.query_params.get("state", "")
         try:
-            await asyncio.to_thread(
+            result = await asyncio.to_thread(
                 provider.finish,
                 state,
                 request.cookies.get(_cookie(state, platform)),
                 request.query_params.get("code"),
                 request.query_params.get("error"),
             )
+            destination = platform
+            if platform == "facebook" and isinstance(result, str) and result.startswith("instagram:"):
+                destination = "instagram"
+            location = (
+                "/?view=social&youtube_connected=1" if destination == "youtube"
+                else f"/?view=social&platform={destination}&{destination}_connected=1"
+            )
             response = RedirectResponse(
-                (
-                    "/?view=social&platform=facebook&facebook_connected=1"
-                    if platform == "facebook"
-                    else "/?view=social&youtube_connected=1"
-                ),
+                location,
                 status_code=303,
                 headers=HEADERS,
             )

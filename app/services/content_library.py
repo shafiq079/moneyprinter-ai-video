@@ -18,7 +18,7 @@ from filelock import FileLock, Timeout
 from loguru import logger
 
 from app.services import youtube_accounts as crypto, youtube_direct as youtube
-from app.services import facebook_accounts, facebook_direct as facebook
+from app.services import facebook_accounts, facebook_direct as facebook, short_video_direct, tiktok_accounts
 from app.services import publishing_seo as seo, youtube_studio as media
 from app.utils import utils
 
@@ -171,21 +171,22 @@ def _final(task_id, expected=None):
     return value
 
 
+IMMEDIATE_ONLY = {"instagram", "tiktok"}
+
+
 def destinations():
-    result = []
-    for platform, accounts in [("youtube", crypto), ("facebook", facebook_accounts)]:
-        for c in accounts.connections():
-            if not c.get("reauth_required"):
-                result.append(
-                    dict(
-                        key=platform + ":" + c["id"],
-                        platform=platform,
-                        connection_id=c["id"],
-                        name=c["name"],
-                        identity=c.get("channel_id") or c.get("page_id"),
-                    )
-                )
-    return result
+    providers = (
+        ("youtube", crypto.connections),
+        ("facebook", facebook_accounts.connections),
+        ("instagram", facebook_accounts.instagram_connections),
+        ("tiktok", tiktok_accounts.connections),
+    )
+    return [
+        dict(key=platform + ":" + c["id"], platform=platform, connection_id=c["id"],
+             name=c["name"], identity=c.get("channel_id") or c.get("page_id") if platform not in IMMEDIATE_ONLY else c["identity"])
+        for platform, connections in providers for c in connections()
+        if not c.get("reauth_required")
+    ]
 
 
 def service(platform):
@@ -193,6 +194,10 @@ def service(platform):
         return youtube
     if platform == "facebook":
         return facebook
+    if platform == "instagram":
+        return short_video_direct.instagram
+    if platform == "tiktok":
+        return short_video_direct.tiktok
     raise ValueError("Unsupported publishing platform.")
 
 
@@ -372,6 +377,8 @@ def create_batch(task_ids, keys, mode="slots", exact=None, spacing_minutes=60):
                 raise ValueError(
                     "Save posting defaults for every selected account first."
                 )
+            if mode != "now" and preset["platform"] in IMMEDIATE_ONLY:
+                raise ValueError("Instagram and TikTok require delivery after approval in this workflow.")
             taken = _occupied(key, previous_batches)
             for position, (tid, final) in enumerate(finals.items()):
                 # Another unapproved batch must not reserve the same final/account twice.
@@ -980,7 +987,10 @@ def startup():
         campaigns.recover()
     except Exception as exc:
         logger.warning("Campaign recovery deferred: {}", type(exc).__name__)
-    for operation in (youtube.recover, facebook.recover, recover, discover_automatic):
+    for operation in (
+        youtube.recover, facebook.recover, short_video_direct.instagram.recover,
+        short_video_direct.tiktok.recover, recover, discover_automatic,
+    ):
         try:
             operation()
         except Exception as exc:

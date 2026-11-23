@@ -5,6 +5,8 @@ from zoneinfo import ZoneInfo
 
 import streamlit as st
 
+from webui.workspace_nav import anchor, button as navigate
+
 from app.services import (
     facebook_accounts as accounts,
     facebook_direct as studio,
@@ -84,10 +86,11 @@ def _accounts(tr):
             st.session_state["meta_connect_url"] = accounts.connect_ticket()
         except ValueError as exc:
             st.error(str(exc))
+    if st.query_params.get("facebook_connected") == "1":
+        st.session_state.pop("meta_connect_url", None)
+        st.query_params.pop("facebook_connected", None)
     if st.session_state.get("meta_connect_url"):
-        st.link_button(
-            tr("Continue with Facebook"), st.session_state["meta_connect_url"]
-        )
+        anchor(tr("Continue with Facebook"), st.session_state["meta_connect_url"])
         st.caption(
             tr(
                 "Authorize on Facebook, return here, refresh available Pages, then attach the intended Page. Connecting an account alone never approves a post."
@@ -610,7 +613,7 @@ def render_panels(tr):
                     "Existing Upload-Post records remain separate. They are never converted or resent through Meta automatically."
                 )
             )
-            st.link_button(tr("Legacy Facebook publishing"), "?view=facebook-legacy")
-            st.link_button(tr("Legacy YouTube publishing"), "?view=youtube-legacy")
+            navigate(tr("Legacy Facebook publishing"), "legacy:facebook", "facebook-legacy")
+            navigate(tr("Legacy YouTube publishing"), "legacy:youtube", "youtube-legacy")
     except ValueError as exc:
         st.error(str(exc))

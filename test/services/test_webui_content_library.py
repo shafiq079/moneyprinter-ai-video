@@ -118,8 +118,8 @@ def test_select_all_and_native_editor_handoff_are_available(setup_library):
     with patch.dict("os.environ", {"MPT_OPENCUT": "1"}):
         page = app()
         assert not page.exception
-        urls = [element.proto.url for element in page.get("link_button")]
-        assert any(url.startswith("/opencut/#token=") for url in urls)
+        anchors = [element.proto.body for element in page.get("html")]
+        assert any('target="_self"' in body and 'href="/opencut/#token=' in body for body in anchors)
         by_key(page.button, "library_select_all").click().run()
         assert set(by_key(page.multiselect, "library_batch_videos").value) == set(
             setup_library.tasks_ids

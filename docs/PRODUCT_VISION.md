@@ -7,6 +7,16 @@ every idea below is implemented or that a particular editor stack was approved.
 The owner's latest explicit instruction and observed repository state take
 precedence. Update this document when a product decision is made.
 
+## Workspace and distribution (24 November 2026)
+
+Campaigns remains the planning and production workflow. Create, Campaigns,
+Content Library, Publishing and Accounts share same-tab navigation. The owner
+requested Instagram and TikTok integrations alongside direct YouTube and
+Facebook. The initial Instagram workflow delivers reviewed Reels through Meta.
+The TikTok workflow sends a reviewed video to the creator inbox for posting in
+TikTok. Both are available as campaign and immediate batch destinations. See
+[Instagram and TikTok publishing](SHORT_VIDEO_PUBLISHING.md).
+
 ## Campaign content decision (1 November 2026)
 
 Campaign creation now begins with an editable card for each video. Subjects,
@@ -42,7 +52,7 @@ contracts, with no mandatory paid video-generation API.
 | Editable project | Keep independently editable scene clips, narration/audio, captions, prompts and metadata alongside the final MP4. A bad scene or a render-only change must not invalidate unrelated generated assets. | Dedicated editor, scene history, narration/caption editing, independent music/SFX and portable editable project archives are implemented for saved creative AI projects. Undo/redo and stock/factual editor expansion remain later. |
 | In-product editor | Provide a self-hosted, CapCut-like experience using open-source components. | Dedicated full-page Streamlit editor with an embedded offline React timeline. Scene, narration, caption and music/SFX edits plus project archive import/export are implemented. Advanced effects, undo/redo and stock/factual project support remain later. |
 | Scene timing | Let scene count/length follow narration and content instead of forcing every scene to the same fixed length. | Automatic uses available speech/caption timestamps and sentence/word boundaries within provider ceilings; unavailable or interpolated timing is explicitly estimated. Pexels/Pixabay/Coverr support scene-specific automatic searches. Manual/historical plans retain prior timing. Natural-length narration retiming is implemented. Actual visual relevance verification and forced word alignment remain deferred. |
-| Publishing | Generation remains independent. Owner approved YouTube first, then Facebook Pages/Reels with reviewed publishing/scheduling; TikTok/Instagram and channel agents remain later. | Social Dashboard now connects YouTube directly to Google and manages content, reviewed resumable uploads and YouTube-owned schedules. Facebook remains on legacy Upload-Post until its direct milestone. Live acceptance and app verification remain operator-owned. |
+| Publishing | Generation, production approval and publishing review are separate. Connect the four supported social destinations from Accounts. | YouTube and Facebook support direct delivery and scheduling. Instagram publishes reviewed Reels after approval. TikTok sends reviewed videos to the creator inbox. Live acceptance and app verification are operator-owned. |
 | Factual content | Optional evidence/review mode must not burden creative generation. | User-supplied excerpts, safe one-page import, review-only workflow and structural claim checks exist. Automatic discovery/source authentication and real-model acceptance remain deferred. |
 | Deployment | Start with a working single-product workflow; add multi-user infrastructure or new frontend only when real needs justify it. | An embedded React timeline in the existing Streamlit product is now approved and implemented. Accounts, billing, distributed scheduling and a replacement frontend remain outside scope. |
 

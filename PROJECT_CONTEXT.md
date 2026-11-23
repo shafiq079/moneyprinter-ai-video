@@ -2,6 +2,23 @@
 
 Read this file first in every new AI or developer session. `docs/SRS.md` is the full product specification; `docs/MIGRATION_MAP.md` is the file-level porting decision. `docs/PRODUCT_VISION.md` preserves the owner's longer-term editable-project and publishing goals separately from implemented scope and unapproved technical proposals. `docs/CHATGPT_PROJECT_SETUP.md` contains the reusable ChatGPT Project handoff. Update this handoff with every accepted milestone. Local desktop Codex setup and two-machine sync instructions are in `AGENTS.md` and `docs/LOCAL_CODEX_SETUP.md`.
 
+## Same-tab workspace and short-video publishing (24 November 2026)
+
+Create, Campaigns, Content Library, Publishing and Accounts use same-tab
+navigation. Campaigns has a focused creation view and keeps the current brief
+and video cards across workspace navigation. Accounts offers YouTube, Facebook,
+Instagram and TikTok. Instagram uses a Meta Business Login grant and explicitly
+attached linked professional account. TikTok uses Login Kit and the approved
+inbox upload flow. Both use existing reviewed final media, campaign destinations,
+AI copy and batch approvals. Instagram publishes after approval; the creator
+finishes TikTok posting in the TikTok app. New short-video deliveries use
+immediate mode, while existing YouTube and Facebook schedules remain available.
+
+See [Instagram and TikTok publishing](docs/SHORT_VIDEO_PUBLISHING.md) for
+developer app settings, encrypted credentials, recovery and operator verification.
+CPU tests exercise the wire contracts with mocked providers. Live OAuth and
+publishing require operator-authorized apps and accounts.
+
 ## VoiceStudio removal (24 November 2026)
 
 VoiceStudio presets, gallery voices and setup were removed from development.
